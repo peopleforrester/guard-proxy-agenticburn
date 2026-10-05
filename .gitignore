@@ -1,0 +1,4 @@
+# Python bytecode. The deploying repo imports proxy.py in its offline tests, which writes this
+# cache beside the file, inside this repo, where that repo's own .gitignore does not reach.
+__pycache__/
+*.py[cod]
