@@ -1,0 +1,17 @@
+# ABOUTME: Runs the black-box conformance suite and lint on every push and pull request.
+# ABOUTME: Actions are pinned by commit SHA (checkout v7.0.1, setup-uv v10.3.0, as of 2026-10-11).
+name: conformance
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  conformance:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      - run: uv sync --locked
+      - run: uv run ruff check conformance
+      - run: uv run pytest

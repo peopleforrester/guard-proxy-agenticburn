@@ -62,6 +62,50 @@ rewrite.
 | `GET /controls` | The state of each workshop challenge's control |
 | `GET /toggle` | Switches a guard live, without a restart |
 
+## Conformance suite
+
+`conformance/` is a black-box HTTP test suite. It is the contract the Go rewrite has to meet. It
+starts the implementation as a subprocess and points it at real local servers that stand in for the
+agent and the LLM Guard API. It then checks only what a client could observe: status codes, response
+bodies, headers, what reached each upstream, and the structured log events. No test imports the
+code under test.
+
+```
+uv run pytest                                          # against proxy.py
+GUARD_PROXY_CMD='./guard-proxy --listen 127.0.0.1:{port}' uv run pytest   # against another build
+uv run python conformance/mutation_check.py           # negative control, see below
+```
+
+`GUARD_PROXY_CMD` is the only adapter. `{port}` is replaced with a free loopback port, and the suite
+waits for `GET /guards` to answer.
+
+The suite covers:
+
+- every endpoint;
+- both input stages, the output guard, and fail-closed against an unreachable, erroring, malformed or
+  slow scanner;
+- the rate limit, the cluster-wide cost cap and the per-session budget cap, and the order they run in;
+- token metering and tier pricing;
+- the self-heal retries;
+- the moderated prompt feed;
+- response CORS.
+
+`mutation_check.py` runs the suite against deliberately broken copies of `proxy.py`, and fails
+unless every one is caught. That is how we know the suite pins real behavior and does not just
+pass.
+
+**Not covered yet.**
+
+- **Telemetry (spans and the cost metric).** It needs the OpenTelemetry SDK that the cluster
+  injects, and it arrives with the Go rewrite's telemetry milestone, against a recorded baseline from
+  `proxy.py`.
+- **`/controls` against a live cluster API.** `proxy.py` has no endpoint override, so only the
+  no-credentials case is tested.
+
+**Known defects are pinned, not hidden.** A test whose name ends in `_today` asserts current behavior
+that is wrong, and names the issue that tracks it (#1 through #4). Fixing one changes `proxy.py` and
+that test together.
+
 ## How the workshop consumes it
 
 The workshop repository includes this one as a git submodule at `gitops/ai-layer/guard-proxy/`. A

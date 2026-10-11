@@ -2,3 +2,7 @@
 # cache beside the file, inside this repo, where that repo's own .gitignore does not reach.
 __pycache__/
 *.py[cod]
+
+# Local environment and the mutation check's scratch copies.
+.venv/
+.mutants/
