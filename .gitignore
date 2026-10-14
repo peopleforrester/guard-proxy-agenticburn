@@ -6,3 +6,6 @@ __pycache__/
 # Local environment and the mutation check's scratch copies.
 .venv/
 .mutants/
+
+# The Go binary built for local runs and the conformance suite.
+/bin/

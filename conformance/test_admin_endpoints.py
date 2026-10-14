@@ -13,6 +13,7 @@ GUARD_KEYS = {"input_blocklist", "input_classifier", "output", "budget"}
 # --- /guards: seeded from the environment ---------------------------------------------------------
 
 
+@pytest.mark.passthrough
 def test_guards_default_all_off(start_proxy):
     assert start_proxy().get("/guards").json() == dict.fromkeys(GUARD_KEYS, False)
 
@@ -32,11 +33,13 @@ def test_guards_default_all_off(start_proxy):
         ({"OUTPUT_GUARD": "1"}, set()),
     ],
 )
+@pytest.mark.passthrough
 def test_guards_seeded_from_env(start_proxy, env, expected_on):
     got = start_proxy(**env).get("/guards").json()
     assert {k for k, v in got.items() if v} == expected_on
 
 
+@pytest.mark.passthrough
 def test_guards_matches_by_prefix(start_proxy):
     assert start_proxy(OUTPUT_GUARD="on").get("/guards?x=1").json()["output"] is True
 
@@ -159,6 +162,7 @@ def test_controls_host_defaults_empty(start_proxy):
 # --- GET passthrough to the agent -----------------------------------------------------------------
 
 
+@pytest.mark.passthrough
 def test_get_passthrough_forwards_path_and_body(start_proxy, agent):
     card = {"name": "workshop-agent", "skills": []}
     agent.respond = lambda req: Reply(body=card)
@@ -171,6 +175,7 @@ def test_get_passthrough_forwards_path_and_body(start_proxy, agent):
     assert agent.calls()[0].method == "GET"
 
 
+@pytest.mark.passthrough
 def test_get_passthrough_agent_error_status_is_502(start_proxy, agent):
     agent.respond = lambda req: Reply(status=404, body={"error": "nope"})
     r = start_proxy().get("/missing")
@@ -178,6 +183,7 @@ def test_get_passthrough_agent_error_status_is_502(start_proxy, agent):
     assert r.json()["error"].startswith("agent GET failed:")
 
 
+@pytest.mark.passthrough
 def test_get_passthrough_agent_unreachable_is_502(start_proxy):
     r = start_proxy(AGENT_URL=unreachable_url()).get("/anything")
     assert r.status == 502
@@ -242,6 +248,7 @@ def test_foreign_origin_post_is_not_rejected(start_proxy):
     assert "access-control-allow-origin" not in r.headers
 
 
+@pytest.mark.passthrough
 def test_options_preflight_is_not_implemented(start_proxy):
     """No OPTIONS handler, so a cross-origin preflight fails: a second layer under the Origin echo."""
     p = start_proxy()

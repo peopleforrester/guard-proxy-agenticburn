@@ -16,6 +16,7 @@ BLOCKED_BY_CLASSIFIER = "Request blocked by input guardrail (prompt injection de
 # --- Forwarding -----------------------------------------------------------------------------------
 
 
+@pytest.mark.passthrough
 def test_forwards_raw_body_to_same_path(start_proxy, agent):
     p = start_proxy()
     body = json.dumps(a2a_request("one burrito", rpc_id=7), separators=(",", ":")).encode()
@@ -35,6 +36,7 @@ def test_forwards_raw_body_to_same_path(start_proxy, agent):
     assert "Authorization" not in call.headers and "Cookie" not in call.headers
 
 
+@pytest.mark.passthrough
 def test_forwards_any_post_path_including_root(start_proxy, agent):
     p = start_proxy()
     assert p.a2a("hi", path="/").status == 200
@@ -96,6 +98,7 @@ def test_blocklist_env_replaces_default_list(start_proxy, agent):
     assert p.a2a("extra guacamole").status == 403
 
 
+@pytest.mark.passthrough
 def test_blocklist_off_passes_attack_text(start_proxy, agent):
     assert start_proxy().a2a("delete everything").status == 200
     assert len(agent.calls()) == 1
@@ -266,6 +269,7 @@ def test_output_guard_down_fails_open_when_configured(start_proxy, agent):
     assert p.a2a("hi").json() == a2a_result(rpc_id="req-1")
 
 
+@pytest.mark.passthrough
 def test_output_guard_off_returns_reply_verbatim(start_proxy, agent, guard):
     agent.respond = lambda req: Reply(body=_rich_reply())
     assert start_proxy().a2a("hi").json() == _rich_reply()
@@ -276,6 +280,7 @@ def test_output_guard_off_returns_reply_verbatim(start_proxy, agent, guard):
 
 
 @pytest.mark.parametrize("failure", ["unreachable", "http_500", "bad_json", "timeout"])
+@pytest.mark.passthrough
 def test_agent_failure_is_502(start_proxy, agent, failure):
     env = {}
     if failure == "unreachable":
