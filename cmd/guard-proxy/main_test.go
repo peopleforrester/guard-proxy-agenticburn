@@ -57,7 +57,7 @@ func TestConfigErrorsExitBeforeServing(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			cmd := exec.Command(binary, append([]string{"--listen", freeAddr(t)}, args...)...)
-			cmd.Env = []string{"PATH=" + os.Getenv("PATH")}
+			cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "LLM_GUARD_URL=http://127.0.0.1:1"}
 			if name != "no agent url" {
 				cmd.Env = append(cmd.Env, "AGENT_URL=http://127.0.0.1:1")
 			}
@@ -84,9 +84,10 @@ func TestSIGTERMDrainsInFlightRequests(t *testing.T) {
 
 	addr := freeAddr(t)
 	cmd := exec.Command(binary, "--listen", addr)
-	cmd.Env = []string{"AGENT_URL=" + agent.URL}
+	cmd.Env = []string{"AGENT_URL=" + agent.URL, "LLM_GUARD_URL=http://127.0.0.1:1"}
 	var stdout bytes.Buffer
 	cmd.Stdout = &stdout
+	cmd.Stderr = &stdout
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}

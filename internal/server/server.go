@@ -14,6 +14,7 @@ import (
 	"sync"
 
 	"github.com/peopleforrester/guard-proxy-agenticburn/internal/config"
+	"github.com/peopleforrester/guard-proxy-agenticburn/internal/guard"
 )
 
 // Server routes every request. It is safe for concurrent use.
@@ -21,6 +22,10 @@ type Server struct {
 	agentURL string
 	client   *http.Client
 	log      *slog.Logger
+
+	blocklist  guard.Blocklist
+	llmGuard   *guard.LLMGuard
+	failClosed bool
 
 	mu     sync.Mutex
 	guards config.Guards
@@ -32,7 +37,12 @@ func New(cfg config.Config, log *slog.Logger) *Server {
 		agentURL: cfg.Agent.URL,
 		client:   &http.Client{Timeout: cfg.Agent.Timeout.Duration},
 		log:      log,
-		guards:   cfg.Guards,
+
+		blocklist:  guard.Blocklist(cfg.Blocklist),
+		llmGuard:   guard.NewLLMGuard(cfg.LLMGuard.URL, cfg.LLMGuard.Token, cfg.LLMGuard.Timeout.Duration),
+		failClosed: cfg.FailClosed,
+
+		guards: cfg.Guards,
 	}
 }
 
@@ -48,10 +58,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		case path == "/healthz":
 			send(w, http.StatusOK, map[string]string{"status": "ok"})
 		case strings.HasPrefix(path, "/guards"):
-			s.mu.Lock()
-			g := s.guards
-			s.mu.Unlock()
-			send(w, http.StatusOK, g)
+			send(w, http.StatusOK, s.guardState())
 		case isUnbuiltGET(path):
 			notImplemented(w, "GET "+path)
 		default:
@@ -91,12 +98,28 @@ func (s *Server) getPassthrough(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, status, body)
 }
 
-// forwardA2A sends the client's body, unchanged, to the same path on the agent.
+func (s *Server) guardState() config.Guards {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.guards
+}
+
+// forwardA2A runs the input guards over the message text, sends the client's body unchanged to the
+// same path on the agent, and runs the output guard over the reply.
 func (s *Server) forwardA2A(w http.ResponseWriter, r *http.Request) {
 	raw, err := io.ReadAll(r.Body)
 	if err != nil {
 		send(w, http.StatusBadRequest, map[string]string{"error": "reading request body: " + err.Error()})
 		return
+	}
+	// One snapshot per request, so a toggle mid-request cannot apply half a policy.
+	g := s.guardState()
+	id, text := parseA2A(raw)
+	if text != "" {
+		if blocked := s.inputGuards(r.Context(), g, text); blocked != "" {
+			send(w, http.StatusForbidden, rpcError{JSONRPC: "2.0", ID: id, Error: rpcErrorBody{Code: -32600, Message: blocked}})
+			return
+		}
 	}
 	body, _, err := s.agent(r, http.MethodPost, raw)
 	if err == nil && !json.Valid(body) {
@@ -106,6 +129,14 @@ func (s *Server) forwardA2A(w http.ResponseWriter, r *http.Request) {
 		s.log.Error("agent forward failed: "+err.Error(), "event", "forward_error")
 		send(w, http.StatusBadGateway, map[string]string{"error": "agent forward failed: " + err.Error()})
 		return
+	}
+	if g.Output {
+		if body, err = s.scrubReply(r.Context(), body); err != nil {
+			// The scrubbed reply cannot be produced, and the unscrubbed one must not leave.
+			s.log.Error("output guard failed: "+err.Error(), "event", "guard_error")
+			send(w, http.StatusBadGateway, map[string]string{"error": "output guard failed: " + err.Error()})
+			return
+		}
 	}
 	writeJSON(w, http.StatusOK, body)
 }

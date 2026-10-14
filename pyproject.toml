@@ -17,9 +17,11 @@ package = false
 testpaths = ["conformance"]
 addopts = "-q --strict-markers"
 # Milestone subsets for an implementation that does not yet cover everything. The Python reference
-# runs every test regardless; the Go build runs `-m passthrough` until it reaches full parity.
+# runs every test regardless; the Go build runs `-m "passthrough or guards"` until it reaches full
+# parity.
 markers = [
     "passthrough: forwarding to the agent with every guard off, plus /guards and upstream failures (PRD #412 M1)",
+    "guards: the input and output guards and their fail-closed policy on the A2A path (PRD #412 M2)",
 ]
 
 [tool.ruff]

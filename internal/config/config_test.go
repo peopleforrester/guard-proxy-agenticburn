@@ -45,7 +45,17 @@ func loadErr(t *testing.T, path string, env map[string]string) string {
 	return err.Error()
 }
 
-var agentOnly = map[string]string{"AGENT_URL": "http://agent:8080"}
+// agentOnly is the smallest environment that loads: the two upstreams.
+var agentOnly = map[string]string{"AGENT_URL": "http://agent:8080", "LLM_GUARD_URL": "http://llm-guard:8000"}
+
+// withBase returns env plus the two required upstream URLs, unless env sets them itself.
+func withBase(env map[string]string) map[string]string {
+	out := map[string]string{"AGENT_URL": "http://a", "LLM_GUARD_URL": "http://g"}
+	for k, v := range env {
+		out[k] = v
+	}
+	return out
+}
 
 func TestDefaults(t *testing.T) {
 	c := mustLoad(t, "", agentOnly)
@@ -66,6 +76,11 @@ listen: 127.0.0.1:9000
 agent:
   url: http://agent.example:3000
   timeout: 2.5s
+llm_guard:
+  url: http://llm-guard.example:8000
+  timeout: 4s
+blocklist: [Guacamole, " salsa "]
+fail_closed: false
 guards:
   output: true
   budget: true
@@ -80,12 +95,22 @@ guards:
 	if c.Guards != (Guards{Output: true, Budget: true}) {
 		t.Errorf("Guards = %+v", c.Guards)
 	}
+	if c.LLMGuard.URL != "http://llm-guard.example:8000" || c.LLMGuard.Timeout.Duration != 4*time.Second {
+		t.Errorf("LLMGuard = %+v", c.LLMGuard)
+	}
+	// A list in the file replaces the default one, and its terms are normalized.
+	if strings.Join(c.Blocklist, "|") != "guacamole|salsa" {
+		t.Errorf("Blocklist = %q", c.Blocklist)
+	}
+	if c.FailClosed {
+		t.Error("fail_closed: false was ignored")
+	}
 }
 
 func TestUnknownKeyFailsStartup(t *testing.T) {
 	for name, body := range map[string]string{
-		"top level": "agent: {url: http://a}\noutput_guard: true\n",
-		"nested":    "agent: {url: http://a}\nguards: {outptu: true}\n",
+		"top level": "agent: {url: http://a}\nllm_guard: {url: http://g}\noutput_guard: true\n",
+		"nested":    "agent: {url: http://a}\nllm_guard: {url: http://g}\nguards: {outptu: true}\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			msg := loadErr(t, writeFile(t, body), nil)
@@ -108,6 +133,7 @@ func TestEnvironmentOverridesFile(t *testing.T) {
 	p := writeFile(t, "agent: {url: http://from-file, timeout: 9s}\nguards: {output: true}\n")
 	c := mustLoad(t, p, map[string]string{
 		"AGENT_URL":     "http://from-env",
+		"LLM_GUARD_URL": "http://g",
 		"PROXY_TIMEOUT": "0.5",
 		"OUTPUT_GUARD":  "off",
 	})
@@ -140,11 +166,7 @@ func TestGuardEnvironmentSemantics(t *testing.T) {
 		{map[string]string{"INPUT_GUARD": "yes"}, Guards{}},
 	}
 	for _, tc := range cases {
-		env := map[string]string{"AGENT_URL": "http://a"}
-		for k, v := range tc.env {
-			env[k] = v
-		}
-		if got := mustLoad(t, "", env).Guards; got != tc.want {
+		if got := mustLoad(t, "", withBase(tc.env)).Guards; got != tc.want {
 			t.Errorf("%v: got %+v, want %+v", tc.env, got, tc.want)
 		}
 	}
@@ -152,13 +174,17 @@ func TestGuardEnvironmentSemantics(t *testing.T) {
 
 func TestValidation(t *testing.T) {
 	cases := map[string]map[string]string{
-		"agent url missing":    {},
-		"agent url relative":   {"AGENT_URL": "agent:8080"},
-		"agent url not http":   {"AGENT_URL": "ftp://agent"},
-		"timeout not a number": {"AGENT_URL": "http://a", "PROXY_TIMEOUT": "soon"},
-		"timeout zero":         {"AGENT_URL": "http://a", "PROXY_TIMEOUT": "0"},
-		"timeout negative":     {"AGENT_URL": "http://a", "PROXY_TIMEOUT": "-1"},
-		"timeout not finite":   {"AGENT_URL": "http://a", "PROXY_TIMEOUT": "NaN"},
+		"agent url missing":     {"LLM_GUARD_URL": "http://g"},
+		"agent url relative":    withBase(map[string]string{"AGENT_URL": "agent:8080"}),
+		"agent url not http":    withBase(map[string]string{"AGENT_URL": "ftp://agent"}),
+		"llm guard url missing": {"AGENT_URL": "http://a"},
+		"llm guard url bad":     withBase(map[string]string{"LLM_GUARD_URL": "llm-guard:8000"}),
+		"timeout not a number":  withBase(map[string]string{"PROXY_TIMEOUT": "soon"}),
+		"timeout zero":          withBase(map[string]string{"PROXY_TIMEOUT": "0"}),
+		"timeout negative":      withBase(map[string]string{"PROXY_TIMEOUT": "-1"}),
+		"timeout not finite":    withBase(map[string]string{"PROXY_TIMEOUT": "NaN"}),
+		// A typo must not turn fail-closed off, so only true and false are accepted.
+		"fail closed typo": withBase(map[string]string{"PROXY_FAIL_CLOSED": "ture"}),
 	}
 	for name, env := range cases {
 		t.Run(name, func(t *testing.T) { loadErr(t, "", env) })
@@ -166,5 +192,49 @@ func TestValidation(t *testing.T) {
 }
 
 func TestEmptyListenIsRejected(t *testing.T) {
-	loadErr(t, writeFile(t, "listen: \"\"\nagent: {url: http://a}\n"), nil)
+	loadErr(t, writeFile(t, "listen: \"\"\nagent: {url: http://a}\nllm_guard: {url: http://g}\n"), nil)
+}
+
+func TestGuardDefaults(t *testing.T) {
+	c := mustLoad(t, "", agentOnly)
+	if !c.FailClosed {
+		t.Error("FailClosed defaults to false; want true")
+	}
+	if c.LLMGuard.Timeout.Duration != 150*time.Second {
+		t.Errorf("LLMGuard timeout = %v, want 150s", c.LLMGuard.Timeout.Duration)
+	}
+	if len(c.Blocklist) != 15 || c.Blocklist[0] != "delete" ||
+		c.Blocklist[13] != "witch-hazel-ghost-pepper-bat-spit-no7" {
+		t.Errorf("Blocklist = %q", c.Blocklist)
+	}
+}
+
+func TestGuardEnvironment(t *testing.T) {
+	c := mustLoad(t, "", withBase(map[string]string{
+		"LLM_GUARD_URL":     "http://llm-guard:8000",
+		"LLM_GUARD_TOKEN":   "secret",
+		"PROXY_TIMEOUT":     "0.5",
+		"PROXY_FAIL_CLOSED": "FALSE",
+		"BLOCK_LIST":        " Guacamole , ",
+	}))
+	if c.LLMGuard.URL != "http://llm-guard:8000" || c.LLMGuard.Token != "secret" {
+		t.Errorf("LLMGuard = %+v", c.LLMGuard)
+	}
+	// One timeout bounds both upstreams, as in the reference proxy.
+	if c.LLMGuard.Timeout.Duration != 500*time.Millisecond {
+		t.Errorf("LLMGuard timeout = %v", c.LLMGuard.Timeout.Duration)
+	}
+	if c.FailClosed {
+		t.Error("PROXY_FAIL_CLOSED=FALSE left fail-closed on")
+	}
+	if strings.Join(c.Blocklist, "|") != "guacamole" {
+		t.Errorf("Blocklist = %q", c.Blocklist)
+	}
+	if c := mustLoad(t, "", withBase(map[string]string{"BLOCK_LIST": ""})); len(c.Blocklist) != 0 {
+		t.Errorf("an empty BLOCK_LIST left %q", c.Blocklist)
+	}
+}
+
+func TestTokenIsNotReadFromTheFile(t *testing.T) {
+	loadErr(t, writeFile(t, "agent: {url: http://a}\nllm_guard: {url: http://g, token: x}\n"), nil)
 }

@@ -43,6 +43,7 @@ def test_forwards_any_post_path_including_root(start_proxy, agent):
     assert agent.calls()[0].path == "/"
 
 
+@pytest.mark.guards
 def test_non_json_body_is_forwarded_unchanged(start_proxy, agent):
     p = start_proxy(INPUT_GUARD="on", OUTPUT_GUARD="on")
     r = p.post("/", b"not json at all")
@@ -50,6 +51,7 @@ def test_non_json_body_is_forwarded_unchanged(start_proxy, agent):
     assert agent.calls()[0].body == b"not json at all"
 
 
+@pytest.mark.guards
 def test_agent_reply_without_result_is_returned_untouched(start_proxy, agent):
     agent.respond = lambda req: Reply(body={"jsonrpc": "2.0", "id": 1, "error": {"code": -1}})
     r = start_proxy(OUTPUT_GUARD="on").a2a("hi")
@@ -73,6 +75,7 @@ def test_agent_reply_without_result_is_returned_untouched(start_proxy, agent):
         ),
     ],
 )
+@pytest.mark.guards
 def test_blocklist_hit_is_403_and_spends_nothing(start_proxy, agent, guard, text, term):
     p = start_proxy(INPUT_BLOCKLIST="on", INPUT_CLASSIFIER="on")
     r = p.a2a(text, rpc_id="abc")
@@ -87,11 +90,13 @@ def test_blocklist_hit_is_403_and_spends_nothing(start_proxy, agent, guard, text
     assert "input_blocklist_hit" in p.events()
 
 
+@pytest.mark.guards
 def test_blocklist_reports_first_term_in_list_order(start_proxy):
     r = start_proxy(INPUT_BLOCKLIST="on", BLOCK_LIST="wipe,nuke").a2a("nuke it, then wipe it")
     assert r.json()["error"]["message"] == BLOCKED_BY_LIST.format("wipe")
 
 
+@pytest.mark.guards
 def test_blocklist_env_replaces_default_list(start_proxy, agent):
     p = start_proxy(INPUT_BLOCKLIST="on", BLOCK_LIST=" Guacamole , ")
     assert p.a2a("please delete everything").status == 200
@@ -104,6 +109,7 @@ def test_blocklist_off_passes_attack_text(start_proxy, agent):
     assert len(agent.calls()) == 1
 
 
+@pytest.mark.guards
 def test_blocklist_reads_only_text_parts_joined(start_proxy, agent):
     p = start_proxy(INPUT_BLOCKLIST="on")
     data_part = {"kind": "data", "text": "delete"}
@@ -116,6 +122,7 @@ def test_blocklist_reads_only_text_parts_joined(start_proxy, agent):
 # --- Stage 2: classifier via the LLM Guard API ----------------------------------------------------
 
 
+@pytest.mark.guards
 def test_classifier_allows_valid_prompt_and_calls_llm_guard(start_proxy, agent, guard):
     p = start_proxy(INPUT_CLASSIFIER="on")
     assert p.a2a("one burrito please").status == 200
@@ -127,6 +134,7 @@ def test_classifier_allows_valid_prompt_and_calls_llm_guard(start_proxy, agent, 
     assert len(agent.calls()) == 1
 
 
+@pytest.mark.guards
 def test_classifier_block_is_403(start_proxy, agent, guard):
     guard.respond = lambda req: Reply(body=verdict(False, "x"))
     p = start_proxy(INPUT_CLASSIFIER="on")
@@ -141,12 +149,14 @@ def test_classifier_block_is_403(start_proxy, agent, guard):
     assert "input_classifier_block" in p.events()
 
 
+@pytest.mark.guards
 def test_classifier_verdict_without_is_valid_allows(start_proxy, agent, guard):
     guard.respond = lambda req: Reply(body={"scanners": {}})
     assert start_proxy(INPUT_CLASSIFIER="on").a2a("hello").status == 200
 
 
 @pytest.mark.parametrize("failure", ["unreachable", "http_500", "bad_json", "timeout"])
+@pytest.mark.guards
 def test_classifier_failure_fails_closed_by_default(start_proxy, agent, guard, failure):
     env = {"INPUT_CLASSIFIER": "on"}
     if failure == "unreachable":
@@ -164,6 +174,7 @@ def test_classifier_failure_fails_closed_by_default(start_proxy, agent, guard, f
     assert agent.calls() == []
 
 
+@pytest.mark.guards
 def test_classifier_failure_fails_open_when_configured(start_proxy, agent):
     p = start_proxy(
         INPUT_CLASSIFIER="on", PROXY_FAIL_CLOSED="false", LLM_GUARD_URL=unreachable_url()
@@ -172,6 +183,7 @@ def test_classifier_failure_fails_open_when_configured(start_proxy, agent):
     assert len(agent.calls()) == 1
 
 
+@pytest.mark.guards
 def test_guards_skip_a_request_with_no_text(start_proxy, agent, guard):
     p = start_proxy(INPUT_GUARD="on")
     body = a2a_request("x")
@@ -227,6 +239,7 @@ def _redacting_guard(req):
     return Reply(body=verdict(True, output=True))
 
 
+@pytest.mark.guards
 def test_output_guard_scrubs_artifacts_agent_history_and_status(start_proxy, agent, guard):
     agent.respond = lambda req: Reply(body=_rich_reply())
     guard.respond = _redacting_guard
@@ -252,18 +265,21 @@ def test_output_guard_scrubs_artifacts_agent_history_and_status(start_proxy, age
     assert "output_scrub" in p.events()
 
 
+@pytest.mark.guards
 def test_output_guard_invalid_without_sanitized_text_redacts_whole_part(start_proxy, agent, guard):
     guard.respond = lambda req: Reply(body=verdict(False, output=True))
     r = start_proxy(OUTPUT_GUARD="on").a2a("hi")
     assert r.json()["result"]["artifacts"][0]["parts"][0]["text"] == "[REDACTED]"
 
 
+@pytest.mark.guards
 def test_output_guard_down_fails_closed(start_proxy, agent):
     r = start_proxy(OUTPUT_GUARD="on", LLM_GUARD_URL=unreachable_url()).a2a("hi")
     assert r.status == 200
     assert r.json()["result"]["artifacts"][0]["parts"][0]["text"] == "[BLOCKED BY OUTPUT GUARDRAIL]"
 
 
+@pytest.mark.guards
 def test_output_guard_down_fails_open_when_configured(start_proxy, agent):
     p = start_proxy(OUTPUT_GUARD="on", PROXY_FAIL_CLOSED="false", LLM_GUARD_URL=unreachable_url())
     assert p.a2a("hi").json() == a2a_result(rpc_id="req-1")

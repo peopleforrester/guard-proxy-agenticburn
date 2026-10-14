@@ -32,4 +32,4 @@ jobs:
       - run: go build -o bin/guard-proxy ./cmd/guard-proxy
       - run: uv sync --locked
       - name: conformance subset against the Go build
-        run: GUARD_PROXY_CMD="$PWD/bin/guard-proxy --listen 127.0.0.1:{port}" uv run pytest -m passthrough
+        run: GUARD_PROXY_CMD="$PWD/bin/guard-proxy --listen 127.0.0.1:{port}" uv run pytest -m "passthrough or guards"

@@ -26,18 +26,32 @@ block the *next* request, and so can agentgateway's budgets. Tracked in
 |---|---|
 | M0 conformance suite | done |
 | M1 skeleton: listener, agent forwarding, config validation, health | done: passes the `passthrough` conformance subset |
-| M2 to M7 | not started |
+| M2 guards on the A2A path: block-list, LLM Guard classifier, output guard, fail closed | done: passes the `guards` conformance subset |
+| M3 to M7 | not started |
 
 ```
 go test ./...                                   # unit tests, plus an end-to-end test of the binary
 go build -o bin/guard-proxy ./cmd/guard-proxy
-AGENT_URL=http://localhost:3000 bin/guard-proxy --listen 127.0.0.1:8080 [--config guard-proxy.yaml]
+AGENT_URL=http://localhost:3000 LLM_GUARD_URL=http://localhost:8000 bin/guard-proxy --listen 127.0.0.1:8080 [--config guard-proxy.yaml]
 ```
 
-It serves `GET /healthz`, `GET /guards`, the GET passthrough and the A2A POST passthrough. `/chat`,
-`/cost`, `/prompts`, `/controls` and `/toggle` answer **501** until their milestone, so a request
-meant for them is never forwarded to the agent. No guard is enforced yet, whatever `/guards` says,
-so this build is not a replacement for `proxy.py`.
+It serves `GET /healthz`, `GET /guards`, the GET passthrough and the A2A POST passthrough, and it
+enforces the input block-list, the LLM Guard classifier and the output guard on A2A POSTs, failing
+closed by default. `/chat`, `/cost`, `/prompts`, `/controls` and `/toggle` answer **501** until
+their milestone, so a request meant for them is never forwarded to the agent. Without `/chat` and
+`/toggle` this build is not yet a replacement for `proxy.py` in the workshop.
+
+Where it differs from `proxy.py` on purpose:
+
+- A scanner failure logs a `guard_error` event at WARNING before the request is refused (or, with
+  fail-closed off, allowed). `proxy.py` fails silently.
+- `PROXY_FAIL_CLOSED` accepts only `true` or `false`; anything else stops startup. `proxy.py` reads
+  any value but `true` as false, so a typo turns fail-closed off.
+- With no `LLM_GUARD_TOKEN`, no `Authorization` header is sent, rather than an empty bearer token.
+- A request body of an unexpected shape carries no text, so no input guard applies to it, and an
+  unexpected reply shape is passed through. `proxy.py` raises on both and drops the connection.
+- A reply the output guard leaves alone is returned byte for byte. One it changes is re-encoded, with
+  keys in sorted order.
 
 Config is one YAML file, decoded strictly: an unknown key stops the process at start.
 
@@ -46,6 +60,11 @@ listen: ":8080"            # default; --listen overrides it
 agent:
   url: http://agentgateway.agent.svc.cluster.local:3000   # required
   timeout: 150s            # default; bounds the whole upstream exchange
+llm_guard:
+  url: http://llm-guard.agent.svc.cluster.local:8000      # required
+  timeout: 150s            # default; the token comes only from LLM_GUARD_TOKEN
+blocklist: [delete, "rm -rf"]   # replaces the default list; terms are trimmed and lowercased
+fail_closed: true          # default; refuse when LLM Guard gives no verdict
 guards:                    # the state each guard starts in
   input_blocklist: false
   input_classifier: false
@@ -53,9 +72,10 @@ guards:                    # the state each guard starts in
   budget: false
 ```
 
-The environment variables the workshop sets today override the file: `AGENT_URL`, `PROXY_TIMEOUT`
-(seconds), `INPUT_GUARD`, `INPUT_BLOCKLIST`, `INPUT_CLASSIFIER`, `OUTPUT_GUARD` and `BUDGET_GUARD`,
-with the same `on`-only semantics as `proxy.py`. Read [docs/gotchas-go.md](docs/gotchas-go.md)
+The environment variables the workshop sets today override the file: `AGENT_URL`, `LLM_GUARD_URL`,
+`LLM_GUARD_TOKEN`, `PROXY_TIMEOUT` (seconds, for both upstreams), `PROXY_FAIL_CLOSED`, `BLOCK_LIST`
+(comma-separated), and `INPUT_GUARD`, `INPUT_BLOCKLIST`, `INPUT_CLASSIFIER`, `OUTPUT_GUARD` and
+`BUDGET_GUARD`, with the same `on`-only semantics as `proxy.py`. Read [docs/gotchas-go.md](docs/gotchas-go.md)
 before changing the upstream hop or adding a dependency.
 
 ## What it does
@@ -110,14 +130,15 @@ code under test.
 
 ```
 uv run pytest                                          # against proxy.py
-GUARD_PROXY_CMD="$PWD/bin/guard-proxy --listen 127.0.0.1:{port}" uv run pytest -m passthrough   # against the Go build
+GUARD_PROXY_CMD="$PWD/bin/guard-proxy --listen 127.0.0.1:{port}" uv run pytest -m "passthrough or guards"   # against the Go build
 uv run python conformance/mutation_check.py           # negative control, see below
 ```
 
 `GUARD_PROXY_CMD` is the only adapter. `{port}` is replaced with a free loopback port, and the suite
 waits for `GET /guards` to answer.
 
-`-m passthrough` selects the subset the Go build covers so far. Each milestone widens the selection,
+`-m "passthrough or guards"` selects the subset the Go build covers so far. The guard cases on the
+`/chat` path are not in it yet, because they need the `/chat` route. Each milestone widens the selection,
 and the Go build runs the whole suite once it reaches parity. `proxy.py` always runs all of it.
 
 The suite covers:

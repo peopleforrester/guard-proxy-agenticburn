@@ -52,3 +52,13 @@ checked. Read this before adding a dependency or changing how the proxy talks to
 - **otel-go has no `gen_ai.*` semantic-convention constants.** Checked in PRD #412 against otel-go
   v1.47.0. The attribute names come from `weaver/registry/guard-proxy-spans.yaml` in the workshop
   repository, generated into Go rather than typed by hand.
+
+## JSON
+
+- **`encoding/json` decodes every number into `float64` by default**, which corrupts an integer past
+  2^53, such as a large JSON-RPC id. The output guard decodes the agent's reply with
+  `Decoder.UseNumber()`, and the request id is echoed as `json.RawMessage`, so neither is reparsed.
+- **`json.Marshal` escapes `<`, `>` and `&` as `<` and friends.** That is valid JSON but
+  changes text the agent wrote, so the output guard re-encodes with `Encoder.SetEscapeHTML(false)`.
+  It also re-sorts object keys, which is why a reply the guard leaves alone is returned unchanged
+  rather than re-encoded.

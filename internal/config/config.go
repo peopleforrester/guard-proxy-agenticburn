@@ -16,15 +16,30 @@ import (
 	"time"
 
 	"go.yaml.in/yaml/v3"
+
+	"github.com/peopleforrester/guard-proxy-agenticburn/internal/guard"
 )
 
 // Config is the whole of guard-proxy's configuration.
 type Config struct {
 	// Listen is the address the HTTP server binds, as host:port.
-	Listen string `yaml:"listen"`
-	Agent  Agent  `yaml:"agent"`
+	Listen   string   `yaml:"listen"`
+	Agent    Agent    `yaml:"agent"`
+	LLMGuard LLMGuard `yaml:"llm_guard"`
+	// Blocklist is the input block-list, normalized to trimmed lowercase terms.
+	Blocklist []string `yaml:"blocklist"`
+	// FailClosed blocks a request or a reply when LLM Guard cannot give a verdict.
+	FailClosed bool `yaml:"fail_closed"`
 	// Guards is the state each guard starts in. The live toggles change it at runtime.
 	Guards Guards `yaml:"guards"`
+}
+
+// LLMGuard is the LLM Guard API that the classifier and the output guard call.
+type LLMGuard struct {
+	URL string `yaml:"url"`
+	// Token is read only from LLM_GUARD_TOKEN, so the config file never holds a secret.
+	Token   string   `yaml:"-"`
+	Timeout Duration `yaml:"timeout"`
 }
 
 // Agent is the upstream every request is proxied to.
@@ -63,8 +78,11 @@ func (d *Duration) UnmarshalYAML(n *yaml.Node) error {
 // then the environment read through getenv, then validation.
 func Load(path string, getenv func(string) (string, bool)) (Config, error) {
 	c := Config{
-		Listen: ":8080",
-		Agent:  Agent{Timeout: Duration{150 * time.Second}},
+		Listen:     ":8080",
+		Agent:      Agent{Timeout: Duration{150 * time.Second}},
+		LLMGuard:   LLMGuard{Timeout: Duration{150 * time.Second}},
+		Blocklist:  guard.ParseBlocklist(guard.DefaultBlocklist),
+		FailClosed: true,
 	}
 	if path != "" {
 		if err := decodeFile(path, &c); err != nil {
@@ -74,6 +92,7 @@ func Load(path string, getenv func(string) (string, bool)) (Config, error) {
 	if err := applyEnv(&c, getenv); err != nil {
 		return Config{}, err
 	}
+	c.Blocklist = guard.Normalize(c.Blocklist)
 	if err := c.validate(); err != nil {
 		return Config{}, err
 	}
@@ -104,12 +123,35 @@ func applyEnv(c *Config, getenv func(string) (string, bool)) error {
 	if v, ok := getenv("AGENT_URL"); ok {
 		c.Agent.URL = v
 	}
+	if v, ok := getenv("LLM_GUARD_URL"); ok {
+		c.LLMGuard.URL = v
+	}
+	if v, ok := getenv("LLM_GUARD_TOKEN"); ok {
+		c.LLMGuard.Token = v
+	}
+	if v, ok := getenv("BLOCK_LIST"); ok {
+		c.Blocklist = guard.ParseBlocklist(v)
+	}
+	if v, ok := getenv("PROXY_FAIL_CLOSED"); ok {
+		// The reference treats anything but "true" as false, so a typo turns fail-closed off. Here a
+		// typo stops startup instead.
+		switch strings.ToLower(strings.TrimSpace(v)) {
+		case "true":
+			c.FailClosed = true
+		case "false":
+			c.FailClosed = false
+		default:
+			return fmt.Errorf("PROXY_FAIL_CLOSED=%q: want true or false", v)
+		}
+	}
 	if v, ok := getenv("PROXY_TIMEOUT"); ok {
 		secs, err := strconv.ParseFloat(strings.TrimSpace(v), 64)
 		if err != nil || math.IsNaN(secs) || math.IsInf(secs, 0) {
 			return fmt.Errorf("PROXY_TIMEOUT=%q: want a number of seconds", v)
 		}
+		// One timeout bounds both upstreams, as in the reference proxy.
 		c.Agent.Timeout = Duration{time.Duration(secs * float64(time.Second))}
+		c.LLMGuard.Timeout = c.Agent.Timeout
 	}
 	// A guard switch is on only for the value "on", in any case, matching the reference proxy.
 	on := func(name string, dst *bool) {
@@ -136,12 +178,28 @@ func (c Config) validate() error {
 	if c.Agent.URL == "" {
 		return errors.New("config: agent.url (or AGENT_URL) is required")
 	}
-	u, err := url.Parse(c.Agent.URL)
-	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
-		return fmt.Errorf("config: agent.url %q is not an absolute http or https URL", c.Agent.URL)
+	if err := checkURL("agent.url", c.Agent.URL); err != nil {
+		return err
+	}
+	if c.LLMGuard.URL == "" {
+		return errors.New("config: llm_guard.url (or LLM_GUARD_URL) is required")
+	}
+	if err := checkURL("llm_guard.url", c.LLMGuard.URL); err != nil {
+		return err
 	}
 	if c.Agent.Timeout.Duration <= 0 {
 		return fmt.Errorf("config: agent timeout %v must be positive", c.Agent.Timeout.Duration)
+	}
+	if c.LLMGuard.Timeout.Duration <= 0 {
+		return fmt.Errorf("config: llm_guard timeout %v must be positive", c.LLMGuard.Timeout.Duration)
+	}
+	return nil
+}
+
+func checkURL(key, raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return fmt.Errorf("config: %s %q is not an absolute http or https URL", key, raw)
 	}
 	return nil
 }
