@@ -254,16 +254,15 @@ def read_controls():
     np = _k8s_get("/apis/networking.k8s.io/v1/namespaces/agent/networkpolicies/agent-egress-allowlist")
     out["networkpolicy"] = (np is not None)
 
-    # C2: restrict-image-registries is ENFORCING (Audit does not block, so Audit is 'not installed' for
-    # the badge). Mirror arm_infra_guardrails: spec.rules[0].validate.failureAction == Enforce.
-    cp = _k8s_get("/apis/kyverno.io/v1/clusterpolicies/restrict-image-registries")
-    if cp is None:
-        out["kyverno"] = False
-    else:
-        try:
-            out["kyverno"] = cp["spec"]["rules"][0]["validate"]["failureAction"] == "Enforce"
-        except (KeyError, IndexError, TypeError):
-            out["kyverno"] = False
+    # C2: restrict-image-registries is DENYING (Audit does not block, so Audit is 'not installed' for
+    # the badge). It is a Kyverno CEL ValidatingPolicy (Unleash_an_Agent_Watch_It_Burn #206), and the
+    # live toggle replaces its spec.validationActions list: armed when that list contains Deny.
+    vp = _k8s_get("/apis/policies.kyverno.io/v1/validatingpolicies/restrict-image-registries")
+    try:
+        actions = vp["spec"]["validationActions"]
+    except (KeyError, TypeError):
+        actions = None
+    out["kyverno"] = isinstance(actions, list) and "Deny" in actions
 
     # C3 prevention: the block-recipe-snoop KubeArmorPolicy exists.
     ka = _k8s_get("/apis/security.kubearmor.com/v1/namespaces/agent/kubearmorpolicies/block-recipe-snoop")

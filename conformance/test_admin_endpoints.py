@@ -305,6 +305,66 @@ def test_controls_reads_the_cluster_with_the_service_account_token(start_proxy, 
         assert call.headers["Authorization"] == f"Bearer {SA_TOKEN}"
 
 
+# --- /controls C2: the restrict-image-registries admission wall is denying -------------------------
+# The workshop's policy is a Kyverno CEL ValidatingPolicy (Unleash_an_Agent_Watch_It_Burn #206), cluster
+# scoped, and guard-proxy-reader's ClusterRole grants get on it by name. Its action is the list
+# spec.validationActions: Audit does not block, so the badge is armed only when the list holds Deny.
+
+C2_POLICY = "/apis/policies.kyverno.io/v1/validatingpolicies/restrict-image-registries"
+RETIRED_C2_CLUSTERPOLICY = "/apis/kyverno.io/v1/clusterpolicies/restrict-image-registries"
+
+
+def validating_policy(actions) -> dict:
+    return {
+        "apiVersion": "policies.kyverno.io/v1",
+        "kind": "ValidatingPolicy",
+        "metadata": {"name": "restrict-image-registries"},
+        "spec": {"validationActions": actions},
+    }
+
+
+@pytest.mark.parametrize(
+    "actions,expected",
+    [
+        (["Deny"], True),
+        (["Audit"], False),
+        (["Deny", "Audit"], True),
+        (["Audit", "Warn"], False),
+        ([], False),
+        # The field is a list; a bare string is not one, even one spelling Deny.
+        ("Deny", False),
+    ],
+)
+def test_controls_c2_reads_the_validating_policy_actions(start_proxy, kube_api, actions, expected):
+    kube_api.objects[C2_POLICY] = validating_policy(actions)
+    assert start_proxy(**kube_api.env).get("/controls").json()["infra"]["kyverno"] is expected
+
+
+def test_controls_c2_ignores_the_retired_clusterpolicy(start_proxy, kube_api):
+    """An Enforce ClusterPolicy left behind does not arm the badge: admission is the ValidatingPolicy."""
+    kube_api.objects[RETIRED_C2_CLUSTERPOLICY] = {
+        "kind": "ClusterPolicy",
+        "spec": {"rules": [{"validate": {"failureAction": "Enforce"}}]},
+    }
+    assert start_proxy(**kube_api.env).get("/controls").json()["infra"]["kyverno"] is False
+    assert kube_api.calls(RETIRED_C2_CLUSTERPOLICY) == []
+
+
+@pytest.mark.parametrize("policy", [{"kind": "ValidatingPolicy"}, {"kind": "ValidatingPolicy", "spec": {}}])
+def test_controls_c2_unarmed_when_the_policy_has_no_actions(start_proxy, kube_api, policy):
+    kube_api.objects[C2_POLICY] = policy
+    assert start_proxy(**kube_api.env).get("/controls").json()["infra"]["kyverno"] is False
+
+
+def test_controls_c2_reads_the_policy_with_the_service_account_token(start_proxy, kube_api):
+    """The C2 read is a GET of the one ValidatingPolicy guard-proxy-reader is granted by name."""
+    kube_api.objects[C2_POLICY] = validating_policy(["Deny"])
+    start_proxy(**kube_api.env).get("/controls")
+    [call] = kube_api.calls(C2_POLICY)
+    assert call.method == "GET"
+    assert call.headers["Authorization"] == f"Bearer {SA_TOKEN}"
+
+
 # --- GET passthrough to the agent -----------------------------------------------------------------
 
 
