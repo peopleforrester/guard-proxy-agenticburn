@@ -7,7 +7,10 @@ import pytest
 from conftest import http
 from fakes import FakeUpstream, Recorded, Reply, unreachable_url
 
-GUARD_KEYS = {"input_blocklist", "input_classifier", "output", "budget"}
+# The keys the Go build reports so far. The on-topic guard (`topic`) is in proxy.py only; its seeding
+# and toggling are pinned in test_topic_guard.py.
+BUILT_KEYS = {"input_blocklist", "input_classifier", "output", "budget"}
+GUARD_KEYS = BUILT_KEYS | {"topic"}
 
 
 # --- /guards: seeded from the environment ---------------------------------------------------------
@@ -15,6 +18,12 @@ GUARD_KEYS = {"input_blocklist", "input_classifier", "output", "budget"}
 
 @pytest.mark.passthrough
 def test_guards_default_all_off(start_proxy):
+    got = start_proxy().get("/guards").json()
+    assert set(got) >= BUILT_KEYS
+    assert not any(got.values())
+
+
+def test_guards_reports_every_key(start_proxy):
     assert start_proxy().get("/guards").json() == dict.fromkeys(GUARD_KEYS, False)
 
 
@@ -60,7 +69,7 @@ def test_toggle_input_flips_both_input_stages(start_proxy):
     p = start_proxy()
     state = p.toggle(input="on")
     assert state["input_blocklist"] and state["input_classifier"]
-    assert not state["output"] and not state["budget"]
+    assert not state["output"] and not state["budget"] and not state["topic"]
     state = p.toggle(input="off")
     assert not state["input_blocklist"] and not state["input_classifier"]
 

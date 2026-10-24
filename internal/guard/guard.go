@@ -67,8 +67,12 @@ func NewLLMGuard(url, token string, timeout time.Duration) *LLMGuard {
 }
 
 // ScanPrompt reports whether the input scanners allow text. An error means no verdict was reached.
+// BanTopics is suppressed: it shares the input scanner list, and it belongs to the on-topic guard.
 func (g *LLMGuard) ScanPrompt(ctx context.Context, text string) (bool, error) {
-	v, err := g.post(ctx, "/analyze/prompt", map[string]string{"prompt": text})
+	v, err := g.post(ctx, "/analyze/prompt", map[string]any{
+		"prompt":            text,
+		"scanners_suppress": []string{"BanTopics"},
+	})
 	if err != nil {
 		return false, err
 	}

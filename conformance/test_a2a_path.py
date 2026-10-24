@@ -128,7 +128,8 @@ def test_classifier_allows_valid_prompt_and_calls_llm_guard(start_proxy, agent, 
     assert p.a2a("one burrito please").status == 200
     (call,) = guard.calls()
     assert call.path == "/analyze/prompt"
-    assert call.json() == {"prompt": "one burrito please"}
+    # BanTopics shares the input scanner list with the injection classifier; the topic guard owns it.
+    assert call.json() == {"prompt": "one burrito please", "scanners_suppress": ["BanTopics"]}
     assert call.headers["Authorization"] == f"Bearer {GUARD_TOKEN}"
     assert call.headers["Content-Type"] == "application/json"
     assert len(agent.calls()) == 1
