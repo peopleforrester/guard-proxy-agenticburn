@@ -117,6 +117,18 @@ def test_decision_input_classifier(traced, agent, guard, guard_state):
     assert root[DECISION] == "input_classifier"
 
 
+@pytest.mark.parametrize("step", ["off_phrase", "classifier"])
+def test_decision_topic(traced, agent, guard, step):
+    env = {"TOPIC_GUARD": "on", "TOPIC_OFF_LIST": "karaoke"}
+    if step == "classifier":
+        guard.respond = lambda req: Reply(body=verdict(False))
+    p, spans = traced(**env)
+    prompt = "recommend karaoke songs" if step == "off_phrase" else "who will win the world series"
+    assert p.chat(prompt).json()["guarded"] is True
+    (root,) = _roots(spans, 1)
+    assert root[DECISION] == "topic"
+
+
 def test_decision_rate_limit(traced, agent):
     p, spans = traced(RATE_LIMIT_RPM="1")
     p.chat("1")

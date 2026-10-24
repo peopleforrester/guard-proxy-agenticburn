@@ -1091,6 +1091,7 @@ class Handler(BaseHTTPRequestHandler):
             if step:
                 log.info("chat input refused as off-topic (step %s)", step,
                          extra={"event": "topic_guard_block", "step": step})
+                self._stamp("witb.guard.decision", "topic")
                 self._send(200, {"reply": TOPIC_REFUSAL, "guarded": True,
                                  "input_tokens": 0, "output_tokens": 0})
                 return
