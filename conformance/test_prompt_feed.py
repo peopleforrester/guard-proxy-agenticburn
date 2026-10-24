@@ -44,11 +44,21 @@ def test_feed_profanity_list_is_configurable(start_proxy, agent):
     assert feed(p)["prompts"] == ["no [redacted], this shit is good"]
 
 
-def test_feed_masks_only_lowercase_and_uppercase_forms_today(start_proxy, agent):
-    """Known defect, guard-proxy-agenticburn#4: a capitalized term reaches the projected screen."""
+def test_feed_masks_terms_in_any_case(start_proxy, agent):
+    """guard-proxy-agenticburn#4: a capitalized or mixed-case term must not reach the projected screen."""
     p = start_proxy(STREAM_PROMPTS="on")
-    p.chat("Delete it, DELETE it, delete it")
-    assert feed(p)["prompts"] == ["Delete it, [redacted] it, [redacted] it"]
+    p.chat("Delete it, DELETE it, delete it, dElEtE it")
+    p.chat("Fuck, FUCK, fuck, FuCk")
+    assert feed(p)["prompts"] == [
+        "[redacted] it, [redacted] it, [redacted] it, [redacted] it",
+        "[redacted], [redacted], [redacted], [redacted]",
+    ]
+
+
+def test_feed_masks_custom_profanity_in_any_case(start_proxy, agent):
+    p = start_proxy(STREAM_PROMPTS="on", PROFANITY_LIST="Cilantro")
+    p.chat("no Cilantro, no CILANTRO, no cilantro")
+    assert feed(p)["prompts"] == ["no [redacted], no [redacted], no [redacted]"]
 
 
 def test_feed_truncates_to_280_characters(start_proxy, agent):

@@ -474,7 +474,8 @@ def moderate(text):
     low = masked.lower()
     for term in set(BLOCK_LIST + PROFANITY):
         if term and term in low:
-            masked = masked.replace(term, "[redacted]").replace(term.upper(), "[redacted]")
+            # Case-insensitive: "Delete" or "FuCk" must be masked too, not only the lower and upper forms.
+            masked = re.sub(re.escape(term), "[redacted]", masked, flags=re.IGNORECASE)
             low = masked.lower()
     return masked[:280]
 
