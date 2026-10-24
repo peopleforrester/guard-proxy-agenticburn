@@ -1058,6 +1058,10 @@ class Handler(BaseHTTPRequestHandler):
                     reply = _inner.strip()
                     log.info("model returned reasoning twice; surfacing it rather than an empty reply",
                              extra={"event": "thinking_only_surfaced"})
+                else:
+                    # An empty scratchpad leaves nothing to surface. Drop the raw tags so the student
+                    # sees "..." rather than markup.
+                    reply = ""
             if chat_span is not None and _CAPTURE_CONTENT and reply:
                 chat_span.set_attribute("gen_ai.output.messages", _genai_output(reply))
             guarded = False

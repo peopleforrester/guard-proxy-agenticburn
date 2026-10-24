@@ -310,10 +310,17 @@ def test_thinking_only_twice_surfaces_the_reasoning(start_proxy, agent):
     assert "thinking_only_surfaced" in p.events()
 
 
-def test_thinking_only_empty_scratchpad_twice_shows_raw_tags_today(start_proxy, agent):
-    """Known defect, guard-proxy-agenticburn#2: the raw tags reach the student. Fix both together."""
-    agent.respond = _sequence(a2a_result("<thinking></thinking>"))
-    assert start_proxy().chat("hi").json()["reply"] == "<thinking></thinking>"
+@pytest.mark.parametrize(
+    "thinking",
+    ["<thinking></thinking>", "< Thinking >  </thinking >", "<thinking></thinking> ."],
+)
+def test_thinking_only_empty_scratchpad_twice_shows_no_markup(start_proxy, agent, thinking):
+    """guard-proxy-agenticburn#2: with nothing to surface, the student sees "...", not raw tags."""
+    agent.respond = _sequence(a2a_result(thinking))
+    p = start_proxy()
+    assert p.chat("hi").json()["reply"] == "..."
+    assert len(agent.calls()) == 2, "one retry, never a loop"
+    assert "thinking_only_surfaced" not in p.events()
 
 
 def test_thinking_only_retry_failure_is_502_today(start_proxy, agent):
