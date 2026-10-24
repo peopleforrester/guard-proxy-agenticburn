@@ -178,7 +178,11 @@ def test_classifier_fail_open(start_proxy, agent):
 
 def test_classifier_receives_the_prompt(start_proxy, guard):
     start_proxy(INPUT_CLASSIFIER="on").chat("one burrito")
-    assert guard.calls("/analyze/prompt")[0].json() == {"prompt": "one burrito"}
+    # BanTopics shares the input scanner list with the injection classifier; the topic guard owns it.
+    assert guard.calls("/analyze/prompt")[0].json() == {
+        "prompt": "one burrito",
+        "scanners_suppress": ["BanTopics"],
+    }
 
 
 def test_output_guard_redaction_marks_guarded(start_proxy, agent, guard):

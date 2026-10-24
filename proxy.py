@@ -53,6 +53,10 @@ class _TraceJsonFormatter(logging.Formatter):
         event = getattr(record, "event", None)
         if event:
             payload["event"] = event
+        # Which step of a multi-step guard decided, for a facet beside the event (topic_guard_block).
+        step = getattr(record, "step", None)
+        if step:
+            payload["step"] = step
         if _OTEL_AVAILABLE:
             ctx = trace.get_current_span().get_span_context()
             if ctx.is_valid:
@@ -114,6 +118,10 @@ GUARDS = {
     # The denial-of-wallet control (C4). Off = Round 1, the bill runs away. On = the per-agent budget
     # cap enforces at the gateway. Toggled live like the others.
     "budget": os.environ.get("BUDGET_GUARD", "off").lower() == "on",
+    # The on-topic guard (Unleash_an_Agent_Watch_It_Burn#455): BurritoBot sells burritos only. Off by
+    # default, and not seeded by INPUT_GUARD: every challenge prompt is off-topic by design, so the
+    # run-of-show turns it on alone, in segment 7.
+    "topic": os.environ.get("TOPIC_GUARD", "off").lower() == "on",
 }
 # Fail closed: if LLM Guard is unreachable, block rather than silently leak (no-silent-fallback rule).
 FAIL_CLOSED = os.environ.get("PROXY_FAIL_CLOSED", "true").lower() == "true"
@@ -392,6 +400,17 @@ BLOCK_LIST = [t.strip().lower() for t in os.environ.get(
     "WITCH-HAZEL-GHOST-PEPPER-BAT-SPIT-No7,OPHELIA-THORN-TIBBY-TOP-SPIRE-No9",
 ).split(",") if t.strip()]
 
+# On-topic guard (#455): decides cheapest first. An off phrase refuses, then an on phrase passes, and
+# anything with neither goes to LLM Guard's BanTopics zero-shot scanner. The phrases carry the on-topic
+# side because BanTopics softmaxes over the banned labels only, so a short menu question ("do you have mild
+# salsa") lands its whole score on some banned label. The lists and the refusal belong with the persona, so
+# the workshop ships them as env (gitops/ai-layer/resources.yaml); unset lists are empty, which leaves every
+# prompt to the classifier. Comma-separated like BLOCK_LIST; case is left alone because matching ignores it.
+TOPIC_OFF_LIST = [t.strip() for t in os.environ.get("TOPIC_OFF_LIST", "").split(",") if t.strip()]
+TOPIC_ON_LIST = [t.strip() for t in os.environ.get("TOPIC_ON_LIST", "").split(",") if t.strip()]
+TOPIC_REFUSAL = os.environ.get(
+    "TOPIC_REFUSAL", "BurritoBot only talks burritos: the menu, our hours, and our locations.")
+
 # Live cost meter: tally Bedrock token usage from each agent response (kagent reports the real
 # promptTokenCount / candidatesTokenCount) and convert to USD for the "wasted tokens are the new DoS"
 # story. The COUNTER value is never hardcoded; only the per-tier PRICE table is config, and the
@@ -593,10 +612,50 @@ def blocklisted(text):
 def input_allowed(text):
     """True if the request prompt is allowed; False if the input scanner flags it."""
     try:
-        verdict = _post_guard("/analyze/prompt", {"prompt": text})
+        # BanTopics shares the input scanner list, and it belongs to the topic stage: without the
+        # suppress, turning on C6 would also ban topics.
+        verdict = _post_guard("/analyze/prompt", {"prompt": text, "scanners_suppress": ["BanTopics"]})
         return bool(verdict.get("is_valid", True))
     except Exception:
         return not FAIL_CLOSED
+
+
+# The phrase rule, ported from phrase_verdict in Unleash_an_Agent_Watch_It_Burn verify/topic_cases.py: a
+# term matches as whole words, case-insensitive, with an optional plural "s". "song" matches "songs", "hot
+# dog" matches "Hot Dogs", and "rice" does not match "price". Off is checked before on, so "salsa dance
+# moves" refuses even though "salsa" is on the menu.
+def _topic_matches(text, terms):
+    alts = sorted((re.escape(t.strip()) for t in terms if t.strip()), key=len, reverse=True)
+    # An empty list matches nothing. Joined as-is it would be an empty alternation, which matches everywhere.
+    return bool(alts) and re.search(r"\b(?:" + "|".join(alts) + r")s?\b", text, re.IGNORECASE) is not None
+
+
+def phrase_verdict(text, off_terms, on_terms):
+    """'off' when an off phrase is present, else 'on' when an on phrase is, else None (the classifier decides)."""
+    if _topic_matches(text, off_terms):
+        return "off"
+    if _topic_matches(text, on_terms):
+        return "on"
+    return None
+
+
+def topic_refused(text):
+    """The step that refuses an off-topic prompt, "off_phrase" or "classifier", or None to let it through.
+
+    A classifier error follows PROXY_FAIL_CLOSED, as the injection classifier does."""
+    phrase = phrase_verdict(text, TOPIC_OFF_LIST, TOPIC_ON_LIST)
+    if phrase == "off":
+        return "off_phrase"
+    if phrase == "on":
+        return None
+    try:
+        # Only BanTopics speaks here; the injection classifier is its own stage with its own toggle.
+        verdict = _post_guard("/analyze/prompt",
+                              {"prompt": text, "scanners_suppress": ["PromptInjection"]})
+        allowed = bool(verdict.get("is_valid", True))
+    except Exception:
+        allowed = not FAIL_CLOSED
+    return None if allowed else "classifier"
 
 
 def output_scrub(text):
@@ -760,15 +819,15 @@ class Handler(BaseHTTPRequestHandler):
                              "host": os.environ.get("WIB_PUBLIC_HOST", "")})
             return
         if self.path.startswith("/toggle"):
-            # Runtime flip, no restart, no spec change. Keys: input_blocklist, input_classifier, output.
-            # Convenience: input=on flips BOTH input stages. e.g. /toggle?input_blocklist=on
+            # Runtime flip, no restart, no spec change. Keys: input_blocklist, input_classifier, output,
+            # budget, topic. Convenience: input=on flips BOTH input stages. e.g. /toggle?input_blocklist=on
             q = parse_qs(urlparse(self.path).query)
             with _guard_lock:
                 if "input" in q:
                     on = q["input"][0].lower() == "on"
                     GUARDS["input_blocklist"] = on
                     GUARDS["input_classifier"] = on
-                for k in ("input_blocklist", "input_classifier", "output", "budget"):
+                for k in ("input_blocklist", "input_classifier", "output", "budget", "topic"):
                     if k in q:
                         GUARDS[k] = q[k][0].lower() == "on"
                 self._send(200, dict(GUARDS))
@@ -879,6 +938,18 @@ class Handler(BaseHTTPRequestHandler):
                         "jsonrpc": "2.0", "id": payload.get("id"),
                         "error": {"code": -32600,
                                   "message": "Request blocked by input guardrail (prompt injection detected)."},
+                    })
+                    return
+            # Stage 3: the on-topic guard, after both input stages and before the caps, so a refusal
+            # spends no tokens and takes no rate-limit slot.
+            if GUARDS["topic"] and text:
+                step = topic_refused(text)
+                if step:
+                    log.info("input refused as off-topic (step %s)", step,
+                             extra={"event": "topic_guard_block", "step": step})
+                    self._send(403, {
+                        "jsonrpc": "2.0", "id": payload.get("id"),
+                        "error": {"code": -32600, "message": TOPIC_REFUSAL},
                     })
                     return
 
@@ -997,7 +1068,8 @@ class Handler(BaseHTTPRequestHandler):
         if STREAM_ENABLED and not _is_probe(prompt):
             with _stream_lock:
                 _prompts.append(moderate(prompt))
-        # Input guards (same toggles as the A2A path), then rate/cost cap. A blocked request spends 0 tokens.
+        # Input guards and the topic guard (same toggles as the A2A path), then rate/cost cap. A blocked
+        # request spends 0 tokens.
         if GUARDS["input_blocklist"]:
             hit = blocklisted(prompt)
             if hit:
@@ -1014,6 +1086,14 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, {"reply": "BurritoBot can't help with that (blocked by the input guardrail).",
                              "guarded": True, "input_tokens": 0, "output_tokens": 0})
             return
+        if GUARDS["topic"]:
+            step = topic_refused(prompt)
+            if step:
+                log.info("chat input refused as off-topic (step %s)", step,
+                         extra={"event": "topic_guard_block", "step": step})
+                self._send(200, {"reply": TOPIC_REFUSAL, "guarded": True,
+                                 "input_tokens": 0, "output_tokens": 0})
+                return
         if rate_limited():
             self._stamp("witb.guard.decision", "rate_limit")
             self._send(200, {"reply": f"Slow down, hungry traveler. ({RATE_LIMIT_RPM}/min cap on this cluster.)",

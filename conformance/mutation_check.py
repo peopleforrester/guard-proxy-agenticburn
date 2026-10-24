@@ -29,6 +29,31 @@ MUTANTS: list[tuple[str, str, str]] = [
         "    low = text\n    return next(",
     ),
     ("classifier ignores verdict", 'return bool(verdict.get("is_valid", True))', "return True"),
+    (
+        "injection scan drops the suppress list",
+        '{"prompt": text, "scanners_suppress": ["BanTopics"]}',
+        '{"prompt": text}',
+    ),
+    (
+        "topic scan drops the suppress list",
+        '{"prompt": text, "scanners_suppress": ["PromptInjection"]}',
+        '{"prompt": text}',
+    ),
+    (
+        "topic phrases checked on before off",
+        '    if _topic_matches(text, off_terms):\n        return "off"\n    if _topic_matches(text, on_terms):\n        return "on"',
+        '    if _topic_matches(text, on_terms):\n        return "on"\n    if _topic_matches(text, off_terms):\n        return "off"',
+    ),
+    (
+        "topic phrases match substrings",
+        r'r"\b(?:" + "|".join(alts) + r")s?\b"',
+        r'r"(?:" + "|".join(alts) + r")"',
+    ),
+    (
+        "topic classifier ignores verdict",
+        '        allowed = bool(verdict.get("is_valid", True))',
+        "        allowed = True",
+    ),
     ("output scrub skips status message", '        scrub(status_msg.get("parts", []))\n', ""),
     (
         "output scrub touches user history",
@@ -78,8 +103,13 @@ MUTANTS: list[tuple[str, str, str]] = [
     ),
     (
         "toggle ignores budget",
+        'for k in ("input_blocklist", "input_classifier", "output", "budget", "topic"):',
+        'for k in ("input_blocklist", "input_classifier", "output", "topic"):',
+    ),
+    (
+        "toggle ignores topic",
+        'for k in ("input_blocklist", "input_classifier", "output", "budget", "topic"):',
         'for k in ("input_blocklist", "input_classifier", "output", "budget"):',
-        'for k in ("input_blocklist", "input_classifier", "output"):',
     ),
     (
         "C7 badge ignores the gateway rule",

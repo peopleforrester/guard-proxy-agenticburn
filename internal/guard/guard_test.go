@@ -73,7 +73,8 @@ func TestScanPromptSendsThePromptWithTheToken(t *testing.T) {
 	if c.path != "/analyze/prompt" || c.auth != "Bearer tok" || c.contentType != "application/json" {
 		t.Errorf("call = %+v", c)
 	}
-	if len(c.body) != 1 || c.body["prompt"] != "one burrito" {
+	suppress, _ := c.body["scanners_suppress"].([]any)
+	if len(c.body) != 2 || c.body["prompt"] != "one burrito" || len(suppress) != 1 || suppress[0] != "BanTopics" {
 		t.Errorf("body = %v", c.body)
 	}
 }
