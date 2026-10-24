@@ -643,8 +643,10 @@ def _is_dangling_tooluse(reply):
 # 151), it is the model occasionally stopping after the scratchpad.
 #
 # The tag is matched loosely because Nova varies it: <Thinking>, </thinking >, and internal padding all
-# occur, and a strict pattern would leave the tag in place and count it as an answer.
-_THINK_TAG_RE = re.compile(r"<\s*thinking\s*>.*?<\s*/\s*thinking\s*>", re.S | re.I)
+# occur, and a strict pattern would leave the tag in place and count it as an answer. Nova also sometimes
+# never closes the block, so an unclosed tag runs to the end of the reply (guard-proxy-agenticburn#10),
+# the same reading the storefront's splitThinking gives it. Group 1 is the scratchpad's contents.
+_THINK_TAG_RE = re.compile(r"<\s*thinking\s*>(.*?)(?:<\s*/\s*thinking\s*>|$)", re.S | re.I)
 
 
 def _is_thinking_only(reply):
@@ -1135,8 +1137,7 @@ class Handler(BaseHTTPRequestHandler):
             # it is usually a serviceable answer in the first person ("I need to list the proteins"), and
             # showing it is more honest than an empty bubble that implies the agent ignored them.
             if _thinking_only and reply:
-                _inner = " ".join(t.strip() for t in re.findall(
-                    r"<\s*thinking\s*>(.*?)<\s*/\s*thinking\s*>", reply, re.S | re.I))
+                _inner = " ".join(t.strip() for t in _THINK_TAG_RE.findall(reply))
                 if _inner.strip():
                     reply = _inner.strip()
                     log.info("model returned reasoning twice; surfacing it rather than an empty reply",

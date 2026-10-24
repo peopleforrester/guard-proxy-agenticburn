@@ -286,6 +286,9 @@ def test_dangling_tool_use_retry_failure_is_502(start_proxy, agent):
         "<thinking>I should list the proteins.</thinking>",
         "< Thinking >I should list the proteins.</thinking >",
         "<thinking>I should list the proteins.</thinking> .",
+        # Nova sometimes never closes the block; it runs to the end of the reply (guard-proxy-agenticburn#10).
+        "<thinking>I should list the proteins.",
+        "< Thinking > I should list the proteins.\n",
     ],
 )
 def test_thinking_only_reply_is_retried_once(start_proxy, agent, thinking):
@@ -310,9 +313,18 @@ def test_thinking_only_twice_surfaces_the_reasoning(start_proxy, agent):
     assert "thinking_only_surfaced" in p.events()
 
 
+def test_unclosed_thinking_twice_surfaces_the_reasoning(start_proxy, agent):
+    """guard-proxy-agenticburn#10: an unclosed block is reasoning to the end of the reply."""
+    agent.respond = _sequence(a2a_result("<thinking> I need the menu. "))
+    p = start_proxy()
+    assert p.chat("proteins?").json()["reply"] == "I need the menu."
+    assert len(agent.calls()) == 2, "one retry, never a loop"
+    assert "thinking_only_surfaced" in p.events()
+
+
 @pytest.mark.parametrize(
     "thinking",
-    ["<thinking></thinking>", "< Thinking >  </thinking >", "<thinking></thinking> ."],
+    ["<thinking></thinking>", "< Thinking >  </thinking >", "<thinking></thinking> .", "<thinking>", "<thinking>  "],
 )
 def test_thinking_only_empty_scratchpad_twice_shows_no_markup(start_proxy, agent, thinking):
     """guard-proxy-agenticburn#2: with nothing to surface, the student sees "...", not raw tags."""
@@ -352,4 +364,11 @@ def test_reply_with_reasoning_and_answer_is_not_retried(start_proxy, agent):
     agent.respond = _sequence(a2a_result("<thinking>easy</thinking>Two burritos coming up."))
     reply = start_proxy().chat("hi").json()["reply"]
     assert reply == "<thinking>easy</thinking>Two burritos coming up."
+    assert len(agent.calls()) == 1
+
+
+def test_answer_before_an_unclosed_thinking_is_not_retried(start_proxy, agent):
+    agent.respond = _sequence(a2a_result("Two burritos coming up. <thinking>maybe chips"))
+    reply = start_proxy().chat("hi").json()["reply"]
+    assert reply == "Two burritos coming up. <thinking>maybe chips"
     assert len(agent.calls()) == 1
