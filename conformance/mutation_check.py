@@ -82,6 +82,16 @@ MUTANTS: list[tuple[str, str, str]] = [
         'for k in ("input_blocklist", "input_classifier", "output"):',
     ),
     (
+        "C7 badge ignores the gateway rule",
+        "    gateway = _c7_gateway_rule_narrowed()\n",
+        "    gateway = False\n",
+    ),
+    (
+        "C7 badge ignores the allow-list",
+        "    allowlist = _c7_allowlist_narrowed()\n",
+        "    allowlist = False\n",
+    ),
+    (
         "client credentials forwarded",
         "                    req = urllib.request.Request(\n                        fwd_url, data=raw, headers=fwd_headers,",
         "                    req = urllib.request.Request(\n                        fwd_url, data=raw, headers={**dict(self.headers), **fwd_headers},",

@@ -123,15 +123,17 @@ TIMEOUT = float(os.environ.get("PROXY_TIMEOUT", "150"))
 # The AI guards above are guard-proxy's own in-memory state. The badges for C1-C3 and C7 report the
 # state of real cluster objects the student installs, which only the Kubernetes API knows. This block
 # reads them read-only, with the pod's own ServiceAccount token, so the browser can light a badge the
-# moment a student applies the control (a NetworkPolicy, a Kyverno Enforce flip, a KubeArmor policy, or
-# an emptied MCP tool list).
+# moment a student applies the control (a NetworkPolicy, a Kyverno Enforce flip, a KubeArmor policy, a
+# narrowed MCP tool list, or a narrowed agentgateway mcpAuthorization rule).
 #
 # Deliberately narrow: the guard-proxy is the component the challenges ATTACK, so its new RBAC is
-# get-only on four named objects and nothing else (see the Role/ClusterRole in resources.yaml). Reading
-# whether a NetworkPolicy exists is not an escalation an attacker gains anything from, and the token is
+# get-only on the named objects read below and nothing else (see the Role/ClusterRole in
+# resources.yaml). Reading whether a NetworkPolicy exists is not an escalation an attacker gains anything from, and the token is
 # never exposed to the model path.
-_K8S_HOST = "https://kubernetes.default.svc"
-_K8S_TOKEN_PATH = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+# Both overridable so the conformance suite can stand a fake API server in for the cluster. In a pod
+# they stay unset and the in-cluster defaults apply.
+_K8S_HOST = os.environ.get("K8S_API_URL") or "https://kubernetes.default.svc"
+_K8S_TOKEN_PATH = os.environ.get("K8S_TOKEN_PATH") or "/var/run/secrets/kubernetes.io/serviceaccount/token"
 _K8S_CA_PATH = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
 _CONTROLS_TTL = 5.0        # seconds; the strip polls every 12s, so a short cache is plenty
 _controls_cache = {"ts": 0.0, "val": None}
@@ -157,6 +159,75 @@ def _k8s_get(path):
             return json.loads(r.read())
     except Exception:
         return None
+
+
+# The C7 gateway rule's contract with the workshop repo (Unleash_an_Agent_Watch_It_Burn #514): ConfigMap
+# agent/agentgateway-c7-config, key config.yaml, and the one line ending `# c7-rule`. 'true' is open;
+# the web terminal's guard-mcp-on rewrites that line to admit get_weather alone.
+_C7_RULE_MARKER = "# c7-rule"
+_C7_RULE_OPEN = "true"
+_C7_RULE_NARROWED = 'mcp.tool.name == "get_weather"'
+
+
+def _yaml_quoted(scalar):
+    """The value of a single- or double-quoted YAML scalar, the scalar itself if unquoted, or None."""
+    if len(scalar) >= 2 and scalar[0] == scalar[-1] == "'":
+        return scalar[1:-1].replace("''", "'")
+    if len(scalar) >= 2 and scalar[0] == scalar[-1] == '"':
+        try:
+            return json.loads(scalar)
+        except ValueError:
+            return None
+    return scalar
+
+
+def _c7_gateway_rule_narrowed():
+    """True when agentgateway's C7 rule admits only get_weather, False when it is open, else None.
+
+    Read by its marker line, the same line the toggle rewrites, because the stdlib has no YAML parser.
+    A missing marker, a second marked line, or a rule this does not recognize is None: an unknown rule
+    could still admit a rogue tool, so the badge claims nothing either way."""
+    cm = _k8s_get("/api/v1/namespaces/agent/configmaps/agentgateway-c7-config")
+    try:
+        marked = [ln.strip() for ln in cm["data"]["config.yaml"].splitlines()
+                  if ln.rstrip().endswith(_C7_RULE_MARKER)]
+    except (KeyError, TypeError, AttributeError):
+        return None
+    if len(marked) != 1:
+        return None
+    item = marked[0][:-len(_C7_RULE_MARKER)].strip()
+    if not item.startswith("- "):
+        return None
+    rule = _yaml_quoted(item[2:].strip())
+    if rule == _C7_RULE_NARROWED:
+        return True
+    if rule == _C7_RULE_OPEN:
+        return False
+    return None
+
+
+def _c7_allowlist_narrowed():
+    """True when the agent's toolNames no longer carry the two rogue tools, False when they do, None if
+    the Agent could not be read. The evil-mcp server ships with
+    [get_weather, read_internal_config, apply_optimization]."""
+    ag = _k8s_get("/apis/kagent.dev/v1alpha2/namespaces/agent/agents/workshop-agent")
+    if ag is None:
+        return None
+    rogue = {"read_internal_config", "apply_optimization"}
+    present = set()
+    try:
+        for t in ag["spec"]["declarative"]["tools"]:
+            srv = t.get("mcpServer") or {}
+            names = srv.get("toolNames") or []
+            # kagent treats an EMPTY toolNames as "expose every tool on that server", so an
+            # emptied evil-mcp entry still ships the rogue tools. Verified live 2026-09-05: with
+            # [] the sentinel kept leaking; with ["get_weather"] it stopped. Count it as unfixed.
+            if srv.get("name") == "evil-mcp" and not names:
+                present |= rogue
+            present.update(names)
+    except (KeyError, TypeError):
+        pass
+    return not (rogue & present)
 
 
 def read_controls():
@@ -194,28 +265,19 @@ def read_controls():
     # not a control the student toggles; it is the always-on half of the prevention/detection pair.
     out["falco"] = True
 
-    # C7: the rogue tools are gone from the agent's allow-list. The evil-mcp server ships with
-    # [get_weather, read_internal_config, apply_optimization]; the control is installed once its
-    # toolNames no longer carry the two rogue tools (the student empties them).
-    ag = _k8s_get("/apis/kagent.dev/v1alpha2/namespaces/agent/agents/workshop-agent")
-    if ag is None:
-        out["tool_allowlist"] = None
+    # C7: the rogue evil-mcp tools are blocked. Two controls can block them, and the badge lights when
+    # either does. On the KubeCon admin cluster it is agentgateway's mcpAuthorization rule on the bind
+    # evil-mcp is dialed through: guard-mcp-on narrows the rule and leaves toolNames full. On a workshop
+    # cluster the rule stays open and the control is the agent's toolNames allow-list. Either one
+    # blocking is True, both measured open is False, anything else is None.
+    gateway = _c7_gateway_rule_narrowed()
+    allowlist = _c7_allowlist_narrowed()
+    if gateway or allowlist:
+        out["tool_allowlist"] = True
+    elif gateway is False and allowlist is False:
+        out["tool_allowlist"] = False
     else:
-        rogue = {"read_internal_config", "apply_optimization"}
-        present = set()
-        try:
-            for t in ag["spec"]["declarative"]["tools"]:
-                srv = t.get("mcpServer") or {}
-                names = srv.get("toolNames") or []
-                # kagent treats an EMPTY toolNames as "expose every tool on that server", so an
-                # emptied evil-mcp entry still ships the rogue tools. Verified live 2026-09-05: with
-                # [] the sentinel kept leaking; with ["get_weather"] it stopped. Count it as unfixed.
-                if srv.get("name") == "evil-mcp" and not names:
-                    present |= rogue
-                present.update(names)
-        except (KeyError, TypeError):
-            pass
-        out["tool_allowlist"] = not (rogue & present)
+        out["tool_allowlist"] = None
 
     # C8 (#111): the agent-sa Role is "fixed" once its secrets access is scoped down from blanket
     # get/list to get on the recipe Secret by name. Report true when the broad access is gone: no rule
@@ -685,8 +747,8 @@ class Handler(BaseHTTPRequestHandler):
         if self.path.startswith("/controls"):
             # Badge state for the whole control set (#197/#209): the AI guards this proxy owns, PLUS the
             # cluster-object controls (C1 NetworkPolicy, C2 Kyverno enforce, C3 KubeArmor + always-on
-            # Falco, C7 tool allow-list) read live from the K8s API. One endpoint so the strip renders
-            # every badge from a single poll.
+            # Falco, C7 gateway rule or tool allow-list) read live from the K8s API. One endpoint so the
+            # strip renders every badge from a single poll.
             with _guard_lock:
                 ai = dict(GUARDS)
             # "host" tells the page which cluster answered. The community cluster is shared by the

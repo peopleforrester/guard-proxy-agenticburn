@@ -100,7 +100,8 @@ Everything is set through environment variables:
 
 ```
 AGENT_URL  BUDGET_CAP_USD  BUDGET_GUARD  CONSOLE_ORIGIN  COST_CAP_USD  INPUT_BLOCKLIST
-INPUT_CLASSIFIER  INPUT_GUARD  LLM_GUARD_TOKEN  LLM_GUARD_URL  MODEL_NAME  MODEL_TIER
+INPUT_CLASSIFIER  INPUT_GUARD  K8S_API_URL  K8S_TOKEN_PATH  LLM_GUARD_TOKEN  LLM_GUARD_URL
+MODEL_NAME  MODEL_TIER
 OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT  OUTPUT_GUARD  PEER_SERVICE  PROFANITY_LIST
 PROXY_FAIL_CLOSED  PROXY_TIMEOUT  RATE_LIMIT_RPM  STREAM_PROMPTS  WIB_PUBLIC_HOST
 ```
@@ -161,8 +162,9 @@ pass.
 - **Telemetry (spans and the cost metric).** It needs the OpenTelemetry SDK that the cluster
   injects, and it arrives with the Go rewrite's telemetry milestone, against a recorded baseline from
   `proxy.py`.
-- **`/controls` against a live cluster API.** `proxy.py` has no endpoint override, so only the
-  no-credentials case is tested.
+- **`/controls` against a cluster API, beyond C7.** `K8S_API_URL` and `K8S_TOKEN_PATH` point
+  `proxy.py` at a fake API server, and the C7 badge is tested that way. The other cluster-backed
+  badges are tested only in the no-credentials case.
 
 **Known defects are pinned, not hidden.** A test whose name ends in `_today` asserts current behavior
 that is wrong, and names the issue that tracks it (#1 through #4). Fixing one changes `proxy.py` and

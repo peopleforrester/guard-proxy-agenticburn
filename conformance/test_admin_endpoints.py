@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from conftest import http
-from fakes import Reply, unreachable_url
+from fakes import FakeUpstream, Recorded, Reply, unreachable_url
 
 GUARD_KEYS = {"input_blocklist", "input_classifier", "output", "budget"}
 
@@ -137,8 +137,7 @@ def test_controls_without_cluster_credentials(start_proxy):
     """Outside a pod there is no ServiceAccount token, so every cluster read is 'could not read'.
 
     Absent objects read as not installed, except the two badges whose None means unknown, and Falco,
-    which is always on. A cluster-backed case needs an API endpoint override that proxy.py does not
-    have; the Go implementation adds one and extends this file.
+    which is always on. The cluster-backed cases below point K8S_API_URL at a fake API server.
     """
     p = start_proxy(INPUT_BLOCKLIST="on", WIB_PUBLIC_HOST="michael-student.agenticburn.com")
     assert p.get("/controls").json() == {
@@ -157,6 +156,144 @@ def test_controls_without_cluster_credentials(start_proxy):
 
 def test_controls_host_defaults_empty(start_proxy):
     assert start_proxy().get("/controls").json()["host"] == ""
+
+
+# --- /controls C7: the rogue evil-mcp tools are blocked ---------------------------------------------
+# Two controls can block them. On the KubeCon admin cluster it is agentgateway's mcpAuthorization rule
+# on the :3003 bind evil-mcp is dialed through; the contract (Unleash_an_Agent_Watch_It_Burn #514) is
+# ConfigMap agent/agentgateway-c7-config, key config.yaml, the one line ending `# c7-rule`, where
+# 'true' is open and 'mcp.tool.name == "get_weather"' is narrowed. On a workshop cluster that rule
+# stays open and the control is the kagent Agent's toolNames for evil-mcp.
+
+SA_TOKEN = "conformance-sa-token"
+C7_CONFIGMAP = "/api/v1/namespaces/agent/configmaps/agentgateway-c7-config"
+AGENT_CR = "/apis/kagent.dev/v1alpha2/namespaces/agent/agents/workshop-agent"
+ALL_EVIL_TOOLS = ["get_weather", "read_internal_config", "apply_optimization"]
+RULE_OPEN = "- 'true' # c7-rule"
+RULE_NARROWED = """- 'mcp.tool.name == "get_weather"' # c7-rule"""
+
+
+def c7_config(rule_line: str) -> str:
+    """agentgateway-c7-config's config.yaml in the shape #514 commits, with `rule_line` as the rule."""
+    return (
+        "binds:\n"
+        "- port: 3003\n"
+        "  listeners:\n"
+        "  - protocol: HTTP\n"
+        "    routes:\n"
+        "    - policies:\n"
+        "        mcpAuthorization:\n"
+        "          rules:\n"
+        f"          {rule_line}\n"
+        "      backends:\n"
+        "      - mcp:\n"
+        "          targets:\n"
+        "          - name: evil-mcp\n"
+        "            mcp:\n"
+        "              host: http://evil-mcp-shim.agent.svc.cluster.local:8000/mcp\n"
+    )
+
+
+def configmap(config_yaml: str) -> dict:
+    return {"kind": "ConfigMap", "data": {"config.yaml": config_yaml}}
+
+
+def workshop_agent(evil_tool_names: list[str]) -> dict:
+    return {
+        "kind": "Agent",
+        "spec": {
+            "declarative": {
+                "tools": [
+                    {"type": "McpServer", "mcpServer": {"name": "workshop-mcp", "toolNames": []}},
+                    {
+                        "type": "McpServer",
+                        "mcpServer": {"name": "evil-mcp", "toolNames": evil_tool_names},
+                    },
+                ]
+            }
+        },
+    }
+
+
+@pytest.fixture
+def kube_api(tmp_path):
+    """A fake Kubernetes API serving `objects` by path, 404 for anything else, and a token file."""
+    objects: dict[str, dict] = {}
+
+    def respond(req: Recorded) -> Reply:
+        if req.path in objects:
+            return Reply(body=objects[req.path])
+        return Reply(status=404, body={"kind": "Status", "reason": "NotFound"})
+
+    up = FakeUpstream(respond)
+    up.objects = objects
+    token = tmp_path / "sa-token"
+    token.write_text(SA_TOKEN + "\n")
+    up.env = {"K8S_API_URL": up.url, "K8S_TOKEN_PATH": str(token)}
+    yield up
+    up.close()
+
+
+@pytest.mark.parametrize(
+    "rule_line,evil_tools,expected",
+    [
+        # Admin cluster: toolNames stays full and the gateway rule is the control.
+        (RULE_NARROWED, ALL_EVIL_TOOLS, True),
+        (RULE_OPEN, ALL_EVIL_TOOLS, False),
+        # Workshop cluster: the gateway rule stays open and toolNames is the control.
+        (RULE_OPEN, ["get_weather"], True),
+        # An emptied toolNames exposes every tool on the server, so it blocks nothing.
+        (RULE_OPEN, [], False),
+        (RULE_NARROWED, ["get_weather"], True),
+        # The rule's quoting does not change its meaning.
+        ('- "mcp.tool.name == \\"get_weather\\"" # c7-rule', ALL_EVIL_TOOLS, True),
+        ('- "true" # c7-rule', ALL_EVIL_TOOLS, False),
+    ],
+)
+def test_controls_c7_reads_the_gateway_rule_and_the_allow_list(
+    start_proxy, kube_api, rule_line, evil_tools, expected
+):
+    kube_api.objects[C7_CONFIGMAP] = configmap(c7_config(rule_line))
+    kube_api.objects[AGENT_CR] = workshop_agent(evil_tools)
+    assert start_proxy(**kube_api.env).get("/controls").json()["infra"]["tool_allowlist"] is expected
+
+
+@pytest.mark.parametrize(
+    "config_yaml",
+    [
+        # A rule the badge does not recognize could still admit a rogue tool.
+        c7_config("""- 'mcp.tool.name != "read_internal_config"' # c7-rule"""),
+        # No marked line, or two of them: the contract is broken, so the rule's state is unknown.
+        c7_config("- 'true'"),
+        c7_config(RULE_NARROWED) + "# a second marked line # c7-rule\n",
+    ],
+)
+def test_controls_c7_unknown_when_the_gateway_rule_cannot_be_read(start_proxy, kube_api, config_yaml):
+    kube_api.objects[C7_CONFIGMAP] = configmap(config_yaml)
+    kube_api.objects[AGENT_CR] = workshop_agent(ALL_EVIL_TOOLS)
+    assert start_proxy(**kube_api.env).get("/controls").json()["infra"]["tool_allowlist"] is None
+
+
+def test_controls_c7_unknown_without_the_gateway_configmap(start_proxy, kube_api):
+    """A missing ConfigMap reads like a denied one: the badge cannot tell, so it claims nothing."""
+    kube_api.objects[AGENT_CR] = workshop_agent(ALL_EVIL_TOOLS)
+    assert start_proxy(**kube_api.env).get("/controls").json()["infra"]["tool_allowlist"] is None
+
+
+def test_controls_c7_narrowed_rule_counts_without_the_agent(start_proxy, kube_api):
+    kube_api.objects[C7_CONFIGMAP] = configmap(c7_config(RULE_NARROWED))
+    assert start_proxy(**kube_api.env).get("/controls").json()["infra"]["tool_allowlist"] is True
+
+
+def test_controls_reads_the_cluster_with_the_service_account_token(start_proxy, kube_api):
+    """The C7 reads are GETs of the two objects guard-proxy-reader is granted by name."""
+    kube_api.objects[C7_CONFIGMAP] = configmap(c7_config(RULE_OPEN))
+    kube_api.objects[AGENT_CR] = workshop_agent(ALL_EVIL_TOOLS)
+    start_proxy(**kube_api.env).get("/controls")
+    for path in (C7_CONFIGMAP, AGENT_CR):
+        [call] = kube_api.calls(path)
+        assert call.method == "GET"
+        assert call.headers["Authorization"] == f"Bearer {SA_TOKEN}"
 
 
 # --- GET passthrough to the agent -----------------------------------------------------------------
