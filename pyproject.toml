@@ -8,7 +8,7 @@ requires-python = ">=3.12"
 dependencies = []
 
 [dependency-groups]
-dev = ["pytest>=9.1", "ruff>=0.14"]
+dev = ["opentelemetry-sdk==1.45.1", "pytest>=9.1", "ruff>=0.14"]
 
 [tool.uv]
 package = false

@@ -646,6 +646,14 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _stamp(self, key, value):
+        # An attribute on the HTTP SERVER span (set in do_POST), if any. The /chat root carries the
+        # browser session and which guard decided the turn: a blocked turn ends before any agent span
+        # exists, so the root is the only span a dashboard can scope a session or name a guard from.
+        _sp = getattr(self, "_server_span", None)
+        if _sp is not None:
+            _sp.set_attribute(key, value)
+
     def do_GET(self):
         if self.path == "/cost":
             # Expose the ACTIVE ceiling alongside the spend so the UI can say "$x of $y" instead of a bare
@@ -912,6 +920,8 @@ class Handler(BaseHTTPRequestHandler):
         except Exception:
             prompt = ""
             session = ""
+        if isinstance(session, str) and session:
+            self._stamp("session.id", session)  # OTel semconv; joins one browser session's traces
         if not isinstance(prompt, str) or not prompt.strip():
             self._send(400, {"reply": "Tell BurritoBot what you'd like.", "guarded": False,
                              "input_tokens": 0, "output_tokens": 0})
@@ -925,16 +935,19 @@ class Handler(BaseHTTPRequestHandler):
             if hit:
                 log.info("chat input blocked by block-list (matched %r)", hit,
                          extra={"event": "input_blocklist_hit"})
+                self._stamp("witb.guard.decision", "input_blocklist")
                 self._send(200, {"reply": f"BurritoBot can't help with that (blocked: '{hit}'). "
                                           "No model tokens were spent.",
                                  "guarded": True, "input_tokens": 0, "output_tokens": 0})
                 return
         if GUARDS["input_classifier"] and not input_allowed(prompt):
             log.info("chat input blocked by classifier", extra={"event": "input_classifier_block"})
+            self._stamp("witb.guard.decision", "input_classifier")
             self._send(200, {"reply": "BurritoBot can't help with that (blocked by the input guardrail).",
                              "guarded": True, "input_tokens": 0, "output_tokens": 0})
             return
         if rate_limited():
+            self._stamp("witb.guard.decision", "rate_limit")
             self._send(200, {"reply": f"Slow down, hungry traveler. ({RATE_LIMIT_RPM}/min cap on this cluster.)",
                              "guarded": True, "input_tokens": 0, "output_tokens": 0})
             return
@@ -942,6 +955,8 @@ class Handler(BaseHTTPRequestHandler):
             _cap = BUDGET_CAP_USD if GUARDS.get("budget") else COST_CAP_USD
             # The way out is Reset, not switching the control off. A fresh conversation gets a fresh
             # budget and the guardrail stays armed, which is what a per-tenant quota does in production.
+            # "budget" covers both caps, as the reply does: either way spend stopped the turn.
+            self._stamp("witb.guard.decision", "budget")
             self._send(200, {"reply": f"The kitchen tab is frozen. This conversation hit its ${_cap:.2f} "
                                       f"spend budget, so I'm not sending anything else to the model. A "
                                       f"blocked request costs nothing. Press Reset for a fresh "
@@ -1077,6 +1092,8 @@ class Handler(BaseHTTPRequestHandler):
                     reply, guarded = "[blocked by the output guardrail]", True
                 elif scrubbed != reply:
                     reply, guarded = scrubbed, True
+            if guarded:
+                self._stamp("witb.guard.decision", "output_redacted")
             # Per-call cost so the storefront can show a live dollar counter without hardcoding rates client-side.
             cost_usd = (pin / 1000.0) * COST_PER_1K_IN + (pout / 1000.0) * COST_PER_1K_OUT
             self._send(200, {"reply": reply or "...", "guarded": guarded,
