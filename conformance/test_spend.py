@@ -93,20 +93,65 @@ def test_blocked_requests_cost_nothing(start_proxy, agent):
     assert p.get("/cost").json()["usd"] == 0.0
 
 
-def test_retry_tokens_are_not_metered_today(start_proxy, agent):
-    """Known defect, guard-proxy-agenticburn#3: only the final reply of a self-heal retry is metered.
+# Every model call is billed by the provider, so a self-heal retry meters both attempts
+# (guard-proxy-agenticburn#3). /cost counts model calls, and the turn reports what it spent in all.
 
-    The first attempt was billed by the model provider, so /cost and the budget cap undercount.
-    """
-    first = a2a_result("<thinking>hmm</thinking>", prompt_tokens=1000, output_tokens=1000)
-    second = a2a_result("Done.", prompt_tokens=1000, output_tokens=1000)
-    queue = [first, second]
-    agent.respond = lambda req: Reply(body=queue.pop(0))
-    p = start_proxy()
-    p.chat("hi")
+DANGLING = (
+    "ValidationException: messages.3: `tool_use` ids were found without `tool_result` "
+    "blocks immediately after"
+)
+
+
+def _queue(*replies):
+    queue = list(replies)
+    return lambda req: queue.pop(0)
+
+
+@pytest.mark.parametrize(
+    "first,second",
+    [
+        ("<thinking>hmm</thinking>", "Done."),  # the retry recovers
+        ("<thinking>hmm</thinking>", "<thinking>still</thinking>"),  # both reasoning-only
+        (DANGLING, "Fresh start."),  # the context rotation
+    ],
+)
+def test_retry_meters_every_attempt(start_proxy, agent, first, second):
+    agent.respond = _queue(
+        Reply(body=a2a_result(first, prompt_tokens=1000, output_tokens=200)),
+        Reply(body=a2a_result(second, prompt_tokens=3000, output_tokens=400)),
+    )
+    p = start_proxy(MODEL_TIER="haiku")
+    turn = p.chat("hi", session="s1").json()
     assert len(agent.calls()) == 2
     body = p.get("/cost").json()
+    assert (body["requests"], body["input_tokens"], body["output_tokens"]) == (2, 4000, 600)
+    usd = 4.0 * 0.001 + 0.6 * 0.005
+    assert body["usd"] == pytest.approx(usd)
+    assert (turn["input_tokens"], turn["output_tokens"]) == (4000, 600)
+    assert turn["cost_usd"] == pytest.approx(usd)
+
+
+def test_failed_retry_still_meters_the_first_attempt(start_proxy, agent):
+    agent.respond = _queue(
+        Reply(body=a2a_result(DANGLING, prompt_tokens=1000, output_tokens=200)),
+        Reply(status=500, body={}),
+    )
+    p = start_proxy()
+    assert p.chat("hi", session="s1").status == 502
+    body = p.get("/cost").json()
     assert (body["requests"], body["input_tokens"]) == (1, 1000)
+
+
+def test_retry_spend_counts_toward_the_session_budget(start_proxy, agent):
+    # Two attempts at $0.003 each make $0.006, past a $0.005 cap that one attempt would not reach.
+    agent.respond = _queue(
+        Reply(body=a2a_result("<thinking>hmm</thinking>", prompt_tokens=0, output_tokens=600)),
+        Reply(body=a2a_result("Done.", prompt_tokens=0, output_tokens=600)),
+    )
+    p = start_proxy(BUDGET_GUARD="on", BUDGET_CAP_USD="0.005")
+    p.chat("1", session="a")
+    assert p.chat("2", session="a").json()["guarded"] is True
+    assert len(agent.calls()) == 2
 
 
 # --- Rate limit (requests per minute, shared by both paths) ---------------------------------------

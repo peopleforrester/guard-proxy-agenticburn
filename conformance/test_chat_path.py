@@ -296,7 +296,8 @@ def test_thinking_only_reply_is_retried_once(start_proxy, agent, thinking):
     p = start_proxy()
     body = p.chat("proteins?").json()
     assert body["reply"] == "Chicken, steak, tofu."
-    assert (body["input_tokens"], body["output_tokens"]) == (20, 2)
+    # The turn reports both attempts, since both were billed (guard-proxy-agenticburn#3).
+    assert (body["input_tokens"], body["output_tokens"]) == (30, 3)
     assert len(agent.calls()) == 2
     assert "thinking_only_retry" in p.events()
 

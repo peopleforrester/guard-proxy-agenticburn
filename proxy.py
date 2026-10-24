@@ -1003,7 +1003,20 @@ class Handler(BaseHTTPRequestHandler):
                 chat_span.set_attribute("gen_ai.request.model", MODEL_NAME)
                 if _CAPTURE_CONTENT:
                     chat_span.set_attribute("gen_ai.input.messages", _genai_messages(prompt))
-            resp = _forward(_effective_ctx(session))
+            # Every model call is billed, so each attempt is metered as it returns, not only the reply
+            # the turn ends on (guard-proxy-agenticburn#3). spent sums the turn for the storefront.
+            spent = [0, 0]
+
+            def _attempt():
+                r = _forward(_effective_ctx(session))
+                if r is not None:
+                    record_usage(r, session)  # feed the live cost counter (same path as A2A)
+                    tin, tout = chat_usage_tokens(r)
+                    spent[0] += tin
+                    spent[1] += tout
+                return r
+
+            resp = _attempt()
             if resp is None:
                 return
             # Self-heal: if kagent left a dangling tool_use in this session's history, Bedrock rejects every
@@ -1012,7 +1025,7 @@ class Handler(BaseHTTPRequestHandler):
                 _ctx_gen[session] = _ctx_gen.get(session, 0) + 1
                 log.info("chat session poisoned by dangling tool_use; rotated contextId to gen %d",
                          _ctx_gen[session], extra={"event": "ctx_rotate"})
-                retry = _forward(_effective_ctx(session))
+                retry = _attempt()
                 if retry is None:
                     return
                 resp = retry
@@ -1024,12 +1037,11 @@ class Handler(BaseHTTPRequestHandler):
             if _thinking_only:
                 log.info("model returned reasoning with no answer; retrying once",
                          extra={"event": "thinking_only_retry"})
-                retry = _forward(_effective_ctx(session))
+                retry = _attempt()
                 if retry is not None and not _is_thinking_only(chat_reply_text(retry)):
                     resp = retry
                     _thinking_only = False
-            record_usage(resp, session)  # feed the live cost counter (same path as A2A)
-            pin, pout = chat_usage_tokens(resp)
+            pin, pout = spent
             reply = chat_reply_text(resp)
             # LAST RESORT, after the retry above already failed. Measured after adding the retry: the
             # empty-reply rate fell from 1-in-6 to 1-in-10, because sometimes BOTH attempts stop after the
