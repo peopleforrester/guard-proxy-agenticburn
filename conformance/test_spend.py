@@ -298,6 +298,15 @@ def test_budget_cap_without_session_uses_cluster_total(start_proxy, agent):
     assert "$0.01" in r.json()["error"]["message"]
 
 
+@pytest.mark.parametrize("session", [{"id": "a"}, ["a"]])
+def test_budget_cap_with_a_non_string_session_uses_cluster_total(start_proxy, agent, session):
+    agent.respond = _reply_costing()
+    p = start_proxy(BUDGET_GUARD="on", BUDGET_CAP_USD="0.01")
+    p.chat("1", session="a")
+    p.chat("2", session="b")
+    assert p.post("/chat", {"prompt": "3", "session": session}).json()["guarded"] is True
+
+
 def test_budget_cap_off_does_not_bind(start_proxy, agent):
     agent.respond = _reply_costing()
     p = start_proxy(BUDGET_CAP_USD="0.001")

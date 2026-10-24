@@ -984,7 +984,11 @@ class Handler(BaseHTTPRequestHandler):
         except Exception:
             prompt = ""
             session = ""
-        if isinstance(session, str) and session:
+        # A non-string session (an object, array, number) is no session: an unhashable one would
+        # otherwise crash the per-session cost lookup and drop the connection.
+        if not isinstance(session, str):
+            session = ""
+        if session:
             self._stamp("session.id", session)  # OTel semconv; joins one browser session's traces
         if not isinstance(prompt, str) or not prompt.strip():
             self._send(400, {"reply": "Tell BurritoBot what you'd like.", "guarded": False,

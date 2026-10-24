@@ -65,6 +65,15 @@ def test_wraps_prompt_as_a2a_message_send_to_agent_root(start_proxy, agent):
     assert "contextId" not in second["params"]["message"]
 
 
+@pytest.mark.parametrize("session", [{"id": "x"}, ["x"], 42, True])
+def test_non_string_session_is_no_session(start_proxy, agent, session):
+    """guard-proxy-agenticburn#12: an object or array session once dropped the connection."""
+    r = start_proxy().post("/chat", {"prompt": "hi", "session": session})
+    assert r.status == 200
+    assert r.json()["reply"] == "Here is your burrito."
+    assert "contextId" not in agent.calls()[0].json()["params"]["message"]
+
+
 def test_response_shape_and_per_call_cost(start_proxy, agent):
     agent.respond = lambda req: Reply(
         body=a2a_result("Done.", prompt_tokens=2000, output_tokens=400)
