@@ -323,20 +323,29 @@ def test_thinking_only_empty_scratchpad_twice_shows_no_markup(start_proxy, agent
     assert "thinking_only_surfaced" not in p.events()
 
 
-def test_thinking_only_retry_failure_is_502_today(start_proxy, agent):
-    """Known defect, guard-proxy-agenticburn#1: the usable first reply is dropped. Fix both together."""
+def test_thinking_only_retry_failure_surfaces_the_first_reply(start_proxy, agent):
+    """The retry is an optional improvement, so its failure keeps the first reply
+    (guard-proxy-agenticburn#1): one 200 carrying the scratchpad, never a 502 plus a 200."""
     calls = {"n": 0}
 
     def respond(req):
         calls["n"] += 1
         if calls["n"] == 1:
-            return Reply(body=a2a_result("<thinking>menu first</thinking>"))
+            return Reply(body=a2a_result("<thinking>menu first</thinking>", prompt_tokens=10, output_tokens=1))
         return Reply(status=500, body={})
 
     agent.respond = respond
-    r = start_proxy().chat("hi")
-    assert r.status == 502
-    assert r.json()["reply"] == "BurritoBot's kitchen isn't answering. Try again in a moment."
+    p = start_proxy()
+    r = p.chat("hi")
+    assert r.status == 200
+    body = r.json()
+    assert body["reply"] == "menu first"
+    assert body["guarded"] is False
+    assert (body["input_tokens"], body["output_tokens"]) == (10, 1)
+    assert len(agent.calls()) == 2
+    events = p.events()
+    assert "forward_error" in events
+    assert "thinking_only_surfaced" in events
 
 
 def test_reply_with_reasoning_and_answer_is_not_retried(start_proxy, agent):

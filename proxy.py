@@ -950,9 +950,10 @@ class Handler(BaseHTTPRequestHandler):
         # Forward as A2A message/send to the agent root, inside a CLIENT span (the Service Map egress hop).
         global _chat_seq
 
-        def _forward(ctx):
+        def _forward(ctx, optional=False):
             """Send the prompt to the agent under contextId ctx. Returns the A2A resp, or None on a
-            transport error (in which case a 502 has already been sent)."""
+            transport error. A 502 has then already been sent, unless optional is set: the caller still
+            holds a usable reply and answers with it, so exactly one response reaches the client."""
             global _chat_seq
             _chat_seq += 1
             m = {"role": "user", "messageId": f"chat-{_chat_seq}",
@@ -977,6 +978,8 @@ class Handler(BaseHTTPRequestHandler):
                         return json.loads(r.read())
                 except Exception as exc:
                     log.error("chat forward failed: %s", exc, extra={"event": "forward_error"})
+                    if optional:
+                        return None
                     self._send(502, {"reply": "BurritoBot's kitchen isn't answering. Try again in a moment.",
                                      "guarded": False, "input_tokens": 0, "output_tokens": 0})
                     return None
@@ -1007,8 +1010,8 @@ class Handler(BaseHTTPRequestHandler):
             # the turn ends on (guard-proxy-agenticburn#3). spent sums the turn for the storefront.
             spent = [0, 0]
 
-            def _attempt():
-                r = _forward(_effective_ctx(session))
+            def _attempt(optional=False):
+                r = _forward(_effective_ctx(session), optional)
                 if r is not None:
                     record_usage(r, session)  # feed the live cost counter (same path as A2A)
                     tin, tout = chat_usage_tokens(r)
@@ -1037,7 +1040,9 @@ class Handler(BaseHTTPRequestHandler):
             if _thinking_only:
                 log.info("model returned reasoning with no answer; retrying once",
                          extra={"event": "thinking_only_retry"})
-                retry = _attempt()
+                # The first reply is still usable (the last resort below surfaces its scratchpad), so a
+                # failed retry falls back to it instead of answering 502 (guard-proxy-agenticburn#1).
+                retry = _attempt(optional=True)
                 if retry is not None and not _is_thinking_only(chat_reply_text(retry)):
                     resp = retry
                     _thinking_only = False
