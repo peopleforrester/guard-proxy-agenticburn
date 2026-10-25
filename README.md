@@ -162,9 +162,10 @@ pass.
 - **Telemetry (spans and the cost metric).** It needs the OpenTelemetry SDK that the cluster
   injects, and it arrives with the Go rewrite's telemetry milestone, against a recorded baseline from
   `proxy.py`.
-- **`/controls` against a cluster API, beyond C7.** `K8S_API_URL` and `K8S_TOKEN_PATH` point
-  `proxy.py` at a fake API server, and the C7 badge is tested that way. The other cluster-backed
-  badges are tested only in the no-credentials case.
+- **`/controls` against a cluster API, for C1, C3 KubeArmor and C8.** `K8S_API_URL` and
+  `K8S_TOKEN_PATH` point `proxy.py` at a fake API server, and the C2 Kyverno ValidatingPolicy, C3
+  Falco DaemonSet and C7 badges are tested that way. The C1 NetworkPolicy, C3 KubeArmor and C8
+  `rbac_scoped` badges are tested only in the no-credentials case.
 
 **Known defects are pinned, not hidden.** A test whose name ends in `_today` asserts current behavior
 that is wrong, and names the issue that tracks it (#1 through #4). Fixing one changes `proxy.py` and
