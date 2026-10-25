@@ -115,8 +115,8 @@ GUARDS = {
     "input_blocklist": _input_legacy or os.environ.get("INPUT_BLOCKLIST", "off").lower() == "on",
     "input_classifier": _input_legacy or os.environ.get("INPUT_CLASSIFIER", "off").lower() == "on",
     "output": os.environ.get("OUTPUT_GUARD", "off").lower() == "on",
-    # The denial-of-wallet control (C4). Off = Round 1, the bill runs away. On = the per-agent budget
-    # cap enforces at the gateway. Toggled live like the others.
+    # The denial-of-wallet control (C4). Off, as on the community cluster: the bill runs away. On = the
+    # per-agent budget cap enforces at the gateway. Toggled live like the others.
     "budget": os.environ.get("BUDGET_GUARD", "off").lower() == "on",
     # The on-topic guard (Unleash_an_Agent_Watch_It_Burn#455): BurritoBot sells burritos only. Off by
     # default, and not seeded by INPUT_GUARD: every challenge prompt is off-topic by design, so the
@@ -1045,7 +1045,7 @@ class Handler(BaseHTTPRequestHandler):
         """BurritoBot storefront contract (B1): POST {prompt} -> {reply, guarded, input_tokens,
         output_tokens}. Wraps the prompt as an A2A message/send and runs the SAME input/output guards,
         rate/cost cap, cost metering, and agent forward as the A2A root, then reshapes the response. The
-        guard TOGGLES apply identically, so the round-2/round-3 guardrail demo affects BurritoBot too."""
+        guard TOGGLES apply identically, so the guardrail toggles affect BurritoBot too."""
         raw = self.rfile.read(int(self.headers.get("Content-Length", "0")))
         try:
             body = json.loads(raw) or {}
