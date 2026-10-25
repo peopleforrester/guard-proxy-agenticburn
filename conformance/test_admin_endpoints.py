@@ -145,8 +145,8 @@ def test_cost_budget_guard_follows_toggle(start_proxy):
 def test_controls_without_cluster_credentials(start_proxy):
     """Outside a pod there is no ServiceAccount token, so every cluster read is 'could not read'.
 
-    Absent objects read as not installed, except the two badges whose None means unknown, and Falco,
-    which is always on. The cluster-backed cases below point K8S_API_URL at a fake API server.
+    Absent objects read as not installed, except the two badges whose None means unknown. The
+    cluster-backed cases below point K8S_API_URL at a fake API server.
     """
     p = start_proxy(INPUT_BLOCKLIST="on", WIB_PUBLIC_HOST="michael-student.agenticburn.com")
     assert p.get("/controls").json() == {
@@ -155,7 +155,7 @@ def test_controls_without_cluster_credentials(start_proxy):
             "networkpolicy": False,
             "kyverno": False,
             "kubearmor": False,
-            "falco": True,
+            "falco": False,
             "tool_allowlist": None,
             "rbac_scoped": None,
         },
@@ -303,6 +303,60 @@ def test_controls_reads_the_cluster_with_the_service_account_token(start_proxy, 
         [call] = kube_api.calls(path)
         assert call.method == "GET"
         assert call.headers["Authorization"] == f"Bearer {SA_TOKEN}"
+
+
+# --- /controls C3 detection: Falco is on this cluster ----------------------------------------------
+# The burn profile (the Community cluster) installs no Falco (Unleash_an_Agent_Watch_It_Burn #486), so
+# the badge reads the security/falco DaemonSet the Falco chart creates, which guard-proxy-reader's
+# ClusterRole grants get on by name. Measured on means the DaemonSet has a ready pod.
+
+FALCO_DS = "/apis/apps/v1/namespaces/security/daemonsets/falco"
+
+
+def falco_daemonset(status) -> dict:
+    return {"apiVersion": "apps/v1", "kind": "DaemonSet", "metadata": {"name": "falco"}, "status": status}
+
+
+@pytest.mark.parametrize(
+    "status,expected",
+    [
+        ({"desiredNumberScheduled": 3, "numberReady": 3}, True),
+        ({"desiredNumberScheduled": 3, "numberReady": 1}, True),
+        # Scheduled but not ready, or not yet reported: nothing is watching.
+        ({"desiredNumberScheduled": 3, "numberReady": 0}, False),
+        ({"desiredNumberScheduled": 3}, False),
+        ({}, False),
+    ],
+)
+def test_controls_falco_reads_the_daemonset(start_proxy, kube_api, status, expected):
+    kube_api.objects[FALCO_DS] = falco_daemonset(status)
+    assert start_proxy(**kube_api.env).get("/controls").json()["infra"]["falco"] is expected
+
+
+def test_controls_falco_off_where_it_is_not_installed(start_proxy, kube_api):
+    """The Community cluster: no Falco DaemonSet, so no detection badge."""
+    assert start_proxy(**kube_api.env).get("/controls").json()["infra"]["falco"] is False
+
+
+def test_controls_falco_off_when_the_read_is_denied(start_proxy, tmp_path):
+    """A cluster whose reader role lacks the DaemonSet grant answers 403: the badge claims nothing."""
+    denied = FakeUpstream(lambda req: Reply(status=403, body={"kind": "Status", "reason": "Forbidden"}))
+    token = tmp_path / "sa-token"
+    token.write_text(SA_TOKEN + "\n")
+    try:
+        p = start_proxy(K8S_API_URL=denied.url, K8S_TOKEN_PATH=str(token))
+        assert p.get("/controls").json()["infra"]["falco"] is False
+        assert [c.path for c in denied.calls(FALCO_DS)] == [FALCO_DS]
+    finally:
+        denied.close()
+
+
+def test_controls_falco_is_a_get_with_the_service_account_token(start_proxy, kube_api):
+    kube_api.objects[FALCO_DS] = falco_daemonset({"numberReady": 1})
+    start_proxy(**kube_api.env).get("/controls")
+    [call] = kube_api.calls(FALCO_DS)
+    assert call.method == "GET"
+    assert call.headers["Authorization"] == f"Bearer {SA_TOKEN}"
 
 
 # --- /controls C2: the restrict-image-registries admission wall is denying -------------------------

@@ -268,9 +268,15 @@ def read_controls():
     ka = _k8s_get("/apis/security.kubearmor.com/v1/namespaces/agent/kubearmorpolicies/block-recipe-snoop")
     out["kubearmor"] = (ka is not None)
 
-    # C3 detection: Falco is always deployed and always watching, so its badge is always engaged. It is
-    # not a control the student toggles; it is the always-on half of the prevention/detection pair.
-    out["falco"] = True
+    # C3 detection: Falco is on this cluster and watching. It is not a control the student toggles, but
+    # it is not on every cluster either: the burn profile (the Community cluster) installs none
+    # (Unleash_an_Agent_Watch_It_Burn #486). So it is measured like the rest: the security/falco
+    # DaemonSet exists and has a ready pod. A DaemonSet with no ready pod detects nothing.
+    ds = _k8s_get("/apis/apps/v1/namespaces/security/daemonsets/falco")
+    try:
+        out["falco"] = int(ds["status"].get("numberReady") or 0) > 0
+    except (KeyError, TypeError, AttributeError, ValueError):
+        out["falco"] = False
 
     # C7: the rogue evil-mcp tools are blocked. Two controls can block them, and the badge lights when
     # either does. On the KubeCon admin cluster it is agentgateway's mcpAuthorization rule on the bind
@@ -806,8 +812,8 @@ class Handler(BaseHTTPRequestHandler):
             return
         if self.path.startswith("/controls"):
             # Badge state for the whole control set (#197/#209): the AI guards this proxy owns, PLUS the
-            # cluster-object controls (C1 NetworkPolicy, C2 Kyverno enforce, C3 KubeArmor + always-on
-            # Falco, C7 gateway rule or tool allow-list) read live from the K8s API. One endpoint so the
+            # cluster-object controls (C1 NetworkPolicy, C2 Kyverno enforce, C3 KubeArmor + Falco, C7
+            # gateway rule or tool allow-list) read live from the K8s API. One endpoint so the
             # strip renders every badge from a single poll.
             with _guard_lock:
                 ai = dict(GUARDS)
