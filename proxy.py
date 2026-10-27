@@ -325,6 +325,9 @@ def read_controls():
 # proxy fronts one cluster) and env-tunable; 0 disables. verify-at-build: set caps to the room size.
 COST_CAP_USD = float(os.environ.get("COST_CAP_USD", "0") or "0")     # reject once this cluster's tally hits it
 RATE_LIMIT_RPM = int(os.environ.get("RATE_LIMIT_RPM", "0") or "0")   # max model-bound requests per 60s
+# Per /chat conversation, checked before the cluster window: a ballroom shares one bot, and one phone must not
+# spend everyone's slots. 0 turns it off. A request with no session is held only by the cluster window.
+RATE_LIMIT_SESSION_RPM = int(os.environ.get("RATE_LIMIT_SESSION_RPM", "0") or "0")
 
 # Denial-of-wallet control (Challenge 4, replacing the fork bomb). Token spend is its own DoS vector:
 # a room, or an agent talked into a loop, runs the Bedrock bill up while nothing crashes. The counter on
@@ -341,6 +344,7 @@ RATE_LIMIT_RPM = int(os.environ.get("RATE_LIMIT_RPM", "0") or "0")   # max model
 BUDGET_CAP_USD = float(os.environ.get("BUDGET_CAP_USD", "0.03") or "0.03")
 _rate_lock = threading.Lock()
 _req_times = collections.deque()  # timestamps of recent forwarded POSTs (sliding 60s window)
+_session_times = {}  # session -> deque of its recent /chat timestamps, under _rate_lock
 
 
 def rate_limited():
@@ -354,6 +358,24 @@ def rate_limited():
         if len(_req_times) >= RATE_LIMIT_RPM:
             return True
         _req_times.append(now)
+        return False
+
+
+def session_rate_limited(session):
+    """True if this /chat conversation is over RATE_LIMIT_SESSION_RPM. Sliding 60s window per session."""
+    if RATE_LIMIT_SESSION_RPM <= 0 or not session:
+        return False
+    now = time.monotonic()
+    with _rate_lock:
+        if len(_session_times) > 5000:  # a room of abandoned conversations must not grow without bound
+            for k in [k for k, q in _session_times.items() if not q or now - q[-1] > 60.0]:
+                del _session_times[k]
+        q = _session_times.setdefault(session, collections.deque())
+        while q and now - q[0] > 60.0:
+            q.popleft()
+        if len(q) >= RATE_LIMIT_SESSION_RPM:
+            return True
+        q.append(now)
         return False
 
 
@@ -1100,6 +1122,11 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, {"reply": TOPIC_REFUSAL, "guarded": True,
                                  "input_tokens": 0, "output_tokens": 0})
                 return
+        if session_rate_limited(session):
+            self._stamp("witb.guard.decision", "rate_limit")
+            self._send(200, {"reply": f"Slow down, hungry traveler. ({RATE_LIMIT_SESSION_RPM}/min per conversation.)",
+                             "guarded": True, "input_tokens": 0, "output_tokens": 0})
+            return
         if rate_limited():
             self._stamp("witb.guard.decision", "rate_limit")
             self._send(200, {"reply": f"Slow down, hungry traveler. ({RATE_LIMIT_RPM}/min cap on this cluster.)",

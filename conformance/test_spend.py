@@ -186,6 +186,47 @@ def test_rate_limit_chat_is_200_guarded(start_proxy, agent):
     }
 
 
+# --- Rate limit per conversation (a ballroom of phones on one bot) --------------------------------
+# One phone must not spend the room's shared window. Each /chat session gets its own 60s window, checked
+# first, so a refused prompt does not take a slot from everyone else (Unleash_an_Agent_Watch_It_Burn#450).
+
+
+def test_session_rate_limit_refuses_that_session_only(start_proxy, agent):
+    p = start_proxy(RATE_LIMIT_SESSION_RPM="2")
+    assert p.chat("1", session="a").json()["guarded"] is False
+    assert p.chat("2", session="a").json()["guarded"] is False
+    assert p.chat("3", session="a").json() == {
+        "reply": "Slow down, hungry traveler. (2/min per conversation.)",
+        "guarded": True,
+        "input_tokens": 0,
+        "output_tokens": 0,
+    }
+    assert p.chat("4", session="b").json()["guarded"] is False
+    assert len(agent.calls()) == 3
+
+
+def test_session_rate_limit_spares_the_cluster_window(start_proxy, agent):
+    p = start_proxy(RATE_LIMIT_SESSION_RPM="1", RATE_LIMIT_RPM="2")
+    p.chat("1", session="a")
+    for i in range(3):
+        assert p.chat(f"again {i}", session="a").json()["guarded"] is True
+    # a's refusals took no slot: b still has the cluster's second one.
+    assert p.chat("2", session="b").json()["guarded"] is False
+    assert "on this cluster" in p.chat("3", session="c").json()["reply"]
+
+
+def test_session_rate_limit_skips_requests_without_a_session(start_proxy, agent):
+    p = start_proxy(RATE_LIMIT_SESSION_RPM="1")
+    for i in range(3):
+        assert p.chat(str(i)).json()["guarded"] is False
+
+
+def test_session_rate_limit_is_off_by_default(start_proxy, agent):
+    p = start_proxy()
+    for i in range(5):
+        assert p.chat(str(i), session="a").json()["guarded"] is False
+
+
 def test_rate_limit_is_shared_across_paths(start_proxy, agent):
     p = start_proxy(RATE_LIMIT_RPM="2")
     p.chat("1")
