@@ -460,13 +460,17 @@ def test_admin_paths_never_reach_the_agent(start_proxy, agent):
 # --- Response CORS (read access for the instructor console) ---------------------------------------
 
 CONSOLE = "https://start.agenticburn.com"
+# The platform serves the start page on both domains at once (Unleash_an_Agent_Watch_It_Burn#651).
+CONSOLE_ALT = "https://start.burritobot.co"
 
 
 @pytest.mark.parametrize(
     "origin,host,allowed",
     [
         (CONSOLE, None, True),
+        (CONSOLE_ALT, None, True),
         ("https://evil.example", None, False),
+        ("https://start.example.com", None, False),
         # The attendee's own page: Origin hostname equals the request Host (port ignored).
         ("https://michael-student.agenticburn.com", "michael-student.agenticburn.com:443", True),
         ("https://other-student.agenticburn.com", "michael-student.agenticburn.com", False),
@@ -494,6 +498,15 @@ def test_cors_console_origin_is_configurable(start_proxy):
         == "https://console.example"
     )
     assert "access-control-allow-origin" not in p.get("/cost", headers={"Origin": CONSOLE}).headers
+
+
+def test_cors_console_origin_takes_a_list(start_proxy):
+    p = start_proxy(CONSOLE_ORIGIN="https://a.example, https://b.example")
+    for origin in ("https://a.example", "https://b.example"):
+        r = p.get("/cost", headers={"Origin": origin})
+        assert r.headers.get("access-control-allow-origin") == origin
+    for origin in (CONSOLE, "https://c.example", "https://a.example, https://b.example"):
+        assert "access-control-allow-origin" not in p.get("/cost", headers={"Origin": origin}).headers
 
 
 def test_cors_no_origin_no_header(start_proxy):

@@ -530,11 +530,18 @@ STREAM_ENABLED = os.environ.get("STREAM_PROMPTS", "off").lower() == "on"
 # no Origin to check and still reaches the agent, bounded by RATE_LIMIT_RPM and COST_CAP_USD. Closing
 # that needs a shared credential handed out with the cluster URL, which changes the attendee sign-in
 # flow and is a workshop decision rather than a code one. See #151 option 2.
-CONSOLE_ORIGIN = os.environ.get("CONSOLE_ORIGIN", "https://start.agenticburn.com")
+# Comma-separated: the start page is served on agenticburn.com and burritobot.co at once.
+CONSOLE_ORIGINS = frozenset(
+    o.strip()
+    for o in os.environ.get(
+        "CONSOLE_ORIGIN", "https://start.agenticburn.com,https://start.burritobot.co"
+    ).split(",")
+    if o.strip()
+)
 
 
 def _origin_allowed(handler):
-    """True when the request carries no Origin, its own Host, or the instructor console."""
+    """True when the request carries no Origin, its own Host, or an instructor console origin."""
     origin = handler.headers.get("Origin")
     if not origin:
         return True   # not a browser cross-origin request; the A2A hop and every probe land here
@@ -545,7 +552,7 @@ def _origin_allowed(handler):
         return False
     if o.hostname and host and o.hostname.lower() == host:
         return True   # the attendee's own console page, served from this same hostname
-    return origin == CONSOLE_ORIGIN
+    return origin in CONSOLE_ORIGINS
 # PROFANITY_LIST defaulted to EMPTY, which meant "moderated" masked only the BLOCK_LIST above (attack
 # keywords and the C5 sentinel) and passed every slur and obscenity through untouched. That was harmless
 # while capture was off; it is not once the feed is projected in a room, which is exactly the state this
