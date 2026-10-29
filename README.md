@@ -179,6 +179,14 @@ kustomize `configMapGenerator` turns `proxy.py` into a ConfigMap, which is mount
 image. That delivery is what lets a code change reach a live cluster in seconds during the workshop.
 The Go rewrite replaces it with a signed, digest-pinned image.
 
+## Related repos
+
+| Repo | What it provides |
+|---|---|
+| [Unleash_an_Agent_Watch_It_Burn](https://github.com/peopleforrester/Unleash_an_Agent_Watch_It_Burn) | The workshop. It deploys this proxy from its submodule and is where most requests for it start. |
+| [llm-guard-cpu-offline](https://github.com/peopleforrester/llm-guard-cpu-offline) | The LLM Guard scanner image the proxy calls at `LLM_GUARD_URL`, `ghcr.io/peopleforrester/watch-it-burn:llm-guard-0.3.16-cpu.3`. Its classifier is baked in, so a fail-closed proxy behind default-deny egress does not refuse every request. |
+| `peopleforrester/llm-guard-upstream-mirror` (private) | A backup of the archived `protectai/llm-guard` source the scanner image is built from. |
+
 ## History
 
 This repository's history was carried over from the workshop repository with `git filter-repo`, so
