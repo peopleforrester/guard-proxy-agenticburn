@@ -183,6 +183,9 @@ func TestValidation(t *testing.T) {
 		"timeout zero":          withBase(map[string]string{"PROXY_TIMEOUT": "0"}),
 		"timeout negative":      withBase(map[string]string{"PROXY_TIMEOUT": "-1"}),
 		"timeout not finite":    withBase(map[string]string{"PROXY_TIMEOUT": "NaN"}),
+		"turn timeout bad":      withBase(map[string]string{"TURN_TIMEOUT": "soon"}),
+		"turn timeout negative": withBase(map[string]string{"TURN_TIMEOUT": "-1"}),
+		"turn timeout infinite": withBase(map[string]string{"TURN_TIMEOUT": "Inf"}),
 		// A typo must not turn fail-closed off, so only true and false are accepted.
 		"fail closed typo": withBase(map[string]string{"PROXY_FAIL_CLOSED": "ture"}),
 	}
@@ -233,6 +236,24 @@ func TestGuardEnvironment(t *testing.T) {
 	if c := mustLoad(t, "", withBase(map[string]string{"BLOCK_LIST": ""})); len(c.Blocklist) != 0 {
 		t.Errorf("an empty BLOCK_LIST left %q", c.Blocklist)
 	}
+}
+
+// TURN_TIMEOUT is one deadline for a whole /chat turn (guard-proxy-agenticburn#21). 0, the default,
+// sets none, so each upstream call keeps its own timeout.
+func TestTurnTimeout(t *testing.T) {
+	if got := mustLoad(t, "", agentOnly).Chat.TurnTimeout.Duration; got != 0 {
+		t.Errorf("default TurnTimeout = %v, want 0", got)
+	}
+	c := mustLoad(t, writeFile(t, "agent: {url: http://a}\nllm_guard: {url: http://g}\nchat: {turn_timeout: 270s}\n"), nil)
+	if c.Chat.TurnTimeout.Duration != 270*time.Second {
+		t.Errorf("file TurnTimeout = %v, want 270s", c.Chat.TurnTimeout.Duration)
+	}
+	for v, want := range map[string]time.Duration{"270": 270 * time.Second, " 1.5 ": 1500 * time.Millisecond, "0": 0} {
+		if got := mustLoad(t, "", withBase(map[string]string{"TURN_TIMEOUT": v})).Chat.TurnTimeout.Duration; got != want {
+			t.Errorf("TURN_TIMEOUT=%q: got %v, want %v", v, got, want)
+		}
+	}
+	loadErr(t, writeFile(t, "agent: {url: http://a}\nllm_guard: {url: http://g}\nchat: {turn_timeout: -1s}\n"), nil)
 }
 
 func TestTokenIsNotReadFromTheFile(t *testing.T) {

@@ -39,3 +39,27 @@ still reach the bot but show redacted on the wall. `moderate()` now masks, befor
 Only the feed copy is masked; `/chat` and the A2A path forward the prompt unchanged, which
 `test_prompt_feed.py` pins. Names on their own are not caught. The email pattern starts a match only where
 a run of address characters starts, because without that a 100 KB body with no `@` took 30 seconds.
+
+## 2026-10-29: one TURN_TIMEOUT deadline per /chat turn
+
+A `/chat` turn makes up to six upstream calls in a row, and `PROXY_TIMEOUT` bounded each alone, so the
+workshop had to set `PROXY_TIMEOUT=45` to keep six of them under Railway's 300 s limit
+(Unleash_an_Agent_Watch_It_Burn#450). `TURN_TIMEOUT` is now one deadline for the turn, read when
+`_handle_chat` starts (guard-proxy-agenticburn#21). Choices the issue left open:
+
+- **Default `0`, no turn deadline.** Unset, every call keeps its own `PROXY_TIMEOUT`, as before. The
+  workshop sets the value, since only it knows nginx's `/chat` timeout.
+- **A guard call cut off by the deadline is a 502, not a fail-policy decision.** A classifier that ran
+  out of turn is not a scanner outage, and failing open there would forward a prompt with no time left
+  to answer it, or return a reply the output scrub never read. Failing closed would show a guardrail
+  refusal for what was a timeout. Both answer the forward's existing 502 instead, logged as
+  `turn_timeout`.
+- **The thinking-only retry keeps the first reply when time runs out**, as it does when the retry
+  fails (guard-proxy-agenticburn#1). The dangling `tool_use` retry is not optional, so it answers 502.
+- **Only `/chat`.** The A2A passthrough keeps `PROXY_TIMEOUT` per call; the issue is about the turn.
+- **urllib's timeout is per socket operation**, so the deadline bounds the wait for an answer, and an
+  upstream trickling bytes can still run past it. Go's `http.Client.Timeout` and a context deadline
+  are total, so the Go route will be stricter, as `PROXY_TIMEOUT` already is there.
+- **The Go build reads and validates `TURN_TIMEOUT`** (and `chat.turn_timeout` in YAML) but has no
+  `/chat` to apply it to until PRD #412 M3. The conformance cases are in `test_turn_deadline.py`,
+  unmarked like the rest of the `/chat` cases, so the Go subset picks them up when `/chat` lands.

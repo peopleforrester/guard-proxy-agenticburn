@@ -116,6 +116,22 @@ MUTANTS: list[tuple[str, str, str]] = [
         '            if _thinking_only:\n                log.info("model returned reasoning with no answer',
         '            if False:\n                log.info("model returned reasoning with no answer',
     ),
+    ("turn deadline ignored", "    return min(TIMEOUT, left)", "    return TIMEOUT"),
+    (
+        "classifier cut off by the turn fails open",
+        "        _raise_if_expired(deadline)\n        return not FAIL_CLOSED, []",
+        "        return not FAIL_CLOSED, []",
+    ),
+    (
+        "topic classifier cut off by the turn fails open",
+        "        _raise_if_expired(deadline)\n        allowed = not FAIL_CLOSED",
+        "        allowed = not FAIL_CLOSED",
+    ),
+    (
+        "scrub cut off by the turn fails open",
+        "        _raise_if_expired(deadline)\n        return None if FAIL_CLOSED else text",
+        "        return None if FAIL_CLOSED else text",
+    ),
     (
         "cors echoes any origin",
         "        if _origin and _origin_allowed(self):",

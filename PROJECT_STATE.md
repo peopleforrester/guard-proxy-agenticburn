@@ -25,6 +25,7 @@ Agent-task issues worked 2026-10-29 (all closed):
 - [x] #19 Allow the instructor console origin on start.agenticburn.com and start.burritobot.co
 - [x] #17 Name the scanner in the classifier refusal
 - [x] #20 Redact personal data on the prompt feed; match code-of-conduct terms as whole words
+- [ ] #21 One TURN_TIMEOUT deadline per /chat turn: implemented, awaiting promotion (Go reads and validates it; applied when Go /chat lands)
 
 Go rewrite: M0 to M2 done (passthrough and guards conformance subsets). M3 to M7 not started.
 Since M2, `/chat`, the topic guard, `/controls`, `/cost`, `/prompts` and `/toggle` have landed
@@ -40,3 +41,4 @@ _(append-only. Each phase transition adds one line, oldest first.)_
 - 2026-10-29T13:43:39Z init-state initialized at 3.3 (last unit 000f57e already promoted)
 - 2026-10-29 #18, #19, #17, #20 implemented and verified locally (2.3); staging push next
 - 2026-10-29 3.3 #17 to #20 promoted to main at 47ac08b; mutation check 28/28 caught
+- 2026-10-29 #21 implemented and verified locally (2.3) on agent/21-11185

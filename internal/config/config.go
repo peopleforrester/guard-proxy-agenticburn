@@ -26,6 +26,7 @@ type Config struct {
 	Listen   string   `yaml:"listen"`
 	Agent    Agent    `yaml:"agent"`
 	LLMGuard LLMGuard `yaml:"llm_guard"`
+	Chat     Chat     `yaml:"chat"`
 	// Blocklist is the input block-list, normalized to trimmed lowercase terms.
 	Blocklist []string `yaml:"blocklist"`
 	// FailClosed blocks a request or a reply when LLM Guard cannot give a verdict.
@@ -47,6 +48,15 @@ type Agent struct {
 	URL string `yaml:"url"`
 	// Timeout bounds one upstream exchange, from connecting to reading the whole response.
 	Timeout Duration `yaml:"timeout"`
+}
+
+// Chat is the storefront route, POST /chat.
+type Chat struct {
+	// TurnTimeout is one deadline for a whole turn, which can make up to six upstream calls in a row
+	// (guard-proxy-agenticburn#21). Each call gets its own timeout or what is left of the turn,
+	// whichever is less. Zero sets no turn deadline. /chat is not built yet (PRD #412 M3), so this is
+	// read and validated now and applied when the route lands.
+	TurnTimeout Duration `yaml:"turn_timeout"`
 }
 
 // Guards is the on/off state of each guard. The field names are the keys /guards reports.
@@ -153,6 +163,13 @@ func applyEnv(c *Config, getenv func(string) (string, bool)) error {
 		c.Agent.Timeout = Duration{time.Duration(secs * float64(time.Second))}
 		c.LLMGuard.Timeout = c.Agent.Timeout
 	}
+	if v, ok := getenv("TURN_TIMEOUT"); ok {
+		secs, err := strconv.ParseFloat(strings.TrimSpace(v), 64)
+		if err != nil || math.IsNaN(secs) || math.IsInf(secs, 0) {
+			return fmt.Errorf("TURN_TIMEOUT=%q: want a number of seconds", v)
+		}
+		c.Chat.TurnTimeout = Duration{time.Duration(secs * float64(time.Second))}
+	}
 	// A guard switch is on only for the value "on", in any case, matching the reference proxy.
 	on := func(name string, dst *bool) {
 		if v, ok := getenv(name); ok {
@@ -192,6 +209,9 @@ func (c Config) validate() error {
 	}
 	if c.LLMGuard.Timeout.Duration <= 0 {
 		return fmt.Errorf("config: llm_guard timeout %v must be positive", c.LLMGuard.Timeout.Duration)
+	}
+	if c.Chat.TurnTimeout.Duration < 0 {
+		return fmt.Errorf("config: chat turn_timeout %v must not be negative", c.Chat.TurnTimeout.Duration)
 	}
 	return nil
 }

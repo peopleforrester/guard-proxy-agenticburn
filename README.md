@@ -63,6 +63,8 @@ agent:
 llm_guard:
   url: http://llm-guard.agent.svc.cluster.local:8000      # required
   timeout: 150s            # default; the token comes only from LLM_GUARD_TOKEN
+chat:
+  turn_timeout: 0s         # default, no turn deadline; read and validated, applied once /chat lands
 blocklist: [delete, "rm -rf"]   # replaces the default list; terms are trimmed and lowercased
 fail_closed: true          # default; refuse when LLM Guard gives no verdict
 guards:                    # the state each guard starts in
@@ -73,7 +75,8 @@ guards:                    # the state each guard starts in
 ```
 
 The environment variables the workshop sets today override the file: `AGENT_URL`, `LLM_GUARD_URL`,
-`LLM_GUARD_TOKEN`, `PROXY_TIMEOUT` (seconds, for both upstreams), `PROXY_FAIL_CLOSED`, `BLOCK_LIST`
+`LLM_GUARD_TOKEN`, `PROXY_TIMEOUT` (seconds, for both upstreams), `TURN_TIMEOUT` (seconds),
+`PROXY_FAIL_CLOSED`, `BLOCK_LIST`
 (comma-separated), and `INPUT_GUARD`, `INPUT_BLOCKLIST`, `INPUT_CLASSIFIER`, `OUTPUT_GUARD` and
 `BUDGET_GUARD`, with the same `on`-only semantics as `proxy.py`. Read [docs/gotchas-go.md](docs/gotchas-go.md)
 before changing the upstream hop or adding a dependency.
@@ -104,8 +107,17 @@ INPUT_CLASSIFIER  INPUT_GUARD  K8S_API_URL  K8S_TOKEN_PATH  LLM_GUARD_TOKEN  LLM
 MODEL_NAME  MODEL_TIER
 OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT  OUTPUT_GUARD  PEER_SERVICE  PROFANITY_LIST
 PROXY_FAIL_CLOSED  PROXY_TIMEOUT  RATE_LIMIT_RPM  RATE_LIMIT_SESSION_RPM  STREAM_PROMPTS
-WIB_PUBLIC_HOST
+TURN_TIMEOUT  WIB_PUBLIC_HOST
 ```
+
+`PROXY_TIMEOUT` bounds each upstream call. A `POST /chat` turn can make up to six in a row: the
+injection classifier, the topic classifier, the forward, the two self-heal retries and the output
+scrub. `TURN_TIMEOUT` (seconds, default `0` for none) is one deadline for the whole turn: each call
+gets `PROXY_TIMEOUT` or what is left of the turn, whichever is less, and a turn that runs out
+answers the same 502 as a failed forward. A guard call the deadline cuts off ends the turn with
+that 502 whatever `PROXY_FAIL_CLOSED` says, so fail-open never forwards an unscanned prompt or
+returns an unscrubbed reply. The thinking-only retry is optional, so running out of time on it keeps
+the first reply, as its failure does. The A2A path is not bounded by it.
 
 Several overlap (`BUDGET_CAP_USD` and `COST_CAP_USD`, `INPUT_GUARD` and `INPUT_CLASSIFIER`). Some of
 that is history and some is a live toggle the workshop flips. Rationalizing them is part of the

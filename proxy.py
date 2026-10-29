@@ -130,6 +130,37 @@ GUARDS = {
 # Fail closed: if LLM Guard is unreachable, block rather than silently leak (no-silent-fallback rule).
 FAIL_CLOSED = os.environ.get("PROXY_FAIL_CLOSED", "true").lower() == "true"
 TIMEOUT = float(os.environ.get("PROXY_TIMEOUT", "150"))
+# One deadline for a whole POST /chat turn, in seconds (guard-proxy-agenticburn#21). A turn can make up to
+# six upstream calls in a row (injection classifier, topic classifier, forward, two self-heal retries,
+# output scrub), and PROXY_TIMEOUT bounds each alone, so the turn's worst case was six times it. With this
+# set, each call gets PROXY_TIMEOUT or what is left of the turn, whichever is less, and a turn that runs
+# out answers the same 502 as a failed forward. 0 (the default) leaves each call its own PROXY_TIMEOUT.
+TURN_TIMEOUT = float(os.environ.get("TURN_TIMEOUT", "0") or "0")
+
+
+class TurnExpired(Exception):
+    """The /chat turn's TURN_TIMEOUT ran out before it had an answer."""
+
+
+def _call_timeout(deadline):
+    """The timeout for one upstream call: PROXY_TIMEOUT, cut to what is left before deadline (a monotonic
+    time, or None for no turn deadline). Raises TurnExpired when nothing is left.
+
+    urllib applies a timeout to each blocking socket operation, not to the exchange as a whole, so this
+    bounds the wait for an answer; an upstream trickling bytes can still run past the deadline."""
+    if deadline is None:
+        return TIMEOUT
+    left = deadline - time.monotonic()
+    if left <= 0:
+        raise TurnExpired(f"the {TURN_TIMEOUT:g}s turn deadline (TURN_TIMEOUT) passed")
+    return min(TIMEOUT, left)
+
+
+def _raise_if_expired(deadline):
+    """Raise TurnExpired once deadline has passed. A guard call that failed after the deadline was cut off
+    by the turn, which is not a scanner outage, so PROXY_FAIL_CLOSED does not decide it."""
+    if deadline is not None and time.monotonic() >= deadline:
+        raise TurnExpired(f"the {TURN_TIMEOUT:g}s turn deadline (TURN_TIMEOUT) passed")
 
 # --- Infra-control state for the badge strip (#197/#209) -------------------------------------------
 # The AI guards above are guard-proxy's own in-memory state. The badges for C1-C3 and C7 report the
@@ -677,7 +708,7 @@ def record_usage(resp, session=""):
             _session_cost[session] = _session_cost.get(session, 0.0) + spent
 
 
-def _post_guard(path, payload):
+def _post_guard(path, payload, deadline=None):
     data = json.dumps(payload).encode()
     req = urllib.request.Request(
         f"{LLM_GUARD_URL}{path}",
@@ -685,7 +716,7 @@ def _post_guard(path, payload):
         headers={"Content-Type": "application/json", "Authorization": f"Bearer {LLM_GUARD_TOKEN}"},
         method="POST",
     )
-    with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
+    with urllib.request.urlopen(req, timeout=_call_timeout(deadline)) as r:
         return json.loads(r.read())
 
 
@@ -695,15 +726,17 @@ def blocklisted(text):
     return next((t for t in BLOCK_LIST if t in low), None)
 
 
-def input_verdict(text):
+def input_verdict(text, deadline=None):
     """(allowed, flagged) for the request prompt. flagged names the scanners that scored it above zero,
     as (name, risk) pairs, highest risk first, so a refusal can say why. It is empty when the scanner
-    gave no scores or could not be reached."""
+    gave no scores or could not be reached. Raises TurnExpired when a /chat turn's deadline cut it off."""
     try:
         # BanTopics shares the input scanner list, and it belongs to the topic stage: without the
         # suppress, turning on C6 would also ban topics.
-        verdict = _post_guard("/analyze/prompt", {"prompt": text, "scanners_suppress": ["BanTopics"]})
+        verdict = _post_guard("/analyze/prompt", {"prompt": text, "scanners_suppress": ["BanTopics"]},
+                              deadline)
     except Exception:
+        _raise_if_expired(deadline)
         return not FAIL_CLOSED, []
     scores = verdict.get("scanners")
     flagged = []
@@ -743,10 +776,11 @@ def phrase_verdict(text, off_terms, on_terms):
     return None
 
 
-def topic_refused(text):
+def topic_refused(text, deadline=None):
     """The step that refuses an off-topic prompt, "off_phrase" or "classifier", or None to let it through.
 
-    A classifier error follows PROXY_FAIL_CLOSED, as the injection classifier does."""
+    A classifier error follows PROXY_FAIL_CLOSED, as the injection classifier does, unless a /chat turn's
+    deadline cut it off, which raises TurnExpired."""
     phrase = phrase_verdict(text, TOPIC_OFF_LIST, TOPIC_ON_LIST)
     if phrase == "off":
         return "off_phrase"
@@ -755,21 +789,24 @@ def topic_refused(text):
     try:
         # Only BanTopics speaks here; the injection classifier is its own stage with its own toggle.
         verdict = _post_guard("/analyze/prompt",
-                              {"prompt": text, "scanners_suppress": ["PromptInjection"]})
+                              {"prompt": text, "scanners_suppress": ["PromptInjection"]}, deadline)
         allowed = bool(verdict.get("is_valid", True))
     except Exception:
+        _raise_if_expired(deadline)
         allowed = not FAIL_CLOSED
     return None if allowed else "classifier"
 
 
-def output_scrub(text):
-    """Return redacted text, or None to signal a hard block."""
+def output_scrub(text, deadline=None):
+    """Return redacted text, or None to signal a hard block. Raises TurnExpired when a /chat turn's
+    deadline cut it off, so fail-open never hands back a reply the scrub had no time to read."""
     try:
-        verdict = _post_guard("/analyze/output", {"prompt": "", "output": text})
+        verdict = _post_guard("/analyze/output", {"prompt": "", "output": text}, deadline)
         if verdict.get("is_valid", True):
             return text
         return verdict.get("sanitized_output") or "[REDACTED]"
     except Exception:
+        _raise_if_expired(deadline)
         return None if FAIL_CLOSED else text
 
 
@@ -1153,6 +1190,18 @@ class Handler(BaseHTTPRequestHandler):
         return resp
 
     def _handle_chat(self):
+        """One storefront turn under one deadline: TURN_TIMEOUT, read once here, bounds every upstream
+        call the turn makes. A guard stage the deadline cuts off ends the turn here with the forward's 502;
+        a forward it cuts off answers that 502 itself, in _forward."""
+        deadline = time.monotonic() + TURN_TIMEOUT if TURN_TIMEOUT > 0 else None
+        try:
+            self._chat_turn(deadline)
+        except TurnExpired as exc:
+            log.error("chat turn ran out of time: %s", exc, extra={"event": "turn_timeout"})
+            self._send(502, {"reply": "BurritoBot's kitchen isn't answering. Try again in a moment.",
+                             "guarded": False, "input_tokens": 0, "output_tokens": 0})
+
+    def _chat_turn(self, deadline):
         """BurritoBot storefront contract (B1): POST {prompt} -> {reply, guarded, input_tokens,
         output_tokens}. Wraps the prompt as an A2A message/send and runs the SAME input/output guards,
         rate/cost cap, cost metering, and agent forward as the A2A root, then reshapes the response. The
@@ -1190,7 +1239,7 @@ class Handler(BaseHTTPRequestHandler):
                                           "No model tokens were spent.",
                                  "guarded": True, "input_tokens": 0, "output_tokens": 0})
                 return
-        allowed, flagged = input_verdict(prompt) if GUARDS["input_classifier"] else (True, [])
+        allowed, flagged = input_verdict(prompt, deadline) if GUARDS["input_classifier"] else (True, [])
         if not allowed:
             log.info("chat input blocked by classifier",
                      extra={"event": "input_classifier_block", "scanners": [name for name, _ in flagged]})
@@ -1200,7 +1249,7 @@ class Handler(BaseHTTPRequestHandler):
                              "guarded": True, "input_tokens": 0, "output_tokens": 0})
             return
         if GUARDS["topic"]:
-            step = topic_refused(prompt)
+            step = topic_refused(prompt, deadline)
             if step:
                 log.info("chat input refused as off-topic (step %s)", step,
                          extra={"event": "topic_guard_block", "step": step})
@@ -1235,8 +1284,9 @@ class Handler(BaseHTTPRequestHandler):
 
         def _forward(ctx, optional=False):
             """Send the prompt to the agent under contextId ctx. Returns the A2A resp, or None on a
-            transport error. A 502 has then already been sent, unless optional is set: the caller still
-            holds a usable reply and answers with it, so exactly one response reaches the client."""
+            transport error or when the turn's deadline has run out. A 502 has then already been sent,
+            unless optional is set: the caller still holds a usable reply and answers with it, so exactly
+            one response reaches the client."""
             global _chat_seq
             _chat_seq += 1
             m = {"role": "user", "messageId": f"chat-{_chat_seq}",
@@ -1257,7 +1307,8 @@ class Handler(BaseHTTPRequestHandler):
                 try:
                     req = urllib.request.Request(AGENT_URL + "/", data=json.dumps(a2a).encode(),
                                                  headers=fwd_headers, method="POST")
-                    with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
+                    # A TurnExpired from _call_timeout lands in the except below, as a timeout does.
+                    with urllib.request.urlopen(req, timeout=_call_timeout(deadline)) as r:
                         return json.loads(r.read())
                 except Exception as exc:
                     log.error("chat forward failed: %s", exc, extra={"event": "forward_error"})
@@ -1353,7 +1404,7 @@ class Handler(BaseHTTPRequestHandler):
                 chat_span.set_attribute("gen_ai.output.messages", _genai_output(reply))
             guarded = False
             if GUARDS["output"] and reply:
-                scrubbed = output_scrub(reply)
+                scrubbed = output_scrub(reply, deadline)
                 if scrubbed is None:
                     reply, guarded = "[blocked by the output guardrail]", True
                 elif scrubbed != reply:
