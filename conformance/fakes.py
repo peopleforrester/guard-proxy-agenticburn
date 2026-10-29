@@ -170,10 +170,16 @@ def a2a_result(
 
 
 def verdict(
-    is_valid: bool, sanitized: str | None = None, *, output: bool = False
+    is_valid: bool,
+    sanitized: str | None = None,
+    *,
+    output: bool = False,
+    scanners: dict[str, float] | None = None,
 ) -> dict[str, Any]:
-    """An LLM Guard API verdict envelope for /analyze/prompt or /analyze/output."""
-    body: dict[str, Any] = {"is_valid": is_valid, "scanners": {}}
+    """An LLM Guard API verdict envelope for /analyze/prompt or /analyze/output.
+
+    scanners maps each scanner that ran to its risk score, as the API reports them."""
+    body: dict[str, Any] = {"is_valid": is_valid, "scanners": scanners or {}}
     if sanitized is not None:
         body["sanitized_output" if output else "sanitized_prompt"] = sanitized
     return body

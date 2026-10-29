@@ -65,9 +65,9 @@ func scanner(t *testing.T, status int, reply string, delay time.Duration) (*http
 func TestScanPromptSendsThePromptWithTheToken(t *testing.T) {
 	s, calls := scanner(t, 200, `{"is_valid": true, "scanners": {}}`, 0)
 	g := NewLLMGuard(s.URL, "tok", time.Second)
-	ok, err := g.ScanPrompt(context.Background(), "one burrito")
-	if err != nil || !ok {
-		t.Fatalf("ScanPrompt = %v, %v", ok, err)
+	v, err := g.ScanPrompt(context.Background(), "one burrito")
+	if err != nil || !v.Allowed {
+		t.Fatalf("ScanPrompt = %+v, %v", v, err)
 	}
 	c := (*calls)[0]
 	if c.path != "/analyze/prompt" || c.auth != "Bearer tok" || c.contentType != "application/json" {
@@ -91,9 +91,32 @@ func TestScanPromptVerdicts(t *testing.T) {
 		`{"is_valid": "no"}`: true,
 	} {
 		s, _ := scanner(t, 200, reply, 0)
-		ok, err := NewLLMGuard(s.URL, "", time.Second).ScanPrompt(context.Background(), "x")
-		if err != nil || ok != want {
-			t.Errorf("%s: ScanPrompt = %v, %v; want %v", reply, ok, err, want)
+		v, err := NewLLMGuard(s.URL, "", time.Second).ScanPrompt(context.Background(), "x")
+		if err != nil || v.Allowed != want {
+			t.Errorf("%s: ScanPrompt = %+v, %v; want %v", reply, v, err, want)
+		}
+	}
+}
+
+func TestScanPromptNamesTheFlaggingScanners(t *testing.T) {
+	s, _ := scanner(t, 200, `{"is_valid": false, "scanners": {"Toxicity": 0.42, "PromptInjection": 1.0,
+		"Secrets": 0.0, "Gibberish": -1.0, "Odd": "high", "Flag": true}}`, 0)
+	v, err := NewLLMGuard(s.URL, "", time.Second).ScanPrompt(context.Background(), "x")
+	if err != nil || v.Allowed {
+		t.Fatalf("ScanPrompt = %+v, %v", v, err)
+	}
+	want := "PromptInjection, risk 1.00; Toxicity, risk 0.42"
+	if got := v.Describe(); got != want {
+		t.Errorf("Describe = %q, want %q", got, want)
+	}
+}
+
+func TestScanPromptWithoutScoresNamesNone(t *testing.T) {
+	for _, reply := range []string{`{"is_valid": false}`, `{"is_valid": false, "scanners": []}`} {
+		s, _ := scanner(t, 200, reply, 0)
+		v, err := NewLLMGuard(s.URL, "", time.Second).ScanPrompt(context.Background(), "x")
+		if err != nil || v.Allowed || len(v.Flagged) != 0 {
+			t.Errorf("%s: ScanPrompt = %+v, %v", reply, v, err)
 		}
 	}
 }

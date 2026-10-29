@@ -28,7 +28,12 @@ MUTANTS: list[tuple[str, str, str]] = [
         "    low = text.lower()\n    return next(",
         "    low = text\n    return next(",
     ),
-    ("classifier ignores verdict", 'return bool(verdict.get("is_valid", True))', "return True"),
+    (
+        "classifier refusal hides scanners",
+        '    return "; ".join(f"{name}, risk {risk:.2f}" for name, risk in flagged)',
+        '    return ""',
+    ),
+    ("classifier ignores verdict", 'return bool(verdict.get("is_valid", True)), flagged', "return True, flagged"),
     (
         "injection scan drops the suppress list",
         '{"prompt": text, "scanners_suppress": ["BanTopics"]}',

@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 )
@@ -66,17 +67,58 @@ func NewLLMGuard(url, token string, timeout time.Duration) *LLMGuard {
 	return &LLMGuard{url: url, token: token, client: &http.Client{Timeout: timeout}}
 }
 
-// ScanPrompt reports whether the input scanners allow text. An error means no verdict was reached.
+// Flag is one input scanner that scored a prompt above zero, with its risk score.
+type Flag struct {
+	Scanner string
+	Risk    float64
+}
+
+// PromptVerdict is the input scanners' answer for one prompt. Flagged lists the scanners that
+// scored it above zero, highest risk first, so a refusal can say why; it is empty when the API
+// reported no scores.
+type PromptVerdict struct {
+	Allowed bool
+	Flagged []Flag
+}
+
+// Describe renders Flagged for a refusal message: "PromptInjection, risk 1.00; Toxicity, risk 0.42".
+func (v PromptVerdict) Describe() string {
+	parts := make([]string, len(v.Flagged))
+	for i, f := range v.Flagged {
+		parts[i] = fmt.Sprintf("%s, risk %.2f", f.Scanner, f.Risk)
+	}
+	return strings.Join(parts, "; ")
+}
+
+// ScanPrompt returns the input scanners' verdict on text. An error means no verdict was reached.
 // BanTopics is suppressed: it shares the input scanner list, and it belongs to the on-topic guard.
-func (g *LLMGuard) ScanPrompt(ctx context.Context, text string) (bool, error) {
+func (g *LLMGuard) ScanPrompt(ctx context.Context, text string) (PromptVerdict, error) {
 	v, err := g.post(ctx, "/analyze/prompt", map[string]any{
 		"prompt":            text,
 		"scanners_suppress": []string{"BanTopics"},
 	})
 	if err != nil {
-		return false, err
+		return PromptVerdict{}, err
 	}
-	return valid(v), nil
+	return PromptVerdict{Allowed: valid(v), Flagged: flagged(v)}, nil
+}
+
+// flagged reads the scanners map, keeping each numeric score above zero, highest first.
+func flagged(v map[string]any) []Flag {
+	scores, _ := v["scanners"].(map[string]any)
+	var out []Flag
+	for name, score := range scores {
+		if risk, ok := score.(float64); ok && risk > 0 {
+			out = append(out, Flag{Scanner: name, Risk: risk})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Risk != out[j].Risk {
+			return out[i].Risk > out[j].Risk
+		}
+		return out[i].Scanner < out[j].Scanner
+	})
+	return out
 }
 
 // ScanOutput returns text as the output scanners would let it through: unchanged when valid, the

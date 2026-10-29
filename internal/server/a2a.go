@@ -75,13 +75,23 @@ func (s *Server) inputGuards(ctx context.Context, g config.Guards, text string) 
 		}
 	}
 	if g.InputClassifier {
-		allowed, err := s.llmGuard.ScanPrompt(ctx, text)
+		v, err := s.llmGuard.ScanPrompt(ctx, text)
 		if err != nil {
 			s.guardError("input classifier", err)
-			allowed = !s.failClosed
+			v.Allowed = !s.failClosed
 		}
-		if !allowed {
-			s.log.Info("input blocked by prompt-injection classifier", "event", "input_classifier_block")
+		if !v.Allowed {
+			names := make([]string, len(v.Flagged))
+			for i, f := range v.Flagged {
+				names[i] = f.Scanner
+			}
+			s.log.Info("input blocked by prompt-injection classifier", "event", "input_classifier_block",
+				"scanners", names)
+			// Name the scanners, as the block-list names its term; without scores (or with no
+			// verdict, failing closed) the message stays the generic one.
+			if len(v.Flagged) > 0 {
+				return fmt.Sprintf("Request blocked by input guardrail (flagged by %s).", v.Describe())
+			}
 			return classifierBlocked
 		}
 	}

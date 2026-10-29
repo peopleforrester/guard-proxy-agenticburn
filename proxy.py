@@ -57,6 +57,10 @@ class _TraceJsonFormatter(logging.Formatter):
         step = getattr(record, "step", None)
         if step:
             payload["step"] = step
+        # The input scanners that flagged a blocked prompt (input_classifier_block).
+        scanners = getattr(record, "scanners", None)
+        if scanners:
+            payload["scanners"] = scanners
         if _OTEL_AVAILABLE:
             ctx = trace.get_current_span().get_span_context()
             if ctx.is_valid:
@@ -643,15 +647,33 @@ def blocklisted(text):
     return next((t for t in BLOCK_LIST if t in low), None)
 
 
-def input_allowed(text):
-    """True if the request prompt is allowed; False if the input scanner flags it."""
+def input_verdict(text):
+    """(allowed, flagged) for the request prompt. flagged names the scanners that scored it above zero,
+    as (name, risk) pairs, highest risk first, so a refusal can say why. It is empty when the scanner
+    gave no scores or could not be reached."""
     try:
         # BanTopics shares the input scanner list, and it belongs to the topic stage: without the
         # suppress, turning on C6 would also ban topics.
         verdict = _post_guard("/analyze/prompt", {"prompt": text, "scanners_suppress": ["BanTopics"]})
-        return bool(verdict.get("is_valid", True))
     except Exception:
-        return not FAIL_CLOSED
+        return not FAIL_CLOSED, []
+    scores = verdict.get("scanners")
+    flagged = []
+    if isinstance(scores, dict):
+        flagged = sorted(((str(k), float(v)) for k, v in scores.items()
+                          if isinstance(v, (int, float)) and not isinstance(v, bool) and v > 0),
+                         key=lambda kv: (-kv[1], kv[0]))
+    return bool(verdict.get("is_valid", True)), flagged
+
+
+def input_allowed(text):
+    """True if the request prompt is allowed; False if the input scanner flags it."""
+    return input_verdict(text)[0]
+
+
+def describe_flagged(flagged):
+    """'PromptInjection, risk 1.00; Toxicity, risk 0.42' for a refusal message."""
+    return "; ".join(f"{name}, risk {risk:.2f}" for name, risk in flagged)
 
 
 # The phrase rule, ported from phrase_verdict in Unleash_an_Agent_Watch_It_Burn verify/topic_cases.py: a
@@ -965,13 +987,19 @@ class Handler(BaseHTTPRequestHandler):
                     return
             # Stage 2: model-based prompt-injection classifier (costlier gate; NOT deterministic).
             if GUARDS["input_classifier"] and text:
-                if not input_allowed(text):
+                allowed, flagged = input_verdict(text)
+                if not allowed:
                     log.info("input blocked by prompt-injection classifier",
-                             extra={"event": "input_classifier_block"})
+                             extra={"event": "input_classifier_block",
+                                    "scanners": [name for name, _ in flagged]})
+                    # Name the scanners, as the block-list names its term; without scores (or with no
+                    # verdict, failing closed) the message stays the generic one.
+                    reason = (f"flagged by {describe_flagged(flagged)}" if flagged
+                              else "prompt injection detected")
                     self._send(403, {
                         "jsonrpc": "2.0", "id": payload.get("id"),
                         "error": {"code": -32600,
-                                  "message": "Request blocked by input guardrail (prompt injection detected)."},
+                                  "message": f"Request blocked by input guardrail ({reason})."},
                     })
                     return
             # Stage 3: the on-topic guard, after both input stages and before the caps, so a refusal
@@ -1114,10 +1142,13 @@ class Handler(BaseHTTPRequestHandler):
                                           "No model tokens were spent.",
                                  "guarded": True, "input_tokens": 0, "output_tokens": 0})
                 return
-        if GUARDS["input_classifier"] and not input_allowed(prompt):
-            log.info("chat input blocked by classifier", extra={"event": "input_classifier_block"})
+        allowed, flagged = input_verdict(prompt) if GUARDS["input_classifier"] else (True, [])
+        if not allowed:
+            log.info("chat input blocked by classifier",
+                     extra={"event": "input_classifier_block", "scanners": [name for name, _ in flagged]})
             self._stamp("witb.guard.decision", "input_classifier")
-            self._send(200, {"reply": "BurritoBot can't help with that (blocked by the input guardrail).",
+            reason = f": {describe_flagged(flagged)}" if flagged else ""
+            self._send(200, {"reply": f"BurritoBot can't help with that (blocked by the input guardrail{reason}).",
                              "guarded": True, "input_tokens": 0, "output_tokens": 0})
             return
         if GUARDS["topic"]:
