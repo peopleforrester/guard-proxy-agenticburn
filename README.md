@@ -9,7 +9,7 @@ workshop, where it is the control attendees switch on while an agent is being at
 
 ## Status: being rewritten in Go
 
-`proxy.py` is the **reference implementation**: 1,076 lines of Python with no third-party
+`proxy.py` is the **reference implementation**: 1,295 lines of Python with no third-party
 dependencies, tuned against live attacker behavior across two workshop deliveries. It is what runs in
 the workshop today.
 

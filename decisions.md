@@ -14,3 +14,8 @@ dependency only: proxy.py stays stdlib-only and still runs with no OTel present.
 `opentelemetry-api` installed in the dev environment also means the whole suite now runs proxy.py with
 its OTel code path active (as no-op spans when no provider is installed), which is the path the
 workshop runs.
+
+## 2026-10-29: Lifecycle state tracking adopted
+
+`PROJECT_STATE.md` added on the lifecycle schema, seeded at 3.3 because the last unit of work
+(`000f57e`) was already on `main` with green CI. The open agent-task issues are its current plan.
