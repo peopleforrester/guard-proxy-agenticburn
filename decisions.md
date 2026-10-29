@@ -63,3 +63,24 @@ workshop had to set `PROXY_TIMEOUT=45` to keep six of them under Railway's 300 s
 - **The Go build reads and validates `TURN_TIMEOUT`** (and `chat.turn_timeout` in YAML) but has no
   `/chat` to apply it to until PRD #412 M3. The conformance cases are in `test_turn_deadline.py`,
   unmarked like the rest of the `/chat` cases, so the Go subset picks them up when `/chat` lands.
+
+## 2026-10-30: /toggle sets the cluster-wide cost cap at runtime
+
+The KubeCon finale (Unleash_an_Agent_Watch_It_Burn#690) lowers `COST_CAP_USD` live so the room can trip
+it in minutes, then puts it back (guard-proxy-agenticburn#23). `GET /toggle?cost_cap=N` sets the cap
+`cost_capped()` checks, `cost_cap=default` restores the env value, and both `/cost`'s `cap_usd` and the
+two "cap reached" replies use the runtime value. Choices the issue left open:
+
+- **A runtime cap only lowers.** It must be a finite number above 0 and, while `COST_CAP_USD` is set, no
+  higher than it. `/toggle` has no auth and the agent's tool pod can reach it (the workshop's
+  `verify/test_mesh_enrollment.py`), so a prompt-injected agent must not be able to lift the Bedrock bill
+  backstop or switch it off with 0. With `COST_CAP_USD` unset any positive value is a lowering.
+- **A refused value answers 400 and applies nothing**, guard keys in the same query included, so a
+  helper that pairs a cap with a guard flip never half-applies. An empty `cost_cap=` is refused rather
+  than ignored, so a helper with an unset shell variable fails loudly.
+- **`/toggle` reports the cap as `cost_cap_usd`** beside the guard keys. `/guards` stays the guard map
+  alone, since the terminal's `guards-status` and the Go build read it as one. The workshop's consumers of
+  the `/toggle` response read keys by name, so the added key breaks none of them.
+- **Not in the Go build.** Its `/toggle` and `/cost` answer 501 until their PRD #412 milestone, so the
+  new cases are unmarked, like the rest of `/toggle`'s, and the Go subset picks them up when those
+  endpoints land.

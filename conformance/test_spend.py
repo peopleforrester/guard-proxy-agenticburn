@@ -298,6 +298,38 @@ def test_cost_cap_chat_is_cluster_wide_across_sessions(start_proxy, agent):
     assert len(agent.calls()) == 2
 
 
+def test_runtime_cost_cap_trips_both_paths_and_default_releases_them(start_proxy, agent):
+    """The KubeCon finale: the presenters lower the cap live, the room trips it, then it is restored."""
+    agent.respond = _reply_costing()
+    p = start_proxy(COST_CAP_USD="25")
+    assert p.chat("1", session="a").json()["guarded"] is False
+    assert p.chat("2", session="b").json()["guarded"] is False
+    p.toggle(cost_cap="0.01")
+    body = p.chat("3", session="c").json()
+    assert body["guarded"] is True
+    assert body["reply"].startswith(
+        "The kitchen tab is frozen. This conversation hit its $0.01 spend"
+    )
+    r = p.a2a("4")
+    assert r.status == 429
+    assert "Budget cap reached ($0.01 on this cluster)" in r.json()["error"]["message"]
+    assert len(agent.calls()) == 2
+    # The tally survives the change: the cap moved, the counter did not reset.
+    assert p.get("/cost").json()["usd"] == pytest.approx(0.012)
+    p.toggle(cost_cap="default")
+    assert p.chat("5", session="c").json()["guarded"] is False
+    assert len(agent.calls()) == 3
+
+
+def test_runtime_cost_cap_trips_at_exactly_the_cap(start_proxy, agent):
+    agent.respond = _reply_costing(1000, 0)
+    p = start_proxy(COST_CAP_USD="25", **EXACT)
+    p.toggle(cost_cap="2")
+    assert p.a2a("1").status == 200
+    assert p.a2a("2").status == 200
+    assert p.a2a("3").status == 429
+
+
 def test_rate_limit_is_checked_before_cost_cap(start_proxy, agent):
     agent.respond = _reply_costing()
     p = start_proxy(COST_CAP_USD="0.001", RATE_LIMIT_RPM="1")

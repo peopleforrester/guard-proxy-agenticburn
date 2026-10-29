@@ -11,6 +11,7 @@
 import collections
 import json
 import logging
+import math
 import os
 import re
 import threading
@@ -359,6 +360,10 @@ def read_controls():
 # Bedrock bill or DoS the demo (the cost demo cannot itself run away). Both are per-cluster (this
 # proxy fronts one cluster) and env-tunable; 0 disables. verify-at-build: set caps to the room size.
 COST_CAP_USD = float(os.environ.get("COST_CAP_USD", "0") or "0")     # reject once this cluster's tally hits it
+# The cap cost_capped() checks. Seeded from COST_CAP_USD and RUNTIME-mutable like the guards: the KubeCon
+# finale lowers it with /toggle?cost_cap=N so a room can trip it in minutes, and /toggle?cost_cap=default
+# puts the env value back. An env change would restart the pod and reset the tally, and Argo CD reverts it.
+_cost_cap = {"usd": COST_CAP_USD}
 RATE_LIMIT_RPM = int(os.environ.get("RATE_LIMIT_RPM", "0") or "0")   # max model-bound requests per 60s
 # Per /chat conversation, checked before the cluster window: a ballroom shares one bot, and one phone must not
 # spend everyone's slots. 0 turns it off. A request with no session is held only by the cluster window.
@@ -414,11 +419,38 @@ def session_rate_limited(session):
         return False
 
 
+def parse_cost_cap(value):
+    """The cluster-wide cap a /toggle?cost_cap= value asks for, or None when the value is refused.
+
+    "default" restores COST_CAP_USD. Anything else must be a finite number above 0 and, while COST_CAP_USD
+    is set, no higher than it: the runtime cap only LOWERS the infra backstop. /toggle has no auth and the
+    agent's tool pod can reach it, so it must not be a way to lift the Bedrock bill protection, and a 0
+    would switch the backstop off.
+    """
+    v = value.strip().lower()
+    if v == "default":
+        return COST_CAP_USD
+    try:
+        cap = float(v)
+    except ValueError:
+        return None
+    if not math.isfinite(cap) or cap <= 0 or (COST_CAP_USD > 0 and cap > COST_CAP_USD):
+        return None
+    return cap
+
+
+def cost_cap_refusal():
+    """The 400 message for a cost_cap value parse_cost_cap refuses."""
+    ceiling = f" and no higher than COST_CAP_USD (${COST_CAP_USD:.2f})" if COST_CAP_USD > 0 else ""
+    return f"cost_cap must be a number above 0{ceiling}, or 'default' to restore COST_CAP_USD"
+
+
 def cost_capped(session=""):
     """True if spend has reached a cap. TWO caps, measured against deliberately different totals.
 
     COST_CAP_USD is the infra safety backstop and stays CLUSTER-WIDE. It protects the real Bedrock bill
-    from a runaway room, so no single conversation may be handed its own $25.
+    from a runaway room, so no single conversation may be handed its own $25. The value checked is the
+    runtime one in _cost_cap, which /toggle?cost_cap= can lower and restore.
 
     BUDGET_CAP_USD is the Challenge 4 control and is PER SESSION. Every other guardrail in this workshop
     is a predicate: C1 blocks the beacon while a burrito order still works, C2 blocks one registry, C5
@@ -437,7 +469,8 @@ def cost_capped(session=""):
     with _cost_lock:
         spend = _cost["usd"]
         session_spend = _session_cost.get(session, 0.0) if session else spend
-    if COST_CAP_USD > 0 and spend >= COST_CAP_USD:
+    cost_cap = _cost_cap["usd"]
+    if cost_cap > 0 and spend >= cost_cap:
         return True
     if GUARDS.get("budget") and BUDGET_CAP_USD > 0 and session_spend >= BUDGET_CAP_USD:
         return True
@@ -924,10 +957,11 @@ class Handler(BaseHTTPRequestHandler):
             # number. A cap nobody can see reads as "unlimited" right up until it stops working, which is
             # the worst moment to learn about it (Michael, 2026-08-30). Two different ceilings can apply:
             # the always-on infra safety cap (COST_CAP_USD) and, when the C4 budget guard is toggled on,
-            # the demo cap (BUDGET_CAP_USD). Report whichever would actually bite first.
+            # the demo cap (BUDGET_CAP_USD). Report whichever would actually bite first. The infra cap is
+            # the runtime one, so a cap lowered with /toggle?cost_cap= is the target the counter shows.
             with _cost_lock:
                 payload = dict(_cost)
-            caps = [c for c in (COST_CAP_USD,
+            caps = [c for c in (_cost_cap["usd"],
                                 BUDGET_CAP_USD if GUARDS.get("budget") else 0) if c and c > 0]
             payload["cap_usd"] = min(caps) if caps else 0
             payload["budget_guard"] = bool(GUARDS.get("budget"))
@@ -962,7 +996,15 @@ class Handler(BaseHTTPRequestHandler):
         if self.path.startswith("/toggle"):
             # Runtime flip, no restart, no spec change. Keys: input_blocklist, input_classifier, output,
             # budget, topic. Convenience: input=on flips BOTH input stages. e.g. /toggle?input_blocklist=on
+            # cost_cap=N sets the cluster-wide cost cap and cost_cap=default restores COST_CAP_USD. A refused
+            # cost_cap answers 400 and changes nothing, guards included. It is read with blank values kept,
+            # so an empty cost_cap= is refused instead of silently ignored.
             q = parse_qs(urlparse(self.path).query)
+            cap_q = parse_qs(urlparse(self.path).query, keep_blank_values=True).get("cost_cap")
+            cap = parse_cost_cap(cap_q[0]) if cap_q else None
+            if cap_q and cap is None:
+                self._send(400, {"error": cost_cap_refusal()})
+                return
             with _guard_lock:
                 if "input" in q:
                     on = q["input"][0].lower() == "on"
@@ -971,7 +1013,9 @@ class Handler(BaseHTTPRequestHandler):
                 for k in ("input_blocklist", "input_classifier", "output", "budget", "topic"):
                     if k in q:
                         GUARDS[k] = q[k][0].lower() == "on"
-                self._send(200, dict(GUARDS))
+                if cap_q:
+                    _cost_cap["usd"] = cap
+                self._send(200, {**GUARDS, "cost_cap_usd": _cost_cap["usd"]})
             return
         # Pass through agent-card / .well-known discovery unchanged.
         try:
@@ -1110,7 +1154,7 @@ class Handler(BaseHTTPRequestHandler):
                 })
                 return
             if cost_capped():
-                _cap = BUDGET_CAP_USD if GUARDS.get("budget") else COST_CAP_USD
+                _cap = BUDGET_CAP_USD if GUARDS.get("budget") else _cost_cap["usd"]
                 self._send(429, {
                     "jsonrpc": "2.0", "id": payload.get("id") if isinstance(payload, dict) else None,
                     "error": {"code": -32000,
@@ -1268,7 +1312,7 @@ class Handler(BaseHTTPRequestHandler):
                              "guarded": True, "input_tokens": 0, "output_tokens": 0})
             return
         if cost_capped(session):
-            _cap = BUDGET_CAP_USD if GUARDS.get("budget") else COST_CAP_USD
+            _cap = BUDGET_CAP_USD if GUARDS.get("budget") else _cost_cap["usd"]
             # The way out is Reset, not switching the control off. A fresh conversation gets a fresh
             # budget and the guardrail stays armed, which is what a per-tenant quota does in production.
             # "budget" covers both caps, as the reply does: either way spend stopped the turn.

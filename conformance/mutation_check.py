@@ -77,8 +77,24 @@ MUTANTS: list[tuple[str, str, str]] = [
     ),
     (
         "cost cap off by one",
-        "if COST_CAP_USD > 0 and spend >= COST_CAP_USD:",
-        "if COST_CAP_USD > 0 and spend > COST_CAP_USD:",
+        "if cost_cap > 0 and spend >= cost_cap:",
+        "if cost_cap > 0 and spend > cost_cap:",
+    ),
+    ("runtime cost cap ignored", '    cost_cap = _cost_cap["usd"]', "    cost_cap = COST_CAP_USD"),
+    (
+        "runtime cost cap may be raised",
+        "cap <= 0 or (COST_CAP_USD > 0 and cap > COST_CAP_USD):",
+        "cap <= 0:",
+    ),
+    (
+        "cost cap default not restored",
+        '    if v == "default":\n        return COST_CAP_USD',
+        '    if v == "default":\n        return _cost_cap["usd"]',
+    ),
+    (
+        "refused cost cap still flips guards",
+        "                self._send(400, {\"error\": cost_cap_refusal()})\n                return",
+        "                self._send(400, {\"error\": cost_cap_refusal()})",
     ),
     (
         "budget cap off by one",

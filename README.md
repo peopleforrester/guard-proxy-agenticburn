@@ -119,6 +119,12 @@ that 502 whatever `PROXY_FAIL_CLOSED` says, so fail-open never forwards an unsca
 returns an unscrubbed reply. The thinking-only retry is optional, so running out of time on it keeps
 the first reply, as its failure does. The A2A path is not bounded by it.
 
+`COST_CAP_USD` (default `0` for none) is the cluster-wide backstop on spend. `GET
+/toggle?cost_cap=2.00` lowers it at runtime, keeping the tally an env change would reset, and
+`/toggle?cost_cap=default` restores the env value. A runtime cap must be above 0 and no higher than
+`COST_CAP_USD` while that is set; anything else answers 400 and changes nothing. `/toggle` reports
+the cap in effect as `cost_cap_usd`, and `/cost`'s `cap_usd` counts it.
+
 Several overlap (`BUDGET_CAP_USD` and `COST_CAP_USD`, `INPUT_GUARD` and `INPUT_CLASSIFIER`). Some of
 that is history and some is a live toggle the workshop flips. Rationalizing them is part of the
 rewrite.
@@ -132,7 +138,7 @@ rewrite.
 | `GET /prompts` | The live prompt feed |
 | `GET /guards` | Which guards are on |
 | `GET /controls` | The state of each workshop challenge's control |
-| `GET /toggle` | Switches a guard live, without a restart |
+| `GET /toggle` | Switches a guard, or sets the cost cap, live without a restart |
 
 ## Conformance suite
 

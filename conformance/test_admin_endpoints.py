@@ -90,7 +90,76 @@ def test_toggle_ignores_unknown_keys_and_returns_state(start_proxy):
     p = start_proxy(OUTPUT_GUARD="on")
     r = p.get("/toggle?bogus=on")
     assert r.status == 200
-    assert r.json() == {**dict.fromkeys(GUARD_KEYS, False), "output": True}
+    assert r.json() == {**dict.fromkeys(GUARD_KEYS, False), "output": True, "cost_cap_usd": 0}
+
+
+# --- /toggle?cost_cap: the cluster-wide cap, lowered and restored at runtime -----------------------
+
+
+def test_toggle_reports_the_env_cost_cap(start_proxy):
+    assert start_proxy(COST_CAP_USD="25").toggle(output="on")["cost_cap_usd"] == 25.0
+
+
+def test_toggle_cost_cap_sets_the_cap_and_default_restores_it(start_proxy):
+    p = start_proxy(COST_CAP_USD="25")
+    assert p.toggle(cost_cap="2.00")["cost_cap_usd"] == 2.0
+    assert p.get("/cost").json()["cap_usd"] == 2.0
+    # /guards stays the guard map; the cap is reported by /toggle and /cost.
+    assert set(p.get("/guards").json()) == GUARD_KEYS
+    assert p.toggle(cost_cap="default")["cost_cap_usd"] == 25.0
+    assert p.get("/cost").json()["cap_usd"] == 25.0
+    assert p.toggle(cost_cap="0.5")["cost_cap_usd"] == 0.5
+    assert p.toggle(cost_cap="DEFAULT")["cost_cap_usd"] == 25.0
+
+
+def test_toggle_cost_cap_with_no_env_cap_sets_one_and_default_clears_it(start_proxy):
+    p = start_proxy()
+    assert p.toggle(cost_cap="2")["cost_cap_usd"] == 2.0
+    assert p.get("/cost").json()["cap_usd"] == 2.0
+    assert p.toggle(cost_cap="default")["cost_cap_usd"] == 0
+    assert p.get("/cost").json()["cap_usd"] == 0
+
+
+def test_toggle_cost_cap_and_guards_in_one_query(start_proxy):
+    state = start_proxy(COST_CAP_USD="25").toggle(cost_cap="2", output="on")
+    assert state["cost_cap_usd"] == 2.0
+    assert state["output"] is True
+
+
+def test_cost_reports_the_lower_of_runtime_cost_cap_and_budget_cap(start_proxy):
+    p = start_proxy(COST_CAP_USD="25", BUDGET_GUARD="on", BUDGET_CAP_USD="0.05")
+    p.toggle(cost_cap="0.01")
+    assert p.get("/cost").json()["cap_usd"] == pytest.approx(0.01)
+    p.toggle(cost_cap="1")
+    assert p.get("/cost").json()["cap_usd"] == pytest.approx(0.05)
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["", "abc", "0", "-1", "nan", "inf", "-inf", "1e400", "25.01", "100", "$2", "2,00"],
+)
+def test_toggle_refuses_an_invalid_cost_cap_and_changes_nothing(start_proxy, value):
+    p = start_proxy(COST_CAP_USD="25")
+    p.toggle(cost_cap="2")
+    r = p.get(f"/toggle?output=on&cost_cap={value}")
+    assert r.status == 400
+    assert r.json() == {
+        "error": "cost_cap must be a number above 0 and no higher than COST_CAP_USD ($25.00), "
+        "or 'default' to restore COST_CAP_USD"
+    }
+    # The whole query is refused: neither the cap nor a guard in the same request changed.
+    assert p.get("/cost").json()["cap_usd"] == 2.0
+    assert p.get("/guards").json()["output"] is False
+
+
+def test_toggle_cost_cap_error_names_no_ceiling_when_env_cap_is_off(start_proxy):
+    r = start_proxy().get("/toggle?cost_cap=-1")
+    assert r.status == 400
+    assert r.json() == {"error": "cost_cap must be a number above 0, or 'default' to restore COST_CAP_USD"}
+
+
+def test_toggle_cost_cap_may_equal_the_env_cap(start_proxy):
+    assert start_proxy(COST_CAP_USD="25").toggle(cost_cap="25")["cost_cap_usd"] == 25.0
 
 
 # --- /cost ----------------------------------------------------------------------------------------
