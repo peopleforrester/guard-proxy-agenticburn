@@ -89,3 +89,67 @@ def test_feed_skips_empty_and_textless_requests(start_proxy, agent):
     p.post("/", body)
     p.post("/", b"not json")
     assert feed(p)["prompts"] == []
+
+
+# --- Personal data and whole-word terms (Unleash_an_Agent_Watch_It_Burn#646) ----------------------
+
+
+def forwarded_text(agent, i=-1):
+    return agent.calls()[i].json()["params"]["message"]["parts"][0]["text"]
+
+
+def test_feed_redacts_personal_data_but_the_bot_gets_the_prompt_unchanged(start_proxy, agent):
+    p = start_proxy(STREAM_PROMPTS="on")
+    prompt = "email jane.doe+burrito@example.com or call (503) 555-0100, deliver to 1600 Pennsylvania Avenue"
+    assert p.chat(prompt).json()["reply"] == "Here is your burrito."
+    assert forwarded_text(agent) == prompt
+    assert feed(p)["prompts"] == ["email [redacted] or call [redacted], deliver to [redacted]"]
+
+
+def test_feed_redacts_numbers_in_every_written_form(start_proxy, agent):
+    p = start_proxy(STREAM_PROMPTS="on")
+    p.chat("card 4111 1111 1111 1111, or 4111-1111-1111-1111, or 4111111111111111")
+    p.chat("ssn 123-45-6789, uk +44 20 7946 0958, local 555.0100")
+    p.chat("send it to 42 elm st and ring twice")
+    assert feed(p)["prompts"] == [
+        "card [redacted], or [redacted], or [redacted]",
+        "ssn [redacted], uk [redacted], local [redacted]",
+        "send it to [redacted] and ring twice",
+    ]
+
+
+def test_feed_redacts_personal_data_on_the_a2a_path_too(start_proxy, agent):
+    p = start_proxy(STREAM_PROMPTS="on")
+    assert p.a2a("my email is pat@example.org").status == 200
+    assert forwarded_text(agent) == "my email is pat@example.org"
+    assert feed(p)["prompts"] == ["my email is [redacted]"]
+
+
+def test_feed_leaves_an_ordinary_order_alone(start_proxy, agent):
+    """Quantities, times and short order numbers are not personal data, and no term hides inside a word."""
+    order = (
+        "2 burritos and 3 tacos for the road, all the way, at 12:30, order 12345: spicy, spiced, "
+        "spices, a cocktail, grapes, a peacock and Dickens"
+    )
+    p = start_proxy(STREAM_PROMPTS="on")
+    p.chat(order)
+    assert feed(p)["prompts"] == [order]
+
+
+def test_feed_masks_inflected_and_compound_terms(start_proxy, agent):
+    p = start_proxy(STREAM_PROMPTS="on")
+    p.chat("this fucking bullshit, these bitches, two shits")
+    assert feed(p)["prompts"] == ["this [redacted] [redacted], these [redacted], two [redacted]"]
+
+
+def test_feed_masks_a_term_but_the_bot_gets_it_unchanged(start_proxy, agent):
+    p = start_proxy(STREAM_PROMPTS="on")
+    p.chat("this shit is good")
+    assert forwarded_text(agent) == "this shit is good"
+    assert feed(p)["prompts"] == ["this [redacted] is good"]
+
+
+def test_feed_masks_before_truncating_so_no_partial_number_shows(start_proxy, agent):
+    p = start_proxy(STREAM_PROMPTS="on")
+    p.chat("a" * 269 + " 4111 1111 1111 1111")
+    assert feed(p)["prompts"] == ["a" * 269 + " [redacted]"]

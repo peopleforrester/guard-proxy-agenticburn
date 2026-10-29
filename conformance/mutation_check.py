@@ -92,6 +92,21 @@ MUTANTS: list[tuple[str, str, str]] = [
     ),
     ("probe recorded in feed", '    return PROBE_MARKER in (text or "")', "    return False"),
     (
+        "feed shows personal data",
+        '        masked = pattern.sub("[redacted]", masked)',
+        "        pass",
+    ),
+    (
+        "feed terms match substrings",
+        r'r"\b(?:" + alternation + r")s?\b"',
+        r'r"(?:" + alternation + r")"',
+    ),
+    (
+        "feed redaction reaches the bot",
+        "                _prompts.append(moderate(prompt))",
+        "                prompt = moderate(prompt)\n                _prompts.append(prompt)",
+    ),
+    (
         "no context rotation",
         "_ctx_gen[session] = _ctx_gen.get(session, 0) + 1",
         "_ctx_gen[session] = 0",

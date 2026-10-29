@@ -19,3 +19,23 @@ workshop runs.
 
 `PROJECT_STATE.md` added on the lifecycle schema, seeded at 3.3 because the last unit of work
 (`000f57e`) was already on `main` with green CI. The open agent-task issues are its current plan.
+
+## 2026-10-29: the prompt feed redacts personal data, and its terms match whole words
+
+The workshop projects `GET /prompts` on the prompt wall, and the 2026-10-28 planning call
+(Unleash_an_Agent_Watch_It_Burn#646) asked that a prompt carrying a code-of-conduct term or personal data
+still reach the bot but show redacted on the wall. `moderate()` now masks, before the 280-character cut:
+
+- email addresses; any run of seven or more digits with spaces, dots, dashes or brackets between them
+  (phone, card, Social Security and account numbers, and a dash-written date as a side effect); and a
+  street address, a house number with one to four words and a street suffix. No Luhn check narrows the
+  card case, because a projected sixteen-digit number is unwanted whether or not it is a valid card.
+- `PROFANITY_LIST` terms as whole words with an optional plural `s`, the topic phrases' rule. As
+  substrings they masked the menu: "spicy" showed as "[redacted]y" (from "spic"), and "cocktail", "grapes"
+  and "Dickens" lost their middles. Inflected forms and compounds (fucking, bullshit) are listed
+  explicitly in the default instead, since generated endings turn "spic" into "spices". `BLOCK_LIST` still
+  masks as substrings, since it is the same list the input guard blocks on.
+
+Only the feed copy is masked; `/chat` and the A2A path forward the prompt unchanged, which
+`test_prompt_feed.py` pins. Names on their own are not caught. The email pattern starts a match only where
+a run of address characters starts, because without that a 100 KB body with no `@` took 30 seconds.

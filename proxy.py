@@ -564,11 +564,52 @@ def _origin_allowed(handler):
 # floor, it catches the common cases, and the 280-character truncation below bounds the rest. The real
 # control is that attendees are TOLD their prompts may appear on the instructor screen (run-of-show and
 # lab step 0), which is what makes projecting them defensible at all.
+#
+# These terms match as whole words, plural included, as the topic phrases do, never inside another word.
+# Matched as substrings they masked the menu: "spicy" went up on the wall as "[redacted]y", and "cocktail",
+# "grapes" and "Dickens" lost their middles. Endings are not generated either, because "spic" plus "es" or
+# "ed" is "spices" and "spiced". So each inflected form and each compound that hides a term mid-word
+# (fucking, bullshit) is its own entry.
 _DEFAULT_PROFANITY = (
-    "fuck,shit,cunt,bitch,bastard,dick,cock,pussy,asshole,motherfucker,wanker,twat,"
-    "nigger,faggot,retard,tranny,slut,whore,rape,kike,spic,chink"
+    "fuck,fucks,fucked,fucker,fucking,fuckin,motherfucker,motherfucking,"
+    "shit,shitty,shitting,bullshit,shithead,cunt,bitch,bitches,bitching,bastard,"
+    "dick,dickhead,cock,pussy,asshole,dumbass,jackass,wanker,twat,"
+    "nigger,faggot,retard,retarded,tranny,slut,whore,rape,raped,rapist,kike,spic,chink"
 )
 PROFANITY = [t.strip().lower() for t in os.environ.get("PROFANITY_LIST", _DEFAULT_PROFANITY).split(",") if t.strip()]
+
+
+def _profanity_pattern(terms):
+    # An empty list matches nothing; joined as-is it would be an empty alternation that matches everywhere.
+    if not terms:
+        return None
+    alternation = "|".join(sorted((re.escape(t) for t in terms), key=len, reverse=True))
+    return re.compile(r"\b(?:" + alternation + r")s?\b", re.IGNORECASE)
+
+
+_PROFANITY_RE = _profanity_pattern(PROFANITY)
+
+# Personal data on the wall (Unleash_an_Agent_Watch_It_Burn#646). The wall is projected, so a prompt that
+# carries an email, a phone or card number, or a street address goes up redacted. The prompt itself still
+# goes to the bot unchanged; only the feed copy is masked. Deterministic like the wordlist, and a floor in
+# the same way: a name on its own is not caught.
+_PII_PATTERNS = (
+    # Email addresses. The lookbehind starts a match only where a run of address characters starts;
+    # without it a long run with no @ is rescanned from every position, and 100 KB took 30 seconds.
+    re.compile(r"(?<![\w.+-])[\w.+-]+@[\w-]+(?:\.[\w-]+)+"),
+    # Seven or more digits in one run, with spaces, dots, dashes or brackets between them: phone numbers,
+    # payment cards, US Social Security numbers, account numbers. A burrito order never needs seven digits
+    # in a row, so no card check (Luhn) narrows it: a projected sixteen-digit number is redacted either way.
+    re.compile(r"\+?\(?\d(?:[\s().-]{0,2}\d){6,}\)?"),
+    # A street address: a house number, one to four words, and a street suffix ("1600 Pennsylvania Avenue",
+    # "42 elm st"). A word like "the" or "for" between them ends the match, so "3 tacos for the road" stays.
+    re.compile(
+        r"\b\d{1,6}(?:\s+(?!(?:the|a|an|and|or|for|on|to|of|in|at|with|my|your|our|all|some)\b)[a-z0-9.'-]+){1,4}"
+        r"\s+(?:street|st|avenue|ave|road|rd|boulevard|blvd|lane|ln|drive|dr|way|court|ct|place|pl|"
+        r"terrace|ter|parkway|pkwy|highway|hwy|circle|cir)\b\.?",
+        re.IGNORECASE,
+    ),
+)
 _stream_lock = threading.Lock()
 _prompts = collections.deque(maxlen=50)  # recent MODERATED prompts for the display
 
@@ -588,14 +629,21 @@ def _is_probe(text):
 
 
 def moderate(text):
-    """Mask block-listed + profane terms so the side-screen stays within the code of conduct."""
+    """Mask personal data, block-listed and profane terms so the side-screen stays within the code of conduct.
+
+    Personal data goes first, while an address or number is still whole, and everything is masked before
+    the 280-character cut, so the cut can never leave half a card number showing."""
     masked = text
+    for pattern in _PII_PATTERNS:
+        masked = pattern.sub("[redacted]", masked)
     low = masked.lower()
-    for term in set(BLOCK_LIST + PROFANITY):
+    for term in BLOCK_LIST:
         if term and term in low:
-            # Case-insensitive: "Delete" or "FuCk" must be masked too, not only the lower and upper forms.
+            # Case-insensitive: "Delete" or "DELETE" must be masked too, not only the lower and upper forms.
             masked = re.sub(re.escape(term), "[redacted]", masked, flags=re.IGNORECASE)
             low = masked.lower()
+    if _PROFANITY_RE is not None:
+        masked = _PROFANITY_RE.sub("[redacted]", masked)
     return masked[:280]
 
 
