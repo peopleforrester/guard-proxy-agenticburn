@@ -241,6 +241,7 @@ that test together.
 The workshop repository includes this one as a git submodule at `gitops/ai-layer/guard-proxy/`. A
 kustomize `configMapGenerator` turns `proxy.py` into a ConfigMap, which is mounted into a stock Python
 image. That delivery is what lets a code change reach a live cluster in seconds during the workshop.
+[docs/release-notes.md](docs/release-notes.md) names the commit to repin the submodule to for each change.
 The Go rewrite replaces it with a signed, digest-pinned image.
 
 ## Related repos
