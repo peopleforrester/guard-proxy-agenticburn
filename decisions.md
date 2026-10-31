@@ -102,3 +102,17 @@ two "cap reached" replies use the runtime value. Choices the issue left open:
 - **The A2A 429 names the cap too**: "Cost cap reached ($X on this cluster). Spend is frozen for
   everyone; ..." for the cluster cap, and the existing "Budget cap reached" text for the budget cap. No
   workshop consumer outside its vendored copy of this suite matches the old text.
+
+## 2026-10-31: Port /chat and the admin endpoints to Go as proxy.py does them
+
+Approved by Michael on 2026-10-31, choosing "port as-is" over doing the PRD's M3 now. The Go build will
+serve `/chat`, `/cost`, `/prompts`, `/controls` and `/toggle` with spend metered after each response,
+exactly as `proxy.py`, until the full conformance suite passes against it. That unblocks #22.
+
+### REJECTED (for now): building the M3 budget reservation in this port
+**Why:** the reservation counts a request's tokens with Bedrock `CountTokens` and caps `max_tokens`
+before the model is called. guard-proxy sits in front of the agent (kagent at `AGENT_URL`) and sees
+token usage only in the agent's reply, so it never holds a model request to count or cap.
+**Status:** Revisit when a design puts the proxy (or a second hop) between kagent and Bedrock.
+**Do not suggest:** estimating tokens from the A2A prompt text, or capping the agent's turn by
+cancelling it mid-flight. Neither bounds what a single model call spends.

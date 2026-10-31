@@ -1,6 +1,6 @@
 # Project State: guard-proxy-agenticburn
 
-Phase: 3.3 Promote
+Phase: 2.1 Test
 Approved: pending
 
 ## Lifecycle
@@ -25,13 +25,26 @@ Agent-task issues worked 2026-10-29 (all closed):
 - [x] #19 Allow the instructor console origin on start.agenticburn.com and start.burritobot.co
 - [x] #17 Name the scanner in the classifier refusal
 - [x] #20 Redact personal data on the prompt feed; match code-of-conduct terms as whole words
-- [ ] #21 One TURN_TIMEOUT deadline per /chat turn: implemented, awaiting promotion (Go reads and validates it; applied when Go /chat lands)
-- [ ] #23 /toggle?cost_cap=N sets the cluster-wide cost cap at runtime (KubeCon finale): implemented, awaiting promotion (proxy.py only)
-- [ ] #25 The cluster-wide cost cap answers "the kitchen is closed", not "press Reset"; decision `cost_cap`: implemented, awaiting promotion (proxy.py only)
+- [x] #21 One TURN_TIMEOUT deadline per /chat turn (on main at 92b0587)
+- [x] #23 /toggle?cost_cap=N sets the cluster-wide cost cap at runtime (KubeCon finale) (on main at 92b0587)
+- [x] #25 The cluster-wide cost cap answers "the kitchen is closed", not "press Reset"; decision `cost_cap` (on main at 92b0587)
 
-Go rewrite: M0 to M2 done (passthrough and guards conformance subsets). M3 to M7 not started.
-Since M2, `/chat`, the topic guard, `/controls`, `/cost`, `/prompts` and `/toggle` have landed
-in `proxy.py` only, so the Go build's parity gap is widening.
+Go rewrite: M0 to M2 done (passthrough and guards conformance subsets).
+
+### Active: port /chat and the admin endpoints to Go, as proxy.py does them (approved 2026-10-31)
+Michael chose "port /chat as-is": spend metered after each response, exactly as proxy.py, until the
+full conformance suite passes against the Go build. Closes #22. The PRD M3 reservation (CountTokens,
+capped max_tokens) is out of scope: it needs the proxy on the model path. Baseline 2026-10-31: 271
+conformance tests fail against Go. Units, each committed green:
+- [ ] U1 spend: cost metering, rate limits (cluster and per session), cost cap and budget cap, /cost
+- [ ] U2 /toggle and /guards, the runtime cost cap
+- [ ] U3 POST /chat: validation, A2A wrapping, reply extraction, retries, TURN_TIMEOUT (#22)
+- [ ] U4 the on-topic guard on both paths
+- [ ] U5 the prompt feed: GET /prompts, moderate(), probes
+- [ ] U6 GET /controls badges (Kubernetes API reads)
+- [ ] U7 logging parity, then the full suite green except test_chat_spans.py
+- [ ] U8 decide with Michael: test_chat_spans.py needs an OpenTelemetry SDK in Go (PRD M5)
+After the port: update the README milestone table and file the PRD #412 amendment on Unleash.
 
 ## Branch & Tests
 - Branch: staging
@@ -46,3 +59,5 @@ _(append-only. Each phase transition adds one line, oldest first.)_
 - 2026-10-29 #21 implemented and verified locally (2.3) on agent/21-11185
 - 2026-10-30 #23 implemented and verified locally (2.3) on agent/23-12049
 - 2026-10-30 #25 implemented and verified locally (2.3) on agent/25-12984
+- 2026-10-31 #21, #23, #25 promoted to main at 92b0587
+- 2026-10-31 1.3 Go /chat port approved by Michael (port as-is); 2.1 starting U1
