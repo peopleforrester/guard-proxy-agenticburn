@@ -1,6 +1,6 @@
 # Project State: guard-proxy-agenticburn
 
-Phase: 3.1 Stage
+Phase: 3.3 Promote
 Approved: pending
 
 ## Lifecycle
@@ -45,12 +45,12 @@ conformance tests fail against Go. Units, each committed green:
 - [x] U7 logging parity, then the full suite green except test_chat_spans.py
 - [ ] U8 decide with Michael: test_chat_spans.py needs an OpenTelemetry SDK in Go (PRD M5); marked `spans`, deselected for Go
 - [x] README milestone table, config and conformance sections; docs/gotchas-go.md RE2 section
-- [ ] File the PRD #412 amendment on Unleash (M3 needs the model path; M4 done as proxy.py)
+- [x] Filed the PRD #412 amendment as Unleash_an_Agent_Watch_It_Burn#722; status posted on #412 and lab-platform#342
 
 ## Branch & Tests
 - Branch: staging
 - Working tree: clean
-- Last CI: green; sha 47ac08b (staging and main)
+- Last CI: green on d0793a7 (staging and main)
 
 ## Phase History
 _(append-only. Each phase transition adds one line, oldest first.)_
@@ -63,3 +63,4 @@ _(append-only. Each phase transition adds one line, oldest first.)_
 - 2026-10-31 #21, #23, #25 promoted to main at 92b0587
 - 2026-10-31 1.3 Go /chat port approved by Michael (port as-is); 2.1 starting U1
 - 2026-10-31 2.3 Go port verified: 305/323 conformance pass against Go (18 spans deselected), proxy.py 323/323, go test ./... green; 3.1 a00beae pushed
+- 2026-10-31 3.3 Go port promoted to main at d0793a7; #22 closed. Open: #26 (test-helper race), U8 (Go spans, M5) for Michael
