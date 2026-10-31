@@ -25,9 +25,10 @@ import (
 
 // Server routes every request. It is safe for concurrent use.
 type Server struct {
-	agentURL string
-	client   *http.Client
-	log      *slog.Logger
+	agentURL     string
+	agentTimeout time.Duration
+	client       *http.Client
+	log          *slog.Logger
 
 	blocklist    guard.Blocklist
 	llmGuard     *guard.LLMGuard
@@ -64,9 +65,10 @@ func New(cfg config.Config, log *slog.Logger) *Server {
 		origins[o] = true
 	}
 	return &Server{
-		agentURL: cfg.Agent.URL,
-		client:   &http.Client{Timeout: cfg.Agent.Timeout.Duration},
-		log:      log,
+		agentURL:     cfg.Agent.URL,
+		agentTimeout: cfg.Agent.Timeout.Duration,
+		client:       &http.Client{Timeout: cfg.Agent.Timeout.Duration},
+		log:          log,
 
 		blocklist:    blocklist,
 		llmGuard:     guard.NewLLMGuard(cfg.LLMGuard.URL, cfg.LLMGuard.Token, cfg.LLMGuard.Timeout.Duration),

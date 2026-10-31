@@ -163,6 +163,55 @@ def _raise_if_expired(deadline):
     if deadline is not None and time.monotonic() >= deadline:
         raise TurnExpired(f"the {TURN_TIMEOUT:g}s turn deadline (TURN_TIMEOUT) passed")
 
+
+# The /chat forward is an A2A task the proxy can name (guard-proxy-agenticburn#27). kagent runs a turn in a
+# context detached from the request, so a forward that gave up left the agent working, and spending, for
+# hours. The forward is therefore sent non-blocking, which answers with the task's id at once, then polled
+# with tasks/get until the task leaves these states; a forward that fails or runs out of time sends
+# tasks/cancel for that id. The poll waits _POLL_FIRST seconds, doubling to at most _POLL_MAX.
+_TASK_RUNNING = ("submitted", "working")
+_POLL_FIRST = 0.25
+_POLL_MAX = 1.0
+
+
+def _running_task_id(resp):
+    """The id of the task an A2A response carries while the agent is still working on it, else None. A
+    running task without an id cannot be polled or cancelled, so it is an error."""
+    result = resp.get("result") if isinstance(resp, dict) else None
+    if not isinstance(result, dict):
+        return None
+    status = result.get("status")
+    if not isinstance(status, dict) or status.get("state") not in _TASK_RUNNING:
+        return None
+    task_id = result.get("id")
+    if not isinstance(task_id, str) or not task_id:
+        raise ValueError("the agent answered a running task with no id")
+    return task_id
+
+
+def _cancel_task(task_id, reason):
+    """Send the agent tasks/cancel for a /chat task the forward gave up on, so the agent stops working on
+    a turn nobody is waiting for. Runs on its own thread, after the turn has answered, and logs either way."""
+    body = {"jsonrpc": "2.0", "id": "cancel", "method": "tasks/cancel", "params": {"id": task_id}}
+    try:
+        req = urllib.request.Request(AGENT_URL + "/", data=json.dumps(body).encode(),
+                                     headers={"Content-Type": "application/json"}, method="POST")
+        with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
+            resp = json.loads(r.read())
+    except Exception as exc:
+        log.error("could not cancel the agent's task %s: %s", task_id, exc,
+                  extra={"event": "task_cancel_failed"})
+        return
+    result = resp.get("result") if isinstance(resp, dict) else None
+    if not isinstance(result, dict):
+        error = resp.get("error", resp) if isinstance(resp, dict) else resp
+        log.error("the agent did not cancel task %s: %s", task_id, json.dumps(error)[:200],
+                  extra={"event": "task_cancel_failed"})
+        return
+    state = result.get("status", {}).get("state") if isinstance(result.get("status"), dict) else None
+    log.info("cancelled the agent's task %s (state %s) after the chat forward failed: %s", task_id, state,
+             reason, extra={"event": "task_cancel"})
+
 # --- Infra-control state for the badge strip (#197/#209) -------------------------------------------
 # The AI guards above are guard-proxy's own in-memory state. The badges for C1-C3 and C7 report the
 # state of real cluster objects the student installs, which only the Kubernetes API knows. This block
@@ -1341,10 +1390,11 @@ class Handler(BaseHTTPRequestHandler):
         global _chat_seq
 
         def _forward(ctx, optional=False):
-            """Send the prompt to the agent under contextId ctx. Returns the A2A resp, or None on a
-            transport error or when the turn's deadline has run out. A 502 has then already been sent,
-            unless optional is set: the caller still holds a usable reply and answers with it, so exactly
-            one response reaches the client."""
+            """Send the prompt to the agent under contextId ctx, as a non-blocking message/send polled to
+            the end of its task. Returns the A2A resp, or None on a transport error or when PROXY_TIMEOUT
+            or the turn's deadline has run out. A 502 has then already been sent, unless optional is set:
+            the caller still holds a usable reply and answers with it, so exactly one response reaches the
+            client. Either way a task the agent is still running is cancelled."""
             global _chat_seq
             _chat_seq += 1
             m = {"role": "user", "messageId": f"chat-{_chat_seq}",
@@ -1353,8 +1403,25 @@ class Handler(BaseHTTPRequestHandler):
                 # Carry the (self-heal-generationed) browser session as the A2A contextId so kagent
                 # threads the order across turns.
                 m["contextId"] = ctx
-            a2a = {"jsonrpc": "2.0", "id": "chat", "method": "message/send", "params": {"message": m}}
+            a2a = {"jsonrpc": "2.0", "id": "chat", "method": "message/send",
+                   "params": {"message": m, "configuration": {"blocking": False}}}
             fwd_headers = {"Content-Type": "application/json"}
+            # PROXY_TIMEOUT bounds the whole forward, the send and every poll, as it bounded the one
+            # blocking call before; the turn's deadline cuts it shorter.
+            fwd_deadline = time.monotonic() + TIMEOUT
+            if deadline is not None:
+                fwd_deadline = min(fwd_deadline, deadline)
+
+            def _call(body):
+                left = fwd_deadline - time.monotonic()
+                if left <= 0:
+                    _raise_if_expired(deadline)
+                    raise TimeoutError(f"the {TIMEOUT:g}s forward deadline (PROXY_TIMEOUT) passed")
+                req = urllib.request.Request(AGENT_URL + "/", data=json.dumps(body).encode(),
+                                             headers=fwd_headers, method="POST")
+                with urllib.request.urlopen(req, timeout=left) as r:
+                    return json.loads(r.read())
+
             client_cm = (_tracer.start_as_current_span("agent.forward", kind=SpanKind.CLIENT)
                          if _OTEL_AVAILABLE else nullcontext())
             with client_cm as client_span:
@@ -1362,18 +1429,29 @@ class Handler(BaseHTTPRequestHandler):
                     client_span.set_attribute("peer.service", _PEER_SERVICE)
                     client_span.set_attribute("http.request.method", "POST")
                     inject(fwd_headers)
+                task_id = None
                 try:
-                    req = urllib.request.Request(AGENT_URL + "/", data=json.dumps(a2a).encode(),
-                                                 headers=fwd_headers, method="POST")
-                    # A TurnExpired from _call_timeout lands in the except below, as a timeout does.
-                    with urllib.request.urlopen(req, timeout=_call_timeout(deadline)) as r:
-                        return json.loads(r.read())
+                    # A TurnExpired from _call lands in the except below, as a timeout does.
+                    resp = _call(a2a)
+                    task_id = _running_task_id(resp)
+                    wait = _POLL_FIRST
+                    while task_id:
+                        time.sleep(max(0.0, min(wait, fwd_deadline - time.monotonic())))
+                        wait = min(wait * 2, _POLL_MAX)
+                        resp = _call({"jsonrpc": "2.0", "id": "chat", "method": "tasks/get",
+                                      "params": {"id": task_id}})
+                        if not isinstance(resp, dict) or not isinstance(resp.get("result"), dict):
+                            raise ValueError(f"tasks/get answered no task: {json.dumps(resp)[:200]}")
+                        if _running_task_id(resp) is None:
+                            task_id = None
+                    return resp
                 except Exception as exc:
                     log.error("chat forward failed: %s", exc, extra={"event": "forward_error"})
-                    if optional:
-                        return None
-                    self._send(502, {"reply": "BurritoBot's kitchen isn't answering. Try again in a moment.",
-                                     "guarded": False, "input_tokens": 0, "output_tokens": 0})
+                    if not optional:
+                        self._send(502, {"reply": "BurritoBot's kitchen isn't answering. Try again in a moment.",
+                                         "guarded": False, "input_tokens": 0, "output_tokens": 0})
+                    if task_id:
+                        threading.Thread(target=_cancel_task, args=(task_id, str(exc)), daemon=True).start()
                     return None
 
         # Annotate the outer HTTP span (the APM trace root created by OTel auto-instrumentation)

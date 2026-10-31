@@ -188,6 +188,21 @@ MUTANTS: list[tuple[str, str, str]] = [
         "                    req = urllib.request.Request(\n                        fwd_url, data=raw, headers=fwd_headers,",
         "                    req = urllib.request.Request(\n                        fwd_url, data=raw, headers={**dict(self.headers), **fwd_headers},",
     ),
+    (
+        "a failed chat forward leaves its task running",
+        "                        threading.Thread(target=_cancel_task, args=(task_id, str(exc)), daemon=True).start()",
+        "                        pass",
+    ),
+    (
+        "the chat poll ignores PROXY_TIMEOUT",
+        "            fwd_deadline = time.monotonic() + TIMEOUT\n",
+        "            fwd_deadline = time.monotonic() + 3600\n",
+    ),
+    (
+        "a refused cancel logged as done",
+        "    if not isinstance(result, dict):\n        error = ",
+        "    if False:\n        error = ",
+    ),
 ]
 
 

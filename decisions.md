@@ -116,3 +116,51 @@ token usage only in the agent's reply, so it never holds a model request to coun
 **Status:** Revisit when a design puts the proxy (or a second hop) between kagent and Bedrock.
 **Do not suggest:** estimating tokens from the A2A prompt text, or capping the agent's turn by
 cancelling it mid-flight. Neither bounds what a single model call spends.
+
+## 2026-10-31: a /chat forward is a polled A2A task, cancelled when the forward gives up
+
+On 2026-10-31 a `/chat` turn on burritobot-private passed `PROXY_TIMEOUT` (120 s); guard-proxy answered
+502 and the agent worked on for about 2.5 hours, 613 `deploy_app` calls, until its pod was deleted
+(guard-proxy-agenticburn#27, asked by Unleash_an_Agent_Watch_It_Burn#742 for the KubeCon breakout on
+2026-11-12). The fix sends `tasks/cancel` for the turn's task. Read from the source the workshop runs,
+kagent v0.10.1 with `runtime: go` (`go/adk/pkg/a2a`) on a2a-go v0.3.15 (`internal/taskexec`,
+`a2asrv/agentexec.go`), on 2026-10-31:
+
+- **Why the agent kept going.** a2a-go starts every execution in `context.WithoutCancel`, so a client
+  hanging up stops nothing. `tasks/cancel` does stop it: the executor's `Cancel` writes a final
+  `canceled` event into the running execution's queue, the consumer returns, and that cancels the
+  producer's context, which the ADK runner and its Bedrock call run under.
+- **Why the forward is non-blocking.** The task id is the server's (`a2a.NewTaskID()`); a message naming
+  a task id the store does not hold fails with "task loading failed", and kagent's task store answers
+  `tasks/list` with "not supported". A blocking `message/send` therefore never tells the proxy which task
+  to cancel. `message/send` with `configuration.blocking: false` answers at the task's first event,
+  kagent's `submitted`, which it writes before the model runs.
+- **Polled with `tasks/get`, not streamed.** `message/stream` would give the id too, but every
+  conformance fake, and the call counts the suite pins, would have to change to SSE. A task that is
+  already finished in the first answer, as every existing fake's is, is used as it is, so polling only
+  adds calls for a turn still running. `tasks/get` returns the same stored task a blocking send returns,
+  usage metadata included. The poll waits 0.25 s, doubling to 1 s, so a turn answers at most about a
+  second later than it finishes.
+- **What counts as running.** `submitted` and `working`. Every other state ends the poll, including
+  `input-required` and `auth-required`, where a blocking send also returns. A running task with no id,
+  or a `tasks/get` answer with no task, fails the forward.
+- **`PROXY_TIMEOUT` bounds the whole forward**, the send and every poll, as it bounded the one blocking
+  call before; `TURN_TIMEOUT` cuts it shorter. Without that, a turn with no `TURN_TIMEOUT` would poll
+  forever.
+- **The cancel goes out after the turn has answered**, on its own thread or goroutine, bounded by
+  `PROXY_TIMEOUT`, so the room's 502 is not held up behind it. It is sent whenever the forward fails with a
+  task id in hand: a deadline, a failed poll, or the optional thinking-only retry running out of time
+  (that turn still answers 200 with the first reply). It logs `task_cancel` (INFO) with the task id and
+  the state the agent reports, or `task_cancel_failed` (ERROR) when the call fails or the agent answers a
+  JSON-RPC error. A send that fails before returning a task has no id to cancel, and logs only its
+  `forward_error`.
+- **Only `/chat`.** The A2A passthrough forwards the caller's own request, blocking or not, and the caller
+  owns its task.
+- **Assumes one agent replica.** a2a-go's execution manager is in-process, so `tasks/cancel` stops the
+  task only on the pod running it. The workshop runs one `workshop-agent` pod behind agentgateway's
+  `:3000` bind, a plain HTTP route that passes every JSON-RPC method.
+- **The Python runtime is not covered.** kagent's default Python runtime is a different executor; this
+  was read only for `runtime: go`, which both KubeCon clusters run (Unleash_an_Agent_Watch_It_Burn#697).
+- **Not a budget control.** The Go port's entry above rejects cancelling a turn mid-flight as a way to
+  bound spend, and this does not change that: the cancel stops work on a turn the proxy has already given
+  up on, and the model call in flight when it lands is still billed.

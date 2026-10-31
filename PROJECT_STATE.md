@@ -47,8 +47,13 @@ conformance tests fail against Go. Units, each committed green:
 - [x] README milestone table, config and conformance sections; docs/gotchas-go.md RE2 section
 - [x] Filed the PRD #412 amendment as Unleash_an_Agent_Watch_It_Burn#722; status posted on #412 and lab-platform#342
 
+### Agent-task #27: cancel the agent's A2A task when a /chat forward gives up
+Asked by Unleash_an_Agent_Watch_It_Burn#742 for the KubeCon breakout (2026-11-12). Both implementations
+send the /chat forward as a non-blocking message/send, poll tasks/get, and send tasks/cancel when the
+forward fails or runs out of time; decision recorded 2026-10-31. Conformance in `test_task_cancel.py`.
+
 ## Branch & Tests
-- Branch: staging
+- Branch: agent/27-14041 (#27), on staging at de53427
 - Working tree: clean
 - Last CI: green on d0793a7 (staging and main)
 
@@ -64,3 +69,4 @@ _(append-only. Each phase transition adds one line, oldest first.)_
 - 2026-10-31 1.3 Go /chat port approved by Michael (port as-is); 2.1 starting U1
 - 2026-10-31 2.3 Go port verified: 305/323 conformance pass against Go (18 spans deselected), proxy.py 323/323, go test ./... green; 3.1 a00beae pushed
 - 2026-10-31 3.3 Go port promoted to main at d0793a7; #22 closed. Open: #26 (test-helper race), U8 (Go spans, M5) for Michael
+- 2026-10-31 #27 implemented and verified locally (2.3) on agent/27-14041: proxy.py and Go suites green

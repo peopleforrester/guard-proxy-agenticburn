@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/peopleforrester/guard-proxy-agenticburn/internal/spend"
@@ -163,11 +164,14 @@ func (s *Server) chatTurn(ctx context.Context, w http.ResponseWriter, r *http.Re
 	// ends on (guard-proxy-agenticburn#3). spent sums the turn for the storefront.
 	var spent spend.Usage
 	attempt := func(optional bool) (any, bool) {
-		resp, err := s.forwardChat(ctx, prompt, s.contextID(session))
+		resp, running, err := s.forwardChat(ctx, prompt, s.contextID(session))
 		if err != nil {
 			s.log.Error("chat forward failed: "+err.Error(), "event", "forward_error")
 			if !optional {
 				send(w, http.StatusBadGateway, chatReply{Reply: kitchenDown})
+			}
+			if running != "" {
+				go s.cancelTask(context.WithoutCancel(ctx), running, err.Error())
 			}
 			return nil, false
 		}
@@ -234,9 +238,23 @@ func (s *Server) chatTurn(ctx context.Context, w http.ResponseWriter, r *http.Re
 	return nil
 }
 
-// forwardChat sends the prompt to the agent root as A2A message/send, under contextID when set so kagent
-// threads the conversation. Only a JSON Content-Type travels with it.
-func (s *Server) forwardChat(ctx context.Context, prompt, contextID string) (any, error) {
+// The /chat forward is an A2A task the proxy can name (guard-proxy-agenticburn#27). kagent runs a turn in
+// a context detached from the request, so a forward that gave up left the agent working, and spending,
+// for hours. The forward is therefore sent non-blocking, which answers with the task's id at once, then
+// polled with tasks/get until the task leaves the running states; a forward that fails or runs out of
+// time sends tasks/cancel for that id. The poll waits pollFirst, doubling to at most pollMax.
+const (
+	pollFirst = 250 * time.Millisecond
+	pollMax   = time.Second
+)
+
+// forwardChat sends the prompt to the agent root as a non-blocking A2A message/send, under contextID when
+// set so kagent threads the conversation, and polls the task to its end. PROXY_TIMEOUT bounds the whole
+// forward, the send and every poll, and the turn's deadline cuts it shorter. On an error, running is the
+// id of the task the agent may still be working on, or "" when there is none to cancel.
+func (s *Server) forwardChat(ctx context.Context, prompt, contextID string) (resp any, running string, err error) {
+	ctx, cancel := context.WithTimeout(ctx, s.agentTimeout)
+	defer cancel()
 	msg := map[string]any{
 		"role":      "user",
 		"messageId": fmt.Sprintf("chat-%d", s.chatSeq.Add(1)),
@@ -245,7 +263,92 @@ func (s *Server) forwardChat(ctx context.Context, prompt, contextID string) (any
 	if contextID != "" {
 		msg["contextId"] = contextID
 	}
-	body, err := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": "chat", "method": "message/send", "params": map[string]any{"message": msg}})
+	resp, err = s.agentRPC(ctx, map[string]any{"jsonrpc": "2.0", "id": "chat", "method": "message/send",
+		"params": map[string]any{"message": msg, "configuration": map[string]any{"blocking": false}}})
+	if err != nil {
+		return nil, "", err
+	}
+	if running, err = runningTaskID(resp); err != nil {
+		return nil, "", err
+	}
+	for wait := pollFirst; running != ""; wait = min(wait*2, pollMax) {
+		select {
+		case <-ctx.Done():
+			return nil, running, fmt.Errorf("task %s still running when the forward's deadline passed: %w", running, ctx.Err())
+		case <-time.After(wait):
+		}
+		resp, err = s.agentRPC(ctx, map[string]any{"jsonrpc": "2.0", "id": "chat", "method": "tasks/get",
+			"params": map[string]any{"id": running}})
+		if err != nil {
+			return nil, running, err
+		}
+		if _, ok := field(resp, "result").(map[string]any); !ok {
+			return nil, running, fmt.Errorf("tasks/get answered no task: %s", truncate(resp, 200))
+		}
+		id, err := runningTaskID(resp)
+		if err != nil {
+			return nil, running, err
+		}
+		if id == "" {
+			running = ""
+		}
+	}
+	return resp, "", nil
+}
+
+// runningTaskID is the id of the task an A2A response carries while the agent is still working on it,
+// or "" when it carries none. A running task without an id cannot be polled or cancelled, so it is an error.
+func runningTaskID(resp any) (string, error) {
+	result, ok := field(resp, "result").(map[string]any)
+	if !ok {
+		return "", nil
+	}
+	if state := field(result["status"], "state"); state != "submitted" && state != "working" {
+		return "", nil
+	}
+	if id, _ := result["id"].(string); id != "" {
+		return id, nil
+	}
+	return "", errors.New("the agent answered a running task with no id")
+}
+
+// cancelTask sends the agent tasks/cancel for a /chat task the forward gave up on, so the agent stops
+// working on a turn nobody is waiting for. It runs after the turn has answered, and logs either way.
+func (s *Server) cancelTask(ctx context.Context, taskID, reason string) {
+	ctx, cancel := context.WithTimeout(ctx, s.agentTimeout)
+	defer cancel()
+	resp, err := s.agentRPC(ctx, map[string]any{"jsonrpc": "2.0", "id": "cancel", "method": "tasks/cancel",
+		"params": map[string]any{"id": taskID}})
+	if err != nil {
+		s.log.Error(fmt.Sprintf("could not cancel the agent's task %s: %v", taskID, err), "event", "task_cancel_failed")
+		return
+	}
+	result, ok := field(resp, "result").(map[string]any)
+	if !ok {
+		errBody := field(resp, "error")
+		if errBody == nil {
+			errBody = resp
+		}
+		s.log.Error(fmt.Sprintf("the agent did not cancel task %s: %s", taskID, truncate(errBody, 200)), "event", "task_cancel_failed")
+		return
+	}
+	s.log.Info(fmt.Sprintf("cancelled the agent's task %s (state %v) after the chat forward failed: %s",
+		taskID, field(result["status"], "state"), reason), "event", "task_cancel")
+}
+
+// truncate is v as JSON, cut to n bytes, for a log line.
+func truncate(v any, n int) string {
+	b, _ := json.Marshal(v)
+	if len(b) > n {
+		b = b[:n]
+	}
+	return string(b)
+}
+
+// agentRPC posts one JSON-RPC request to the agent root and returns the decoded reply. Only a JSON
+// Content-Type travels with it.
+func (s *Server) agentRPC(ctx context.Context, rpc map[string]any) (any, error) {
+	body, err := json.Marshal(rpc)
 	if err != nil {
 		return nil, err
 	}

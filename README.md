@@ -153,6 +153,14 @@ that 502 whatever `PROXY_FAIL_CLOSED` says, so fail-open never forwards an unsca
 returns an unscrubbed reply. The thinking-only retry is optional, so running out of time on it keeps
 the first reply, as its failure does. The A2A path is not bounded by it.
 
+The `/chat` forward is an A2A task (#27). It is sent as a non-blocking `message/send`, which answers
+with the task's id, and polled with `tasks/get` until the task leaves `submitted` and `working`.
+`PROXY_TIMEOUT` bounds the whole forward, every poll included. When the forward fails or runs out of
+time with a task still running, the turn answers its 502 and guard-proxy then sends the agent
+`tasks/cancel` for that task, logging `task_cancel`, or `task_cancel_failed` when the agent refuses or
+cannot be reached. kagent runs a turn detached from the request, so without the cancel a turn nobody
+is waiting for keeps calling tools and the model.
+
 `COST_CAP_USD` (default `0` for none) is the cluster-wide backstop on spend. `GET
 /toggle?cost_cap=2.00` lowers it at runtime, keeping the tally an env change would reset, and
 `/toggle?cost_cap=default` restores the env value. A runtime cap must be above 0 and no higher than
@@ -206,6 +214,7 @@ The suite covers:
 - the rate limit, the cluster-wide cost cap and the per-session budget cap, and the order they run in;
 - token metering and tier pricing;
 - the self-heal retries;
+- the `/chat` task poll and its `tasks/cancel` on a failed or timed-out forward;
 - the moderated prompt feed;
 - response CORS.
 
