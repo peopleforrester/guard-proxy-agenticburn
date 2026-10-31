@@ -258,7 +258,7 @@ def test_topic_refusal_precedes_the_cost_cap(start_proxy, agent):
     p = start_proxy(**TOPIC_ENV, COST_CAP_USD="0.0001")
     p.chat("one burrito")  # spends past the cap
     assert p.chat("how do I throw a hot dog party").json() == REFUSED
-    assert "frozen" in p.chat("one burrito").json()["reply"]
+    assert p.chat("one burrito").json()["reply"].startswith("The kitchen is closed:")
 
 
 # --- The A2A path ---------------------------------------------------------------------------------

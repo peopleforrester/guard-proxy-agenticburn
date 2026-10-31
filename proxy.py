@@ -446,7 +446,9 @@ def cost_cap_refusal():
 
 
 def cost_capped(session=""):
-    """True if spend has reached a cap. TWO caps, measured against deliberately different totals.
+    """Which cap spend has reached: "cost_cap", "budget", or None. TWO caps, measured against deliberately
+    different totals. The cluster-wide one answers first when both have tripped, because Reset lifts only
+    the per-session one.
 
     COST_CAP_USD is the infra safety backstop and stays CLUSTER-WIDE. It protects the real Bedrock bill
     from a runaway room, so no single conversation may be handed its own $25. The value checked is the
@@ -471,10 +473,10 @@ def cost_capped(session=""):
         session_spend = _session_cost.get(session, 0.0) if session else spend
     cost_cap = _cost_cap["usd"]
     if cost_cap > 0 and spend >= cost_cap:
-        return True
+        return "cost_cap"
     if GUARDS.get("budget") and BUDGET_CAP_USD > 0 and session_spend >= BUDGET_CAP_USD:
-        return True
-    return False
+        return "budget"
+    return None
 
 # Input block-list (Challenge 6, the "block-list" stage): deterministic, runs BEFORE any LLM call.
 # A match is rejected without spending a single Bedrock token — the workshop's cost lesson. Two kinds
@@ -1153,13 +1155,17 @@ class Handler(BaseHTTPRequestHandler):
                                          "Slow down; the cost demo will not run away."},
                 })
                 return
-            if cost_capped():
-                _cap = BUDGET_CAP_USD if GUARDS.get("budget") else _cost_cap["usd"]
+            capped = cost_capped()
+            if capped:
+                if capped == "cost_cap":
+                    message = (f"Cost cap reached (${_cost_cap['usd']:.2f} on this cluster). Spend is frozen "
+                               "for everyone; a blocked request costs nothing.")
+                else:
+                    message = (f"Budget cap reached (${BUDGET_CAP_USD:.2f} on this cluster). Spend is "
+                               "frozen; a blocked request costs nothing.")
                 self._send(429, {
                     "jsonrpc": "2.0", "id": payload.get("id") if isinstance(payload, dict) else None,
-                    "error": {"code": -32000,
-                              "message": f"Budget cap reached (${_cap:.2f} on this cluster). Spend is "
-                                         "frozen; a blocked request costs nothing."},
+                    "error": {"code": -32000, "message": message},
                 })
                 return
 
@@ -1311,13 +1317,21 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, {"reply": f"Slow down, hungry traveler. ({RATE_LIMIT_RPM}/min cap on this cluster.)",
                              "guarded": True, "input_tokens": 0, "output_tokens": 0})
             return
-        if cost_capped(session):
-            _cap = BUDGET_CAP_USD if GUARDS.get("budget") else _cost_cap["usd"]
+        capped = cost_capped(session)
+        if capped == "cost_cap":
+            # The cluster-wide backstop holds every conversation, so Reset does not help and the reply
+            # must not offer it: in the KubeCon finale the whole room reads this at once.
+            self._stamp("witb.guard.decision", "cost_cap")
+            self._send(200, {"reply": f"The kitchen is closed: this cluster hit its ${_cost_cap['usd']:.2f} "
+                                      f"spend cap, so BurritoBot isn't sending anything else to the model "
+                                      f"for anyone. A blocked request costs nothing.",
+                             "guarded": True, "input_tokens": 0, "output_tokens": 0})
+            return
+        if capped:
             # The way out is Reset, not switching the control off. A fresh conversation gets a fresh
             # budget and the guardrail stays armed, which is what a per-tenant quota does in production.
-            # "budget" covers both caps, as the reply does: either way spend stopped the turn.
             self._stamp("witb.guard.decision", "budget")
-            self._send(200, {"reply": f"The kitchen tab is frozen. This conversation hit its ${_cap:.2f} "
+            self._send(200, {"reply": f"The kitchen tab is frozen. This conversation hit its ${BUDGET_CAP_USD:.2f} "
                                       f"spend budget, so I'm not sending anything else to the model. A "
                                       f"blocked request costs nothing. Press Reset for a fresh "
                                       f"conversation; the budget guard stays on.",

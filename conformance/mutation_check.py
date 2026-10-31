@@ -80,6 +80,16 @@ MUTANTS: list[tuple[str, str, str]] = [
         "if cost_cap > 0 and spend >= cost_cap:",
         "if cost_cap > 0 and spend > cost_cap:",
     ),
+    (
+        "chat cluster cap answers press Reset",
+        '        if capped == "cost_cap":\n            # The cluster-wide',
+        '        if False:\n            # The cluster-wide',
+    ),
+    (
+        "a2a cluster cap answers as budget",
+        '                if capped == "cost_cap":\n                    message',
+        '                if False:\n                    message',
+    ),
     ("runtime cost cap ignored", '    cost_cap = _cost_cap["usd"]', "    cost_cap = COST_CAP_USD"),
     (
         "runtime cost cap may be raised",

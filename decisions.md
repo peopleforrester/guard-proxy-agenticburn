@@ -84,3 +84,21 @@ two "cap reached" replies use the runtime value. Choices the issue left open:
 - **Not in the Go build.** Its `/toggle` and `/cost` answer 501 until their PRD #412 milestone, so the
   new cases are unmarked, like the rest of `/toggle`'s, and the Go subset picks them up when those
   endpoints land.
+
+## 2026-10-30: The cluster-wide cost cap answers its own reply
+
+`_chat_turn` answered "The kitchen tab is frozen ... Press Reset" for both caps, which is wrong when
+`COST_CAP_USD` (or `/toggle?cost_cap=N`) tripped: Reset lifts only the per-session budget
+(guard-proxy-agenticburn#25, asked by Unleash_an_Agent_Watch_It_Burn#690 for the KubeCon finale).
+
+- **`cost_capped()` returns which cap tripped** (`"cost_cap"`, `"budget"` or `None`), so each reply quotes
+  the cap that stopped the turn. Before, the budget figure was quoted whenever the budget guard was on,
+  even when the cluster cap was the one that tripped.
+- **The cluster-wide cap answers first when both have tripped.** Pressing Reset would clear the budget and
+  still leave the cluster cap holding the conversation, so telling the user to press it misleads.
+- **`witb.guard.decision` gains `cost_cap`**, and `budget` now means the per-session cap only. The
+  workshop's `verify/test_trace_walkthrough_view.py` still finds `budget` among the stamps, and C6 lists
+  neither.
+- **The A2A 429 names the cap too**: "Cost cap reached ($X on this cluster). Spend is frozen for
+  everyone; ..." for the cluster cap, and the existing "Budget cap reached" text for the budget cap. No
+  workshop consumer outside its vendored copy of this suite matches the old text.

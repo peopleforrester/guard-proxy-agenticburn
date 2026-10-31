@@ -139,16 +139,17 @@ def test_decision_rate_limit(traced, agent):
 
 
 @pytest.mark.parametrize(
-    "env", [{"BUDGET_GUARD": "on", "BUDGET_CAP_USD": "0.005"}, {"COST_CAP_USD": "0.005"}]
+    ("env", "decision"),
+    [({"BUDGET_GUARD": "on", "BUDGET_CAP_USD": "0.005"}, "budget"), ({"COST_CAP_USD": "0.005"}, "cost_cap")],
 )
-def test_decision_budget(traced, agent, env):
+def test_decision_budget_and_cost_cap(traced, agent, env, decision):
     agent.respond = _expensive
     p, spans = traced(**env)
     p.chat("1", session="s")
     assert p.chat("2", session="s").json()["guarded"] is True
     first, second = _roots(spans, 2)
     assert DECISION not in first
-    assert second[DECISION] == "budget"
+    assert second[DECISION] == decision
 
 
 def test_decision_output_redacted(traced, agent, guard):

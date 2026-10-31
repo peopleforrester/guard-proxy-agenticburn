@@ -27,6 +27,7 @@ Agent-task issues worked 2026-10-29 (all closed):
 - [x] #20 Redact personal data on the prompt feed; match code-of-conduct terms as whole words
 - [ ] #21 One TURN_TIMEOUT deadline per /chat turn: implemented, awaiting promotion (Go reads and validates it; applied when Go /chat lands)
 - [ ] #23 /toggle?cost_cap=N sets the cluster-wide cost cap at runtime (KubeCon finale): implemented, awaiting promotion (proxy.py only)
+- [ ] #25 The cluster-wide cost cap answers "the kitchen is closed", not "press Reset"; decision `cost_cap`: implemented, awaiting promotion (proxy.py only)
 
 Go rewrite: M0 to M2 done (passthrough and guards conformance subsets). M3 to M7 not started.
 Since M2, `/chat`, the topic guard, `/controls`, `/cost`, `/prompts` and `/toggle` have landed
@@ -44,3 +45,4 @@ _(append-only. Each phase transition adds one line, oldest first.)_
 - 2026-10-29 3.3 #17 to #20 promoted to main at 47ac08b; mutation check 28/28 caught
 - 2026-10-29 #21 implemented and verified locally (2.3) on agent/21-11185
 - 2026-10-30 #23 implemented and verified locally (2.3) on agent/23-12049
+- 2026-10-30 #25 implemented and verified locally (2.3) on agent/25-12984

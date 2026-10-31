@@ -123,7 +123,10 @@ the first reply, as its failure does. The A2A path is not bounded by it.
 /toggle?cost_cap=2.00` lowers it at runtime, keeping the tally an env change would reset, and
 `/toggle?cost_cap=default` restores the env value. A runtime cap must be above 0 and no higher than
 `COST_CAP_USD` while that is set; anything else answers 400 and changes nothing. `/toggle` reports
-the cap in effect as `cost_cap_usd`, and `/cost`'s `cap_usd` counts it.
+the cap in effect as `cost_cap_usd`, and `/cost`'s `cap_usd` counts it. When it trips, `/chat` says the
+whole kitchen is closed and stamps `witb.guard.decision` as `cost_cap`, since Reset cannot lift it; the
+per-session budget cap's reply offers Reset and stamps `budget`. The cluster-wide cap answers first when
+both have tripped.
 
 Several overlap (`BUDGET_CAP_USD` and `COST_CAP_USD`, `INPUT_GUARD` and `INPUT_CLASSIFIER`). Some of
 that is history and some is a live toggle the workshop flips. Rationalizing them is part of the

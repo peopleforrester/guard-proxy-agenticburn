@@ -274,8 +274,8 @@ def test_cost_cap_a2a(start_proxy, agent):
         "id": "x",
         "error": {
             "code": -32000,
-            "message": "Budget cap reached ($0.01 on this cluster). Spend is frozen; a blocked request "
-            "costs nothing.",
+            "message": "Cost cap reached ($0.01 on this cluster). Spend is frozen for everyone; a "
+            "blocked request costs nothing.",
         },
     }
     assert len(agent.calls()) == 2
@@ -288,9 +288,8 @@ def test_cost_cap_chat_is_cluster_wide_across_sessions(start_proxy, agent):
     p.chat("2", session="b")
     body = p.chat("3", session="c").json()
     assert body == {
-        "reply": "The kitchen tab is frozen. This conversation hit its $0.01 spend budget, so I'm not "
-        "sending anything else to the model. A blocked request costs nothing. Press Reset for "
-        "a fresh conversation; the budget guard stays on.",
+        "reply": "The kitchen is closed: this cluster hit its $0.01 spend cap, so BurritoBot isn't "
+        "sending anything else to the model for anyone. A blocked request costs nothing.",
         "guarded": True,
         "input_tokens": 0,
         "output_tokens": 0,
@@ -307,12 +306,10 @@ def test_runtime_cost_cap_trips_both_paths_and_default_releases_them(start_proxy
     p.toggle(cost_cap="0.01")
     body = p.chat("3", session="c").json()
     assert body["guarded"] is True
-    assert body["reply"].startswith(
-        "The kitchen tab is frozen. This conversation hit its $0.01 spend"
-    )
+    assert body["reply"].startswith("The kitchen is closed: this cluster hit its $0.01 spend cap")
     r = p.a2a("4")
     assert r.status == 429
-    assert "Budget cap reached ($0.01 on this cluster)" in r.json()["error"]["message"]
+    assert r.json()["error"]["message"].startswith("Cost cap reached ($0.01 on this cluster)")
     assert len(agent.calls()) == 2
     # The tally survives the change: the cap moved, the counter did not reset.
     assert p.get("/cost").json()["usd"] == pytest.approx(0.012)
@@ -346,7 +343,14 @@ def test_budget_cap_is_per_session(start_proxy, agent):
     p.chat("1", session="a")
     p.chat("2", session="a")
     capped = p.chat("3", session="a").json()
-    assert capped["guarded"] is True and "$0.01 spend budget" in capped["reply"]
+    assert capped == {
+        "reply": "The kitchen tab is frozen. This conversation hit its $0.01 spend budget, so I'm not "
+        "sending anything else to the model. A blocked request costs nothing. Press Reset for "
+        "a fresh conversation; the budget guard stays on.",
+        "guarded": True,
+        "input_tokens": 0,
+        "output_tokens": 0,
+    }
     # A fresh session (Reset in the storefront) gets a fresh budget with the guard still armed.
     assert p.chat("4", session="b").json()["guarded"] is False
     assert p.get("/cost").json()["usd"] == pytest.approx(0.018)
@@ -368,7 +372,9 @@ def test_budget_cap_without_session_uses_cluster_total(start_proxy, agent):
     assert p.chat("3").json()["guarded"] is True
     r = p.a2a("4")
     assert r.status == 429
-    assert "$0.01" in r.json()["error"]["message"]
+    assert r.json()["error"]["message"] == (
+        "Budget cap reached ($0.01 on this cluster). Spend is frozen; a blocked request costs nothing."
+    )
 
 
 @pytest.mark.parametrize("session", [{"id": "a"}, ["a"]])
@@ -398,15 +404,28 @@ def test_session_spend_accrues_while_budget_guard_is_off(start_proxy, agent):
     assert p.chat("4", session="a").json()["guarded"] is False
 
 
-def test_cap_message_names_budget_cap_whenever_budget_guard_is_on(start_proxy, agent):
-    """With the budget guard on, the message quotes BUDGET_CAP_USD even if COST_CAP_USD tripped."""
+def test_cap_message_names_the_cluster_cap_when_it_tripped_with_the_budget_guard_on(start_proxy, agent):
+    """Reset cannot lift the cluster-wide cap, so the reply must not tell the room to press it."""
     agent.respond = _reply_costing()
     p = start_proxy(BUDGET_GUARD="on", BUDGET_CAP_USD="1", COST_CAP_USD="0.01")
     p.chat("1", session="a")
     p.chat("2", session="b")
     body = p.chat("3", session="c").json()
     assert body["guarded"] is True
-    assert "$1.00 spend budget" in body["reply"]
+    assert body["reply"].startswith("The kitchen is closed: this cluster hit its $0.01 spend cap")
+    assert "Reset" not in body["reply"]
+    assert p.a2a("4").json()["error"]["message"].startswith("Cost cap reached ($0.01 on this cluster)")
+
+
+def test_cluster_cap_reply_wins_when_both_caps_tripped(start_proxy, agent):
+    agent.respond = _reply_costing()
+    p = start_proxy(BUDGET_GUARD="on", BUDGET_CAP_USD="0.01", COST_CAP_USD="0.016")
+    p.chat("1", session="a")
+    p.chat("2", session="a")
+    assert p.chat("3", session="a").json()["reply"].startswith("The kitchen tab is frozen.")
+    p.chat("4", session="b")  # $0.018 on the cluster: now both caps hold session a
+    body = p.chat("5", session="a").json()
+    assert body["reply"].startswith("The kitchen is closed: this cluster hit its $0.02 spend cap")
 
 
 def test_a2a_blocked_input_spends_nothing_and_skips_caps(start_proxy, agent):
