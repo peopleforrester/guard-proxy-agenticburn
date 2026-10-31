@@ -68,7 +68,9 @@ func TestModerateIsLinearOnALongRun(t *testing.T) {
 	m := moderator(config.DefaultProfanity)
 	start := time.Now()
 	m.Moderate(strings.Repeat("a.", 50000))
-	if took := time.Since(start); took > 2*time.Second {
+	// The reference's unanchored email pattern took 30 seconds here. The bound leaves room for the race
+	// detector, which runs this about twenty times slower than a plain build.
+	if took := time.Since(start); took > 10*time.Second {
 		t.Errorf("100 KB took %v", took)
 	}
 }

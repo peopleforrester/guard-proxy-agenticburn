@@ -39,8 +39,8 @@ func TestScanTopicSuppressesTheInjectionClassifier(t *testing.T) {
 	if err != nil || allowed {
 		t.Fatalf("ScanTopic = %v, %v", allowed, err)
 	}
-	suppress, _ := (*calls)[0].body["scanners_suppress"].([]any)
-	if (*calls)[0].path != "/analyze/prompt" || len(suppress) != 1 || suppress[0] != "PromptInjection" {
-		t.Errorf("call = %+v", (*calls)[0])
+	suppress, _ := calls()[0].body["scanners_suppress"].([]any)
+	if calls()[0].path != "/analyze/prompt" || len(suppress) != 1 || suppress[0] != "PromptInjection" {
+		t.Errorf("call = %+v", calls()[0])
 	}
 }

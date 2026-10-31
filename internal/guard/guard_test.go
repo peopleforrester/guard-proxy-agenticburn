@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 	"time"
 )
@@ -46,20 +47,31 @@ type call struct {
 	body                    map[string]any
 }
 
-func scanner(t *testing.T, status int, reply string, delay time.Duration) (*httptest.Server, *[]call) {
+// scanner is a fake LLM Guard API. Its handler runs on the server's goroutines, so the record of calls
+// is read through the returned function, under the same lock the handler writes it with.
+func scanner(t *testing.T, status int, reply string, delay time.Duration) (*httptest.Server, func() []call) {
 	t.Helper()
-	var calls []call
+	var (
+		mu    sync.Mutex
+		calls []call
+	)
 	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		raw, _ := io.ReadAll(r.Body)
 		var body map[string]any
 		_ = json.Unmarshal(raw, &body)
+		mu.Lock()
 		calls = append(calls, call{r.URL.Path, r.Header.Get("Authorization"), r.Header.Get("Content-Type"), body})
+		mu.Unlock()
 		time.Sleep(delay)
 		w.WriteHeader(status)
 		_, _ = io.WriteString(w, reply)
 	}))
 	t.Cleanup(s.Close)
-	return s, &calls
+	return s, func() []call {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]call(nil), calls...)
+	}
 }
 
 func TestScanPromptSendsThePromptWithTheToken(t *testing.T) {
@@ -69,7 +81,7 @@ func TestScanPromptSendsThePromptWithTheToken(t *testing.T) {
 	if err != nil || !v.Allowed {
 		t.Fatalf("ScanPrompt = %+v, %v", v, err)
 	}
-	c := (*calls)[0]
+	c := calls()[0]
 	if c.path != "/analyze/prompt" || c.auth != "Bearer tok" || c.contentType != "application/json" {
 		t.Errorf("call = %+v", c)
 	}
@@ -126,7 +138,7 @@ func TestOmitsAuthorizationWithoutAToken(t *testing.T) {
 	if _, err := NewLLMGuard(s.URL, "", time.Second).ScanPrompt(context.Background(), "x"); err != nil {
 		t.Fatal(err)
 	}
-	if a := (*calls)[0].auth; a != "" {
+	if a := calls()[0].auth; a != "" {
 		t.Errorf("Authorization = %q, want none", a)
 	}
 }
@@ -168,7 +180,7 @@ func TestScanOutput(t *testing.T) {
 		if err != nil || got != want {
 			t.Errorf("%s: ScanOutput = %q, %v; want %q", reply, got, err, want)
 		}
-		c := (*calls)[0]
+		c := calls()[0]
 		if c.path != "/analyze/output" || c.body["prompt"] != "" || c.body["output"] != "agent SECRET" {
 			t.Errorf("call = %+v", c)
 		}
