@@ -159,8 +159,16 @@ kagent v0.10.1 with `runtime: go` (`go/adk/pkg/a2a`) on a2a-go v0.3.15 (`interna
 - **Assumes one agent replica.** a2a-go's execution manager is in-process, so `tasks/cancel` stops the
   task only on the pod running it. The workshop runs one `workshop-agent` pod behind agentgateway's
   `:3000` bind, a plain HTTP route that passes every JSON-RPC method.
-- **The Python runtime is not covered.** kagent's default Python runtime is a different executor; this
-  was read only for `runtime: go`, which both KubeCon clusters run (Unleash_an_Agent_Watch_It_Burn#697).
+- **The Python runtime cannot be cancelled.** Read at kagent v0.10.1 and a2a-sdk 0.3.26 (the version
+  kagent's `python/uv.lock` pins) on 2026-10-31 for guard-proxy-agenticburn#29: `kagent-adk`'s
+  `A2aAgentExecutor.cancel` (`_agent_executor.py`) raises `NotImplementedError("Cancellation is not
+  supported")`. a2a-sdk's `DefaultRequestHandler.on_cancel_task` calls the executor's `cancel` before it
+  cancels the running producer task, so the exception skips that step, and the JSON-RPC app answers
+  `-32603` with that message. The proxy logs `task_cancel_failed` and the run goes on. The fix only
+  works on `runtime: go`. The v1alpha2 Agent schema defaults `spec.declarative.runtime` to `go` (but
+  `EffectiveDeclarativeRuntime` falls back to Python when it is unset), and the workshop's Agent sets
+  none, so the stored value is likely `go`. Unleash_an_Agent_Watch_It_Burn#697 left that to be read
+  from a live cluster.
 - **Not a budget control.** The Go port's entry above rejects cancelling a turn mid-flight as a way to
   bound spend, and this does not change that: the cancel stops work on a turn the proxy has already given
   up on, and the model call in flight when it lands is still billed.

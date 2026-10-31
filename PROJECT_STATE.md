@@ -51,6 +51,9 @@ conformance tests fail against Go. Units, each committed green:
 Asked by Unleash_an_Agent_Watch_It_Burn#742 for the KubeCon breakout (2026-11-12). Both implementations
 send the /chat forward as a non-blocking message/send, poll tasks/get, and send tasks/cancel when the
 forward fails or runs out of time; decision recorded 2026-10-31. Conformance in `test_task_cancel.py`.
+#29, the live check that a cancel stops a real turn, is open. kagent's Python runtime refuses
+`tasks/cancel` (read from source, see decisions.md), so the cancel works only if the live Agent is
+`runtime: go`. The proxy side needs #27 on main and re-pinned by Unleash_an_Agent_Watch_It_Burn#742.
 
 ## Branch & Tests
 - Branch: agent/27-14041 (#27), on staging at de53427
@@ -70,3 +73,4 @@ _(append-only. Each phase transition adds one line, oldest first.)_
 - 2026-10-31 2.3 Go port verified: 305/323 conformance pass against Go (18 spans deselected), proxy.py 323/323, go test ./... green; 3.1 a00beae pushed
 - 2026-10-31 3.3 Go port promoted to main at d0793a7; #22 closed. Open: #26 (test-helper race), U8 (Go spans, M5) for Michael
 - 2026-10-31 #27 implemented and verified locally (2.3) on agent/27-14041: proxy.py and Go suites green
+- 2026-10-31 #29 Python runtime's cancel read from source (unsupported); live check escalated, no cluster access
