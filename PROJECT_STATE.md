@@ -1,6 +1,6 @@
 # Project State: guard-proxy-agenticburn
 
-Phase: 2.1 Test
+Phase: 3.1 Stage
 Approved: pending
 
 ## Lifecycle
@@ -36,15 +36,16 @@ Michael chose "port /chat as-is": spend metered after each response, exactly as 
 full conformance suite passes against the Go build. Closes #22. The PRD M3 reservation (CountTokens,
 capped max_tokens) is out of scope: it needs the proxy on the model path. Baseline 2026-10-31: 271
 conformance tests fail against Go. Units, each committed green:
-- [ ] U1 spend: cost metering, rate limits (cluster and per session), cost cap and budget cap, /cost
-- [ ] U2 /toggle and /guards, the runtime cost cap
-- [ ] U3 POST /chat: validation, A2A wrapping, reply extraction, retries, TURN_TIMEOUT (#22)
-- [ ] U4 the on-topic guard on both paths
-- [ ] U5 the prompt feed: GET /prompts, moderate(), probes
-- [ ] U6 GET /controls badges (Kubernetes API reads)
-- [ ] U7 logging parity, then the full suite green except test_chat_spans.py
-- [ ] U8 decide with Michael: test_chat_spans.py needs an OpenTelemetry SDK in Go (PRD M5)
-After the port: update the README milestone table and file the PRD #412 amendment on Unleash.
+- [x] U1 spend: cost metering, rate limits (cluster and per session), cost cap and budget cap, /cost
+- [x] U2 /toggle and /guards, the runtime cost cap
+- [x] U3 POST /chat: validation, A2A wrapping, reply extraction, retries, TURN_TIMEOUT (#22)
+- [x] U4 the on-topic guard on both paths
+- [x] U5 the prompt feed: GET /prompts, moderate(), probes
+- [x] U6 GET /controls badges (Kubernetes API reads)
+- [x] U7 logging parity, then the full suite green except test_chat_spans.py
+- [ ] U8 decide with Michael: test_chat_spans.py needs an OpenTelemetry SDK in Go (PRD M5); marked `spans`, deselected for Go
+- [x] README milestone table, config and conformance sections; docs/gotchas-go.md RE2 section
+- [ ] File the PRD #412 amendment on Unleash (M3 needs the model path; M4 done as proxy.py)
 
 ## Branch & Tests
 - Branch: staging
@@ -61,3 +62,4 @@ _(append-only. Each phase transition adds one line, oldest first.)_
 - 2026-10-30 #25 implemented and verified locally (2.3) on agent/25-12984
 - 2026-10-31 #21, #23, #25 promoted to main at 92b0587
 - 2026-10-31 1.3 Go /chat port approved by Michael (port as-is); 2.1 starting U1
+- 2026-10-31 2.3 Go port verified: 305/323 conformance pass against Go (18 spans deselected), proxy.py 323/323, go test ./... green; 3.1 a00beae pushed

@@ -27,7 +27,15 @@ block the *next* request, and so can agentgateway's budgets. Tracked in
 | M0 conformance suite | done |
 | M1 skeleton: listener, agent forwarding, config validation, health | done: passes the `passthrough` conformance subset |
 | M2 guards on the A2A path: block-list, LLM Guard classifier, output guard, fail closed | done: passes the `guards` conformance subset |
-| M3 to M7 | not started |
+| M3 budget reservation: count tokens and cap `max_tokens` before the model is called | not started; needs a design that puts the proxy on the model path (below) |
+| M4 rate limits, routing, toggles, the prompt feed | done as `proxy.py` does them: passes the whole suite except its span tests |
+| M5 telemetry: OpenTelemetry spans | not started; the `spans` conformance tests are deselected for Go |
+| M6 signed image, M7 live validation | not started |
+
+M3 as the PRD writes it is not a port. guard-proxy sits in front of the agent (`AGENT_URL`, kagent),
+not in front of Bedrock, and reads a turn's token usage from the agent's reply after the fact, so it
+never holds a model request it could count or cap. The Go build therefore meters spend after each
+reply, exactly as `proxy.py` does, and the reservation waits on a design for that hop.
 
 ```
 go test ./...                                   # unit tests, plus an end-to-end test of the binary
@@ -35,11 +43,10 @@ go build -o bin/guard-proxy ./cmd/guard-proxy
 AGENT_URL=http://localhost:3000 LLM_GUARD_URL=http://localhost:8000 bin/guard-proxy --listen 127.0.0.1:8080 [--config guard-proxy.yaml]
 ```
 
-It serves `GET /healthz`, `GET /guards`, the GET passthrough and the A2A POST passthrough, and it
-enforces the input block-list, the LLM Guard classifier and the output guard on A2A POSTs, failing
-closed by default. `/chat`, `/cost`, `/prompts`, `/controls` and `/toggle` answer **501** until
-their milestone, so a request meant for them is never forwarded to the agent. Without `/chat` and
-`/toggle` this build is not yet a replacement for `proxy.py` in the workshop.
+It serves every endpoint `proxy.py` does, with the same guards, limits, caps, toggles and prompt feed
+on both paths, and passes the conformance suite except the span tests. It emits no OpenTelemetry spans
+yet (M5), which the workshop's Datadog views need, so `proxy.py` stays what the workshop deploys until
+the cutover after KubeCon (2026-11-12).
 
 Where it differs from `proxy.py` on purpose:
 
@@ -52,6 +59,12 @@ Where it differs from `proxy.py` on purpose:
   unexpected reply shape is passed through. `proxy.py` raises on both and drops the connection.
 - A reply the output guard leaves alone is returned byte for byte. One it changes is re-encoded, with
   keys in sorted order.
+- A scanner failure on the topic classifier or on `/chat` logs `guard_error` too.
+- A spend setting `proxy.py` would crash on or silently switch off, such as `COST_CAP_USD=-1`,
+  `RATE_LIMIT_RPM=1.5` or `COST_PER_1K_IN=` (empty), stops startup. An empty cap or limit still means
+  its default, as in `proxy.py`.
+- Whole-word matching in the profanity list and the topic phrases uses RE2's ASCII `\b`, where Python's
+  is Unicode-aware. A term next to a non-ASCII letter ("fuckñ") is masked in Go and not in `proxy.py`.
 
 Config is one YAML file, decoded strictly: an unknown key stops the process at start.
 
@@ -64,7 +77,7 @@ llm_guard:
   url: http://llm-guard.agent.svc.cluster.local:8000      # required
   timeout: 150s            # default; the token comes only from LLM_GUARD_TOKEN
 chat:
-  turn_timeout: 0s         # default, no turn deadline; read and validated, applied once /chat lands
+  turn_timeout: 0s         # default, no turn deadline; bounds every upstream call of a /chat turn
 blocklist: [delete, "rm -rf"]   # replaces the default list; terms are trimmed and lowercased
 fail_closed: true          # default; refuse when LLM Guard gives no verdict
 guards:                    # the state each guard starts in
@@ -72,13 +85,34 @@ guards:                    # the state each guard starts in
   input_classifier: false
   output: false
   budget: false
+  topic: false
+spend:
+  cost_cap_usd: 0          # default, off; the cluster-wide backstop
+  budget_cap_usd: 0.03     # default; the per-session cap the budget guard enforces
+  rate_limit_rpm: 0        # default, off; model-bound requests per minute, both paths
+  rate_limit_session_rpm: 0   # default, off; per /chat conversation, checked first
+  model_tier: haiku        # default; nova, haiku, sonnet or opus prices the tally
+  # model_name, cost_per_1k_in and cost_per_1k_out default from the tier
+feed:
+  enabled: false           # default; GET /prompts records nothing until this is on
+  profanity: [cilantro]    # replaces the default list; whole words, plural included
+topic:
+  off: [karaoke, hot dog]  # refuses without a model call
+  on: [menu, burrito]      # passes without a model call; anything else goes to BanTopics
+  refusal: "BurritoBot only talks burritos: the menu, our hours, and our locations."
+cors:
+  console_origins: [https://start.agenticburn.com, https://start.burritobot.co]   # default
+controls:                  # the in-cluster defaults; override to point at another API server
+  api_url: https://kubernetes.default.svc
+  token_path: /var/run/secrets/kubernetes.io/serviceaccount/token
+  ca_path: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+  public_host: ""          # reported by /controls as "host"
 ```
 
-The environment variables the workshop sets today override the file: `AGENT_URL`, `LLM_GUARD_URL`,
-`LLM_GUARD_TOKEN`, `PROXY_TIMEOUT` (seconds, for both upstreams), `TURN_TIMEOUT` (seconds),
-`PROXY_FAIL_CLOSED`, `BLOCK_LIST`
-(comma-separated), and `INPUT_GUARD`, `INPUT_BLOCKLIST`, `INPUT_CLASSIFIER`, `OUTPUT_GUARD` and
-`BUDGET_GUARD`, with the same `on`-only semantics as `proxy.py`. Read [docs/gotchas-go.md](docs/gotchas-go.md)
+Every environment variable `proxy.py` reads (listed under [Configuration](#configuration)) overrides
+the file, with the same meaning, except the two OpenTelemetry ones, `PEER_SERVICE` and
+`OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT`, which wait for M5. The guard switches and
+`STREAM_PROMPTS` are on only for the value `on`, as in `proxy.py`. Read [docs/gotchas-go.md](docs/gotchas-go.md)
 before changing the upstream hop or adding a dependency.
 
 ## What it does
@@ -102,12 +136,12 @@ provides it.
 Everything is set through environment variables:
 
 ```
-AGENT_URL  BUDGET_CAP_USD  BUDGET_GUARD  CONSOLE_ORIGIN  COST_CAP_USD  INPUT_BLOCKLIST
-INPUT_CLASSIFIER  INPUT_GUARD  K8S_API_URL  K8S_TOKEN_PATH  LLM_GUARD_TOKEN  LLM_GUARD_URL
-MODEL_NAME  MODEL_TIER
+AGENT_URL  BLOCK_LIST  BUDGET_CAP_USD  BUDGET_GUARD  CONSOLE_ORIGIN  COST_CAP_USD  COST_PER_1K_IN
+COST_PER_1K_OUT  INPUT_BLOCKLIST  INPUT_CLASSIFIER  INPUT_GUARD  K8S_API_URL  K8S_TOKEN_PATH
+LLM_GUARD_TOKEN  LLM_GUARD_URL  MODEL_NAME  MODEL_TIER
 OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT  OUTPUT_GUARD  PEER_SERVICE  PROFANITY_LIST
 PROXY_FAIL_CLOSED  PROXY_TIMEOUT  RATE_LIMIT_RPM  RATE_LIMIT_SESSION_RPM  STREAM_PROMPTS
-TURN_TIMEOUT  WIB_PUBLIC_HOST
+TOPIC_GUARD  TOPIC_OFF_LIST  TOPIC_ON_LIST  TOPIC_REFUSAL  TURN_TIMEOUT  WIB_PUBLIC_HOST
 ```
 
 `PROXY_TIMEOUT` bounds each upstream call. A `POST /chat` turn can make up to six in a row: the
@@ -153,16 +187,16 @@ code under test.
 
 ```
 uv run pytest                                          # against proxy.py
-GUARD_PROXY_CMD="$PWD/bin/guard-proxy --listen 127.0.0.1:{port}" uv run pytest -m "passthrough or guards"   # against the Go build
+GUARD_PROXY_CMD="$PWD/bin/guard-proxy --listen 127.0.0.1:{port}" uv run pytest -m "not spans"   # against the Go build
 uv run python conformance/mutation_check.py           # negative control, see below
 ```
 
 `GUARD_PROXY_CMD` is the only adapter. `{port}` is replaced with a free loopback port, and the suite
 waits for `GET /guards` to answer.
 
-`-m "passthrough or guards"` selects the subset the Go build covers so far. The guard cases on the
-`/chat` path are not in it yet, because they need the `/chat` route. Each milestone widens the selection,
-and the Go build runs the whole suite once it reaches parity. `proxy.py` always runs all of it.
+`-m "not spans"` leaves out the span tests (`test_chat_spans.py`), because the Go build emits no
+OpenTelemetry spans until M5. It runs everything else. The `passthrough` and `guards` markers still
+select the M1 and M2 subsets. `proxy.py` always runs all of it.
 
 The suite covers:
 

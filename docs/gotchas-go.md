@@ -62,3 +62,20 @@ checked. Read this before adding a dependency or changing how the proxy talks to
   changes text the agent wrote, so the output guard re-encodes with `Encoder.SetEscapeHTML(false)`.
   It also re-sorts object keys, which is why a reply the guard leaves alone is returned unchanged
   rather than re-encoded.
+
+## Regular expressions (porting proxy.py's patterns)
+
+- **RE2 has no lookbehind or lookahead.** `proxy.py`'s email pattern opens with `(?<![\w.+-])`, which
+  only keeps Python's backtracking linear; RE2 is linear anyway, and a leftmost match starts at the
+  start of an address run either way, so `internal/feed` drops it. The street-address pattern's
+  stopword lookahead does change what matches, so `internal/feed` writes that pattern out by hand
+  (`addressAt`). Checked 2026-10-31 against `proxy.moderate()` on the cases in `feed_test.go`.
+- **`\w`, `\d`, `\s` and `\b` are ASCII in RE2 and Unicode in Python 3.** Where a pattern meets
+  personal data the feed uses Unicode classes (`\p{L}\p{N}_`, `\p{Nd}`), so "josé@example.com" is
+  still masked. The whole-word matchers (profanity, topic phrases) keep RE2's ASCII `\b`, which the
+  README lists as a difference.
+- **A Python string slice counts characters; a Go string slice counts bytes.** The feed's 280-character
+  cut slices `[]rune`.
+- **Go's `$` without `(?m)` matches only at the very end; Python's also matches before a final
+  newline.** The scratchpad pattern's unclosed-tag branch reaches a trailing newline in Go and stops
+  before it in Python. Both strip the result, so the answers agree.
