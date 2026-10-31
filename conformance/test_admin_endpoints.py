@@ -7,8 +7,8 @@ import pytest
 from conftest import http
 from fakes import FakeUpstream, Recorded, Reply, unreachable_url
 
-# The keys the Go build reports so far. The on-topic guard (`topic`) is in proxy.py only; its seeding
-# and toggling are pinned in test_topic_guard.py.
+# The keys the M1 passthrough subset pins. The on-topic guard (`topic`) joined later; its seeding and
+# toggling are pinned in test_topic_guard.py.
 BUILT_KEYS = {"input_blocklist", "input_classifier", "output", "budget"}
 GUARD_KEYS = BUILT_KEYS | {"topic"}
 

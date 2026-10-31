@@ -1,5 +1,5 @@
-// ABOUTME: The guards on the A2A path: reading a message's text, the two input stages with their
-// ABOUTME: fail-closed policy, and the output guard's scrub of every agent-authored text part.
+// ABOUTME: The guards on the A2A path: reading a message's text, the two input stages and the on-topic
+// ABOUTME: guard with their fail-closed policy, and the output guard's scrub of every agent-authored part.
 // SPDX-License-Identifier: Apache-2.0
 package server
 
@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/peopleforrester/guard-proxy-agenticburn/internal/config"
+	"github.com/peopleforrester/guard-proxy-agenticburn/internal/guard"
 )
 
 const (
@@ -95,7 +96,39 @@ func (s *Server) inputGuards(ctx context.Context, g config.Guards, text string) 
 			return classifierBlocked
 		}
 	}
+	// The on-topic guard runs after both input stages and before the caps, so a refusal spends no
+	// tokens and takes no rate-limit slot. With no turn deadline here, it cannot run out of time.
+	if g.Topic {
+		if step, _ := s.topicRefused(ctx, text); step != "" {
+			s.log.Info("input refused as off-topic (step "+step+")", "event", "topic_guard_block", "step", step)
+			return s.topicRefusal
+		}
+	}
 	return ""
+}
+
+// topicRefused is the step that refuses an off-topic prompt, "off_phrase" or "classifier", or "" to let
+// it through. Cheapest first: an off phrase refuses, an on phrase passes, and anything else goes to
+// BanTopics, whose failure follows the fail-closed policy unless the /chat turn ran out of time.
+func (s *Server) topicRefused(ctx context.Context, text string) (string, error) {
+	switch s.topic.Phrase(text) {
+	case guard.PhraseOff:
+		return "off_phrase", nil
+	case guard.PhraseOn:
+		return "", nil
+	}
+	allowed, err := s.llmGuard.ScanTopic(ctx, text)
+	if err != nil {
+		if s.turnExpired(ctx) {
+			return "", errTurnExpired
+		}
+		s.guardError("topic classifier", err)
+		allowed = !s.failClosed
+	}
+	if !allowed {
+		return "classifier", nil
+	}
+	return "", nil
 }
 
 func (s *Server) guardError(stage string, err error) {

@@ -97,7 +97,7 @@ func TestGuardsReportsTheConfiguredState(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
 		t.Fatal(err)
 	}
-	want := map[string]bool{"input_blocklist": false, "input_classifier": false, "output": true, "budget": false}
+	want := map[string]bool{"input_blocklist": false, "input_classifier": false, "output": true, "budget": false, "topic": false}
 	if len(got) != len(want) {
 		t.Fatalf("got %v", got)
 	}
@@ -117,21 +117,66 @@ func TestUnsupportedMethodsAre501(t *testing.T) {
 	}
 }
 
-// Routes that later milestones implement answer 501 until then, rather than being forwarded to the
-// agent as if they were A2A traffic.
-func TestUnbuiltRoutesNeverReachTheAgent(t *testing.T) {
+// The admin routes are answered here and never forwarded to the agent as if they were A2A traffic.
+func TestAdminRoutesNeverReachTheAgent(t *testing.T) {
 	a := newAgent(t, replyJSON(`{}`))
 	s, _ := newProxy(t, a.URL, config.Guards{})
-	for _, c := range []struct{ method, path string }{
-		{"GET", "/cost"}, {"GET", "/prompts"}, {"GET", "/controls"}, {"GET", "/toggle?output=on"},
-		{"POST", "/chat"}, {"POST", "/chat/"},
-	} {
-		if w := do(s, c.method, c.path, `{"prompt":"hi"}`, nil); w.Code != http.StatusNotImplemented {
-			t.Errorf("%s %s = %d, want 501", c.method, c.path, w.Code)
+	for _, path := range []string{"/cost", "/prompts", "/controls", "/toggle?output=on", "/guards"} {
+		if w := do(s, http.MethodGet, path, "", nil); w.Code != http.StatusOK {
+			t.Errorf("GET %s = %d, want 200", path, w.Code)
 		}
 	}
 	if n := len(a.seen()); n != 0 {
 		t.Errorf("agent was called %d times", n)
+	}
+}
+
+// /cost and /prompts match exactly, as in the reference, so a query string makes them a passthrough.
+func TestExactAdminRoutesWithAQueryAreForwarded(t *testing.T) {
+	a := newAgent(t, replyJSON(`{"card": true}`))
+	s, _ := newProxy(t, a.URL, config.Guards{})
+	do(s, http.MethodGet, "/cost?x=1", "", nil)
+	if got := a.seen(); len(got) != 1 || got[0].uri != "/cost?x=1" {
+		t.Errorf("agent saw %+v", got)
+	}
+}
+
+// /chat with a query string is not the storefront route, so it is forwarded as A2A.
+func TestChatWithAQueryIsA2A(t *testing.T) {
+	a := newAgent(t, replyJSON(`{"result": {}}`))
+	s, _ := newProxy(t, a.URL, config.Guards{})
+	do(s, http.MethodPost, "/chat?x=1", `{"prompt":"hi"}`, nil)
+	if got := a.seen(); len(got) != 1 || got[0].uri != "/chat?x=1" {
+		t.Errorf("agent saw %+v", got)
+	}
+}
+
+func TestCORSEchoesOnlyAllowedOrigins(t *testing.T) {
+	cfg := config.Config{Agent: config.Agent{URL: "http://unused.invalid"},
+		CORS: config.CORS{ConsoleOrigins: []string{"https://console.example"}}}
+	s := New(cfg, logging.New(io.Discard))
+	for _, tc := range []struct {
+		origin, host string
+		allowed      bool
+	}{
+		{"https://console.example", "proxy.example", true},
+		{"https://me.example", "me.example:443", true},
+		{"https://ME.example", "me.example", true},
+		{"https://evil.example", "proxy.example", false},
+		{"https://console.example, https://evil.example", "proxy.example", false},
+	} {
+		r := httptest.NewRequest(http.MethodGet, "/cost", nil)
+		r.Host = tc.host
+		r.Header.Set("Origin", tc.origin)
+		w := httptest.NewRecorder()
+		s.ServeHTTP(w, r)
+		got := w.Header().Get("Access-Control-Allow-Origin")
+		if tc.allowed && (got != tc.origin || w.Header().Get("Vary") != "Origin") {
+			t.Errorf("%s from %s: ACAO %q, Vary %q", tc.origin, tc.host, got, w.Header().Get("Vary"))
+		}
+		if !tc.allowed && got != "" {
+			t.Errorf("%s from %s: ACAO %q, want none", tc.origin, tc.host, got)
+		}
 	}
 }
 

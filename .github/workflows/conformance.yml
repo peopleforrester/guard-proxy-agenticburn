@@ -1,5 +1,5 @@
-# ABOUTME: Runs the conformance suite against proxy.py, and the Go build's tests plus its conformance
-# ABOUTME: subset, on every push and pull request. Actions are pinned by commit SHA (see each line).
+# ABOUTME: Runs the conformance suite against proxy.py, and the Go build's tests plus the suite less its
+# ABOUTME: span tests, on every push and pull request. Actions are pinned by commit SHA (see each line).
 name: conformance
 on:
   push:
@@ -31,5 +31,5 @@ jobs:
       - run: go test ./...
       - run: go build -o bin/guard-proxy ./cmd/guard-proxy
       - run: uv sync --locked
-      - name: conformance subset against the Go build
-        run: GUARD_PROXY_CMD="$PWD/bin/guard-proxy --listen 127.0.0.1:{port}" uv run pytest -m "passthrough or guards"
+      - name: conformance suite against the Go build, less the spans (M5)
+        run: GUARD_PROXY_CMD="$PWD/bin/guard-proxy --listen 127.0.0.1:{port}" uv run pytest -m "not spans"

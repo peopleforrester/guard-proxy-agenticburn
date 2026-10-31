@@ -10,6 +10,8 @@ import pytest
 
 from fakes import Reply, a2a_result, unreachable_url, verdict
 
+pytestmark = pytest.mark.spans
+
 ROOT = "POST /chat"
 DECISION = "witb.guard.decision"
 SPAN_TIMEOUT = 5.0
