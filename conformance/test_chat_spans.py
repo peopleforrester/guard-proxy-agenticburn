@@ -2,10 +2,6 @@
 # ABOUTME: guard decided the turn, so a dashboard can scope one session and name the guard that stopped it.
 from __future__ import annotations
 
-import json
-import time
-from pathlib import Path
-
 import pytest
 
 from fakes import Reply, a2a_result, unreachable_url, verdict
@@ -14,39 +10,20 @@ pytestmark = pytest.mark.spans
 
 ROOT = "POST /chat"
 DECISION = "witb.guard.decision"
-SPAN_TIMEOUT = 5.0
 
 
-@pytest.fixture
-def traced(start_proxy, tmp_path):
-    """Start the implementation with the OTel SDK installed; spans land as JSON lines in a file."""
+def _roots(collector, count: int) -> list[dict]:
+    """The attributes of the first `count` POST /chat SERVER spans, in the order they were received.
 
-    def start(**env: str):
-        path = tmp_path / f"spans-{len(list(tmp_path.glob('spans-*')))}.jsonl"
-        path.touch()
-        return start_proxy(CONFORMANCE_SPANS=str(path), **env), path
-
-    return start
-
-
-def _roots(path: Path, count: int) -> list[dict]:
-    """The attributes of the first `count` POST /chat SERVER spans, in the order they finished.
-
-    A span is exported when it ends, which can be just after the response reached the client, so this
+    A span is exported after it ends, which can be just after the response reached the client, so this
     waits for them rather than reading once.
     """
-    deadline = time.monotonic() + SPAN_TIMEOUT
-    while True:
-        spans = [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
-        roots = [s for s in spans if s["name"] == ROOT and s["kind"] == "SpanKind.SERVER"]
-        if len(roots) >= count:
-            return [r["attributes"] for r in roots[:count]]
-        if time.monotonic() > deadline:
-            raise AssertionError(
-                f"expected {count} {ROOT!r} spans within {SPAN_TIMEOUT}s; "
-                f"got {[s['name'] for s in spans]}"
-            )
-        time.sleep(0.05)
+
+    def roots(spans):
+        found = [s for s in spans if s["name"] == ROOT and s["kind"] == "SERVER"]
+        return found[:count] if len(found) >= count else None
+
+    return [r["attributes"] for r in collector.wait_for(roots, f"{count} {ROOT!r} spans")]
 
 
 def _expensive(req):
@@ -174,9 +151,5 @@ def test_decision_is_on_the_root_span_only(traced, agent):
     p, spans = traced(INPUT_BLOCKLIST="on")
     p.chat("nuke the kitchen", session="sess-42")
     _roots(spans, 1)
-    others = [
-        json.loads(line)
-        for line in spans.read_text().splitlines()
-        if line.strip() and json.loads(line)["name"] != ROOT
-    ]
+    others = [s for s in spans.spans() if s["name"] != ROOT]
     assert all(DECISION not in s["attributes"] for s in others)

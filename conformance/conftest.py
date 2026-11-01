@@ -18,6 +18,7 @@ from typing import Any
 import pytest
 
 from fakes import FakeUpstream, Recorded, Reply, a2a_result, free_port, verdict
+from otlp import Collector
 
 HERE = Path(__file__).resolve().parent
 DEFAULT_CMD = (
@@ -192,3 +193,21 @@ def start_proxy(
     yield start
     for p in running:
         p.stop()
+
+
+@pytest.fixture
+def collector() -> Iterator[Collector]:
+    """A fake OTLP/HTTP collector the implementation exports its spans and metrics to."""
+    c = Collector()
+    yield c
+    c.close()
+
+
+@pytest.fixture
+def traced(start_proxy, collector):
+    """Start the implementation exporting to the fake collector, as the OTel Operator sets it up."""
+
+    def start(**env: str):
+        return start_proxy(**collector.env, **env), collector
+
+    return start

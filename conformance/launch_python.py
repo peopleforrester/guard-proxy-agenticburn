@@ -12,24 +12,24 @@ from pathlib import Path
 _SOURCE = Path(sys.argv[2]) if len(sys.argv) > 2 else Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_SOURCE))
 
-# In the workshop the OTel Operator installs the SDK's tracer provider before proxy.py runs. With
-# CONFORMANCE_SPANS set, this does the same and writes each finished span as one JSON line to that file.
-_SPANS = os.environ.get("CONFORMANCE_SPANS")
-if _SPANS:
-    from opentelemetry import trace
+# In the workshop the OTel Operator installs the SDK before proxy.py runs, exporting over OTLP to the
+# endpoint in OTEL_EXPORTER_OTLP_ENDPOINT. With that set, this installs the same: the SDK's tracer and
+# meter providers with the OTLP/HTTP exporters, which read the rest of their settings from OTEL_*.
+if os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT"):
+    from opentelemetry import metrics, trace
+    from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
+    from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+    from opentelemetry.sdk.metrics import MeterProvider
+    from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
     from opentelemetry.sdk.trace import TracerProvider
-    from opentelemetry.sdk.trace.export import ConsoleSpanExporter, SimpleSpanProcessor
+    from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
     _provider = TracerProvider()
-    _provider.add_span_processor(
-        SimpleSpanProcessor(
-            ConsoleSpanExporter(
-                out=open(_SPANS, "a"),  # noqa: SIM115  (lives as long as the process)
-                formatter=lambda span: span.to_json(indent=None) + "\n",
-            )
-        )
-    )
+    _provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter()))
     trace.set_tracer_provider(_provider)
+    metrics.set_meter_provider(
+        MeterProvider(metric_readers=[PeriodicExportingMetricReader(OTLPMetricExporter())])
+    )
 
 import proxy  # noqa: E402  (environment is read at import, so the path must be set first)
 

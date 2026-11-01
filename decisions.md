@@ -315,3 +315,21 @@ What it changes:
   the Go cutover, Unleash_an_Agent_Watch_It_Burn#738.
 - Tests: `TestResetClearsSpendSessionsAndTheRuntimeCostCap` in `internal/spend`, and the built binary's
   `TestResetSpendStartsADeliveryFromZero` and `TestResetSpendRefusals` in `cmd/guard-proxy`.
+
+## 2026-11-01: The span tests read a fake OTLP collector, not a span file
+
+The span tests (now `test_chat_spans.py` and `test_telemetry.py`, both marked `spans`) start a fake
+OTLP/HTTP collector and point the implementation at it with `OTEL_EXPORTER_OTLP_ENDPOINT`. This replaces
+`CONFORMANCE_SPANS`, which had `launch_python.py` write spans to a file in the Python SDK's console
+format. A file exporter would have needed a test-only hook in the Go binary; OTLP is what both
+implementations export in production, so the suite now tests that path for both, black-box.
+
+`launch_python.py` installs the SDK's tracer and meter providers with the OTLP/HTTP exporters when the
+endpoint is set, as the OTel Operator does in the workshop. That adds
+`opentelemetry-exporter-otlp-proto-http==1.45.1` as a dev dependency, matching the SDK pin; it brings
+`opentelemetry-proto`, which the collector decodes with. 1.45.2 (2026-10-29) was two days old.
+
+Found while writing the tests: proxy.py extracts the inbound trace context from `dict(self.headers)`,
+whose keys keep the case the client sent, so a capitalized `Traceparent` is not joined. agentgateway
+sends it lowercase, so the workshop is unaffected; the tests send it lowercase. The Go build reads
+headers case-insensitively.
