@@ -142,5 +142,41 @@ func (s *Store) saveCostCap(usd float64, set bool) error {
 	return nil
 }
 
+// Cleared is what Reset took off a store. CostCap is set only when a runtime cap was stored.
+type Cleared struct {
+	Totals     Totals
+	Sessions   int
+	CostCap    float64
+	CostCapSet bool
+}
+
+// Reset clears the cluster tally, every session's spend and the runtime cost cap in one commit, so the
+// next process starts from $0 under COST_CAP_USD. It is the instructor's reset between deliveries, run
+// against a stopped proxy: no HTTP path reaches it, since /toggle has no auth and the agent's tool pod
+// can reach the proxy.
+func (s *Store) Reset() (Cleared, error) {
+	st, err := s.load()
+	if err != nil {
+		return Cleared{}, err
+	}
+	err = s.db.Update(func(tx *bolt.Tx) error {
+		meter := tx.Bucket(meterBucket)
+		for _, k := range [][]byte{totalsKey, costCapKey} {
+			if err := meter.Delete(k); err != nil {
+				return err
+			}
+		}
+		if err := tx.DeleteBucket(sessionBucket); err != nil {
+			return err
+		}
+		_, err := tx.CreateBucket(sessionBucket)
+		return err
+	})
+	if err != nil {
+		return Cleared{}, fmt.Errorf("spend store: %w", err)
+	}
+	return Cleared{Totals: st.totals, Sessions: len(st.session), CostCap: st.costCap, CostCapSet: st.costCapSet}, nil
+}
+
 // formatUSD writes the shortest decimal that parses back to exactly usd.
 func formatUSD(usd float64) []byte { return strconv.AppendFloat(nil, usd, 'g', -1, 64) }

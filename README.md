@@ -41,6 +41,7 @@ reply, exactly as `proxy.py` does, and the reservation waits on a design for tha
 go test ./...                                   # unit tests, plus an end-to-end test of the binary
 go build -o bin/guard-proxy ./cmd/guard-proxy
 AGENT_URL=http://localhost:3000 LLM_GUARD_URL=http://localhost:8000 SPEND_STORE_PATH=/tmp/spend.db bin/guard-proxy --listen 127.0.0.1:8080 [--config guard-proxy.yaml]
+bin/guard-proxy reset-spend --store /tmp/spend.db      # with the proxy stopped: the next start is at $0
 ```
 
 It serves every endpoint `proxy.py` does, with the same guards, limits, caps, toggles and prompt feed
@@ -70,8 +71,11 @@ Where it differs from `proxy.py` on purpose:
   `proxy.py` keeps them in memory and a restart zeroes them. The path is required, and one the process
   cannot open for writing, or that another process holds, stops startup. Each reply's spend is committed
   before the reply is returned; if the commit fails the reply is withheld (`/chat` answers its 502, the
-  A2A path a 502 with the error) and `spend_store_error` is logged. Only deleting the file resets the
-  tally; Reset in the storefront still means a fresh session, which has no stored spend. See
+  A2A path a 502 with the error) and `spend_store_error` is logged. Reset in the storefront still means
+  a fresh session, which has no stored spend. To start a new delivery from $0, scale the proxy to 0 and
+  run `guard-proxy reset-spend --store PATH` from the same image with the volume mounted: it clears the
+  tally, every session's spend and the `/toggle` cost cap, keeps the file, prints what it cleared, and
+  refuses a store the proxy still holds or a path with no store. No HTTP endpoint resets spend. See
   [decisions.md](decisions.md) for why.
 
 Config is one YAML file, decoded strictly: an unknown key stops the process at start.

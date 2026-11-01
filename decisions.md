@@ -221,7 +221,8 @@ KubeCon runs, does not change.
   agent lift its own budget cap.
 - **The window is unchanged:** the tally runs from the first start on a fresh file. Only deleting the
   file (or giving the pod a new volume) resets it; a restart no longer does. The scoped windows (per
-  cluster, per session, per identity) come with the M3 reservation.
+  cluster, per session, per identity) come with the M3 reservation. Superseded in part by question 1033
+  below: `guard-proxy reset-spend` also resets it.
 - **The conformance suite gives every proxy start its own `SPEND_STORE_PATH`** under the test's
   `tmp_path`, so no test inherits another's spend; `proxy.py` ignores it. The restart test is Go's
   (`cmd/guard-proxy`'s `TestSpendSurvivesAKillMidWindow`), since `proxy.py` has no store and the default
@@ -279,3 +280,38 @@ What it changes:
 - **Accepted residue:** a short injection that fits two capitalized words, such as `Ignore the Rules`,
   still passes; it carries very little payload.
 - Conformance in `test_chat_witch.py`; Go's `TestWitchNameRE`; two mutants in `mutation_check.py`.
+
+## 2026-11-01: question 1033, an instructor resets the spend tally with `guard-proxy reset-spend`
+
+**Question 1033:** how should an instructor reset the Go guard-proxy's spend tally to $0 before a new
+workshop delivery, now that the tally lives in a bbolt file a restart no longer clears
+(guard-proxy-agenticburn#33, discovered from #32)?
+
+**Answer:** a `reset-spend` subcommand in the binary. Decided by hecaton's research under Michael's
+standing rules, not by Michael. The research cited PRD 412 (`prds/412-guard-proxy-go-rewrite.md` in
+Unleash_an_Agent_Watch_It_Burn): decision 4 says code reaches a cluster only as a signed, digest-pinned
+image, which rules out a delete-file Job (the static image has no shell or `rm`, so it would need a second
+signed image); decision 2 says a restart must not reset a budget, not that an explicit offline reset is
+barred. The runner-up, a per-delivery `SPEND_STORE_PATH`, needs no code but fails quietly when forgotten.
+
+What it changes:
+
+- **`guard-proxy reset-spend --store PATH`** clears the cluster tally, every session's spend and the
+  runtime cost cap in one bbolt commit, keeps the file, and prints what it cleared (spend, requests,
+  tokens, sessions and the runtime cap, or that there was none). The next start runs from $0 under
+  `COST_CAP_USD`, as a `proxy.py` restart did.
+- **It clears the runtime cost cap too.** A delivery starts at the configured backstop, as it did when a
+  restart cleared memory; the printed line names the cap it dropped, which the Job option could not.
+- **It refuses a store the proxy holds.** It opens the file the way the proxy does, with the 2 s lock wait,
+  so a live pod's store fails with `held by another process` and nothing is cleared. The instructor scales
+  the Deployment to 0, runs one pod from the same image with the volume mounted, then scales back to 1.
+- **It refuses a path with no store** (`no spend store at PATH`) rather than creating one, so a mistyped
+  path cannot report a clean reset while the real tally stays.
+- **`--store` is required and is the only flag;** it does not read the config or `SPEND_STORE_PATH`, so
+  the file it clears is the one named on the command line.
+- **Still no HTTP reset.** No endpoint reaches it: `/toggle` has no auth and the agent's tool pod can reach
+  the proxy, so a prompt-injected agent cannot lift either cap.
+- **The workshop wraps the steps** (scale to 0, one-off pod, scale to 1) in one script or Job manifest at
+  the Go cutover, Unleash_an_Agent_Watch_It_Burn#738.
+- Tests: `TestResetClearsSpendSessionsAndTheRuntimeCostCap` in `internal/spend`, and the built binary's
+  `TestResetSpendStartsADeliveryFromZero` and `TestResetSpendRefusals` in `cmd/guard-proxy`.

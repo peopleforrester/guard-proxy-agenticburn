@@ -1,5 +1,5 @@
 // ABOUTME: End-to-end tests of the built binary: a bad config or store refuses to start, SIGTERM drains
-// ABOUTME: in-flight requests, and spend metered through /chat survives the process being killed.
+// ABOUTME: in-flight requests, spend survives a kill, and only reset-spend on a stopped proxy clears it.
 // SPDX-License-Identifier: Apache-2.0
 package main
 
@@ -238,6 +238,82 @@ func TestRuntimeCostCapSurvivesAKill(t *testing.T) {
 	}
 	if got := after.getJSON(t, "/cost"); got["cap_usd"] != 0.03 {
 		t.Errorf("/cost cap_usd = %v", got["cap_usd"])
+	}
+}
+
+// TestResetSpendStartsADeliveryFromZero: the instructor's reset between deliveries refuses a store the
+// proxy holds, and on a stopped proxy clears the tally, every session's spend and the runtime cost cap.
+func TestResetSpendStartsADeliveryFromZero(t *testing.T) {
+	agent := stubAgent(t)
+	store := filepath.Join(t.TempDir(), "spend.db")
+	env := []string{"AGENT_URL=" + agent.URL, "LLM_GUARD_URL=http://127.0.0.1:1", "SPEND_STORE_PATH=" + store,
+		"COST_PER_1K_IN=1", "COST_PER_1K_OUT=1", "COST_CAP_USD=25", "BUDGET_GUARD=on", "BUDGET_CAP_USD=0.05"}
+	before := start(t, env...)
+	for i := 0; i < 3; i++ { // $0.06: session a is over its budget
+		before.chat(t, "a")
+	}
+	if got := before.getJSON(t, "/toggle?cost_cap=0.03"); got["cost_cap_usd"] != 0.03 {
+		t.Fatalf("toggle = %v", got)
+	}
+
+	// The proxy holds the store, so a reset cannot race the live tally.
+	if out, err := exec.Command(binary, "reset-spend", "--store", store).CombinedOutput(); err == nil ||
+		string(out) != "guard-proxy: spend store "+store+": held by another process\n" {
+		t.Errorf("reset-spend on a held store: %v, %q", err, out)
+	}
+	before.kill(t)
+
+	out, err := exec.Command(binary, "reset-spend", "--store", store).CombinedOutput()
+	if err != nil {
+		t.Fatalf("reset-spend: %v, %s", err, out)
+	}
+	want := "reset-spend: cleared $0.0600 over 3 requests (60 tokens), 1 session, and the runtime cost cap of $0.0300 from " + store + "\n"
+	if string(out) != want {
+		t.Errorf("reset-spend output = %q, want %q", out, want)
+	}
+
+	after := start(t, env...)
+	defer after.kill(t)
+	cost := after.getJSON(t, "/cost")
+	if cost["requests"] != 0.0 || cost["total_tokens"] != 0.0 || cost["usd"] != 0.0 || cost["cap_usd"] != 0.05 {
+		t.Errorf("/cost after reset-spend = %v", cost)
+	}
+	if r := after.chat(t, "a"); r["guarded"] != false {
+		t.Errorf("a after reset-spend is still over its budget: %v", r)
+	}
+	if got := after.getJSON(t, "/toggle"); got["cost_cap_usd"] != 25.0 {
+		t.Errorf("cost cap after reset-spend = %v, want COST_CAP_USD 25", got["cost_cap_usd"])
+	}
+}
+
+func TestResetSpendRefusals(t *testing.T) {
+	dir := t.TempDir()
+	missing := filepath.Join(dir, "typo.db")
+	for name, tc := range map[string]struct {
+		args   []string
+		stderr string
+	}{
+		"no store":      {args: []string{"reset-spend"}, stderr: "reset-spend: --store is required"},
+		"missing store": {args: []string{"reset-spend", "--store", missing}, stderr: "reset-spend: no spend store at " + missing},
+		"stray arg":     {args: []string{"reset-spend", "--store", missing, "extra"}, stderr: "reset-spend: unexpected arguments: [extra]"},
+		"unknown flag":  {args: []string{"reset-spend", "--config", "x"}, stderr: "flag provided but not defined: -config"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			cmd := exec.Command(binary, tc.args...)
+			var stderr bytes.Buffer
+			cmd.Stderr = &stderr
+			err := cmd.Run()
+			if ee, ok := err.(*exec.ExitError); !ok || ee.ExitCode() != 1 {
+				t.Fatalf("exit = %v, want status 1", err)
+			}
+			if !strings.Contains(stderr.String(), tc.stderr) {
+				t.Errorf("stderr = %q, want it to name %q", stderr.String(), tc.stderr)
+			}
+		})
+	}
+	// A mistyped path is refused, not created as a fresh store the proxy never reads.
+	if _, err := os.Stat(missing); !os.IsNotExist(err) {
+		t.Errorf("reset-spend created %s: %v", missing, err)
 	}
 }
 

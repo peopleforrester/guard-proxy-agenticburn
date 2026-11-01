@@ -1,5 +1,5 @@
-// ABOUTME: guard-proxy entry point: loads and validates config, opens the spend store, serves HTTP, and
-// ABOUTME: drains in-flight requests on SIGTERM. A config or store error exits non-zero before the port is bound.
+// ABOUTME: guard-proxy entry point: serves HTTP, draining on SIGTERM; a config or store error exits non-zero
+// ABOUTME: before the port is bound. `reset-spend --store PATH` clears a stopped proxy's spend store.
 // SPDX-License-Identifier: Apache-2.0
 package main
 
@@ -8,6 +8,8 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
+	"io/fs"
 	"net"
 	"net/http"
 	"os"
@@ -26,13 +28,17 @@ import (
 const shutdownGrace = 30 * time.Second
 
 func main() {
+	run := serve
+	if len(os.Args) > 1 && os.Args[1] == "reset-spend" {
+		run = func() error { return resetSpend(os.Args[2:]) }
+	}
 	if err := run(); err != nil {
 		fmt.Fprintln(os.Stderr, "guard-proxy:", err)
 		os.Exit(1)
 	}
 }
 
-func run() error {
+func serve() error {
 	configPath := flag.String("config", "", "path to the YAML config file")
 	listen := flag.String("listen", "", "address to listen on, overriding the config's listen")
 	flag.Parse()
@@ -85,4 +91,48 @@ func run() error {
 		return err
 	}
 	return nil
+}
+
+// resetSpend clears the spend store at --store so the next delivery starts from $0, and prints what it
+// cleared. It runs from the same signed image as the proxy, with the Deployment scaled to 0: a store the
+// proxy still holds is refused, and a path with no store is refused rather than created.
+func resetSpend(args []string) error {
+	flags := flag.NewFlagSet("reset-spend", flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
+	path := flags.String("store", "", "path to the spend store (the proxy's SPEND_STORE_PATH)")
+	if err := flags.Parse(args); err != nil {
+		return fmt.Errorf("reset-spend: %w", err)
+	}
+	if flags.NArg() > 0 {
+		return fmt.Errorf("reset-spend: unexpected arguments: %v", flags.Args())
+	}
+	if *path == "" {
+		return errors.New("reset-spend: --store is required")
+	}
+	if _, err := os.Stat(*path); errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("reset-spend: no spend store at %s", *path)
+	}
+	store, err := spend.OpenStore(*path)
+	if err != nil {
+		return err
+	}
+	defer store.Close()
+	c, err := store.Reset()
+	if err != nil {
+		return err
+	}
+	costCap := "no runtime cost cap"
+	if c.CostCapSet {
+		costCap = fmt.Sprintf("the runtime cost cap of $%.4f", c.CostCap)
+	}
+	fmt.Printf("reset-spend: cleared $%.4f over %s (%d tokens), %s, and %s from %s\n", c.Totals.USD,
+		plural(c.Totals.Requests, "request"), c.Totals.TotalTokens, plural(int64(c.Sessions), "session"), costCap, *path)
+	return nil
+}
+
+func plural(n int64, noun string) string {
+	if n == 1 {
+		return "1 " + noun
+	}
+	return fmt.Sprintf("%d %ss", n, noun)
 }

@@ -204,3 +204,61 @@ func TestACorruptStoreFailsToLoad(t *testing.T) {
 		t.Errorf("NewMeter = %v", err)
 	}
 }
+
+func TestResetClearsSpendSessionsAndTheRuntimeCostCap(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "spend.db")
+	p := Prices{In: 1}
+	st := openStore(t, path)
+	m, err := NewMeter(p, 25, st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record(t, m, Usage{In: 1000, Total: 1000}, "a")
+	record(t, m, Usage{In: 500, Total: 500}, "b")
+	record(t, m, Usage{In: 250, Total: 250}, "")
+	if err := m.SetCostCap(2); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := st.Reset()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := Cleared{Totals: Totals{Requests: 3, InputTokens: 1750, TotalTokens: 1750, USD: 1.75}, Sessions: 2, CostCap: 2, CostCapSet: true}
+	if got != want {
+		t.Errorf("Reset = %+v, want %+v", got, want)
+	}
+
+	m, st = reopen(t, st, path, p, 25)
+	if got := m.Totals(); got != (Totals{}) {
+		t.Errorf("Totals after Reset = %+v, want zero", got)
+	}
+	if got := m.SessionUSD("a"); got != 0 {
+		t.Errorf("SessionUSD(a) after Reset = %v, want 0", got)
+	}
+	if got := m.CostCap(); got != 25 {
+		t.Errorf("CostCap after Reset = %v, want COST_CAP_USD 25", got)
+	}
+	// The store still meters after a reset, from $0.
+	record(t, m, Usage{In: 1000, Total: 1000}, "a")
+	if got := m.SessionUSD("a"); got != 1 {
+		t.Errorf("SessionUSD(a) = %v, want 1", got)
+	}
+
+	// A store with nothing on it resets to the same nothing.
+	empty := openStore(t, filepath.Join(t.TempDir(), "empty.db"))
+	defer empty.Close()
+	if got, err := empty.Reset(); err != nil || got != (Cleared{}) {
+		t.Errorf("Reset of an empty store = %+v, %v", got, err)
+	}
+}
+
+func TestResetOfAClosedStoreFails(t *testing.T) {
+	st := openStore(t, filepath.Join(t.TempDir(), "spend.db"))
+	if err := st.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.Reset(); err == nil || !strings.HasPrefix(err.Error(), "spend store: ") {
+		t.Errorf("Reset on a closed store = %v", err)
+	}
+}

@@ -74,8 +74,15 @@ rules). Both builds forward `witch` only when it matches `[A-Z][a-z]{1,15} the [
 other is no name and logs `witch_name_refused`. Decision recorded 2026-11-01; conformance in
 `test_chat_witch.py`.
 
+### Agent-task #33: reset the Go build's spend tally between deliveries
+Question 1033 answered "a reset-spend subcommand in the binary" (hecaton's research under Michael's
+standing rules). `guard-proxy reset-spend --store PATH`, run with the proxy scaled to 0, clears the tally,
+every session's spend and the runtime cost cap; it refuses a held store and a missing one. Decision
+recorded 2026-11-01. The workshop's wrapper script belongs to the Go cutover,
+Unleash_an_Agent_Watch_It_Burn#738.
+
 ## Branch & Tests
-- Branch: agent/35-15391 (#35)
+- Branch: agent/33-15515 (#33)
 - Working tree: clean
 - Last CI: green on d0793a7 (staging and main)
 
@@ -95,3 +102,4 @@ _(append-only. Each phase transition adds one line, oldest first.)_
 - 2026-10-31 #29 Python runtime's cancel read from source (unsupported); live check escalated, no cluster access
 - 2026-11-01 #32 implemented and verified locally (2.3) on agent/32-15201: proxy.py and Go suites green, go test -race green
 - 2026-11-01 #34 implemented and verified locally (2.3) on agent/34-15345: proxy.py and Go suites green
+- 2026-11-01 #33 implemented and verified locally (2.3) on agent/33-15515: question 1033's reset-spend; proxy.py and Go suites green, go test -race green

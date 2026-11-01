@@ -3,6 +3,17 @@
 What each guard-proxy build a consumer can pin changes, newest first, naming its commit. The workshop
 repo repins its `gitops/ai-layer/guard-proxy` submodule from these entries.
 
+## 2026-11-01: `guard-proxy reset-spend` clears the Go build's spend store between deliveries
+
+Go build only; `proxy.py` keeps its tally in memory and is unchanged (guard-proxy-agenticburn#33). The
+workshop needs it at the Go cutover (Unleash_an_Agent_Watch_It_Burn#738) if deliveries share a volume.
+
+- `guard-proxy reset-spend --store PATH` clears the cluster tally, every session's spend and the runtime
+  cost cap, keeps the file, and prints what it cleared. Run it with the Deployment scaled to 0, from the
+  same image with the volume mounted, then scale back to 1.
+- It exits 1 without clearing anything when the proxy still holds the store, or when no store exists at
+  `PATH`.
+
 ## 2026-11-01: /chat forwards only a storefront-shaped witch name
 
 Repin the workshop's `gitops/ai-layer/guard-proxy` submodule to this entry's commit (or a later one) to
