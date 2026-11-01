@@ -3,6 +3,16 @@
 What each guard-proxy build a consumer can pin changes, newest first, naming its commit. The workshop
 repo repins its `gitops/ai-layer/guard-proxy` submodule from these entries.
 
+## 2026-11-01: /chat forwards only a storefront-shaped witch name
+
+Repin the workshop's `gitops/ai-layer/guard-proxy` submodule to this entry's commit (or a later one) to
+pick this up (guard-proxy-agenticburn#35). It needs no change in the workshop repo.
+
+- `POST /chat` forwards `witch` only when, trimmed, it is `<First> the <Creature>`, each word one capital
+  ASCII letter then 1 to 15 lowercase ones. All 768 names the storefront and the desk hand out pass.
+- Any other `witch`, such as an injection POSTed straight to `/chat`, is no name: the message is exactly
+  the prompt and the proxy logs `witch_name_refused` with the name's length.
+
 ## 2026-11-01: /chat forwards the visitor's witch name to the agent
 
 Repin the workshop's `gitops/ai-layer/guard-proxy` submodule to this entry's commit (or a later one) to

@@ -87,6 +87,11 @@ func (s *Server) chatTurn(ctx context.Context, w http.ResponseWriter, r *http.Re
 		raw = nil
 	}
 	p, session, witch := chatRequest(raw)
+	if witch != "" && !witchNameRE.MatchString(witch) {
+		s.log.Info(fmt.Sprintf("chat witch name dropped: %d characters, not shaped <First> the <Creature>",
+			utf8.RuneCountInString(witch)), "event", "witch_name_refused")
+		witch = ""
+	}
 	prompt, ok := p.(string)
 	if !ok || strings.TrimSpace(prompt) == "" {
 		send(w, http.StatusBadRequest, chatReply{Reply: emptyPrompt})
@@ -317,6 +322,12 @@ func (s *Server) forwardChat(ctx context.Context, prompt, witch, contextID strin
 	}
 	return resp, "", nil
 }
+
+// witchNameRE is the storefront's witch name, `<First> the <Creature>`, each one capitalized ASCII word of
+// at most 16 letters (the desk's longest are 10 and 8). The field is client-supplied and no guard scans it,
+// so a name of any other shape is no name: a direct POST cannot carry an injection past the guards in it
+// (guard-proxy-agenticburn#35).
+var witchNameRE = regexp.MustCompile(`^[A-Z][a-z]{1,15} the [A-Z][a-z]{1,15}$`)
 
 // witchContext is the sentence /chat adds to the agent's message for the visitor's witch name.
 func witchContext(witch string) string {

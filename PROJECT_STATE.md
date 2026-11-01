@@ -68,8 +68,14 @@ non-blank `witch` string as a second A2A text part after the prompt, outside eve
 recorded 2026-11-01. Conformance in `test_chat_witch.py`. The live HC-666 check waits on the workshop
 repinning guard-proxy.
 
+### Agent-task #35: check the shape of the /chat witch name
+Question 1036 answered "accept only a storefront-shaped name" (hecaton's research under Michael's standing
+rules). Both builds forward `witch` only when it matches `[A-Z][a-z]{1,15} the [A-Z][a-z]{1,15}`; any
+other is no name and logs `witch_name_refused`. Decision recorded 2026-11-01; conformance in
+`test_chat_witch.py`.
+
 ## Branch & Tests
-- Branch: agent/34-15345 (#34)
+- Branch: agent/35-15391 (#35)
 - Working tree: clean
 - Last CI: green on d0793a7 (staging and main)
 

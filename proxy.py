@@ -940,6 +940,12 @@ def _is_thinking_only(reply):
     return len(_THINK_TAG_RE.sub("", reply).strip()) < 2
 
 
+# The storefront's witch name is `<First> the <Creature>`, each one capitalized ASCII word of at most 16
+# letters (the desk's longest are 10 and 8). The field is client-supplied and no guard scans it, so a name
+# of any other shape is no name: a direct POST cannot carry an injection past the guards in it (#35).
+_WITCH_NAME_RE = re.compile(r"[A-Z][a-z]{1,15} the [A-Z][a-z]{1,15}")
+
+
 def witch_context(witch):
     """The sentence /chat adds to the agent's message for the visitor's witch name."""
     return f"The person chatting with you gave their name as {witch}."
@@ -1327,6 +1333,10 @@ class Handler(BaseHTTPRequestHandler):
         # The name is context for the agent, not part of the prompt: no guard scans it, the feed does not
         # show it, and a blank or non-string one is no name, so the message is exactly the prompt.
         witch = witch.strip() if isinstance(witch, str) else ""
+        if witch and not _WITCH_NAME_RE.fullmatch(witch):
+            log.info("chat witch name dropped: %d characters, not shaped <First> the <Creature>", len(witch),
+                     extra={"event": "witch_name_refused"})
+            witch = ""
         if session:
             self._stamp("session.id", session)  # OTel semconv; joins one browser session's traces
         if not isinstance(prompt, str) or not prompt.strip():

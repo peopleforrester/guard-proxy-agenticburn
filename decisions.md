@@ -246,4 +246,36 @@ agent for a Deployment named `joker-` plus the name the person chatting gave, so
   non-string `witch` is no name and the message is exactly the prompt, as before.
 - **Trade-off, left to the workshop.** The field is client-supplied, so anyone who POSTs `/chat` directly
   can put any text in it and it reaches the model unscanned. No shape or length check is added because
-  the issue asks for none and the vocabulary belongs to the desk; a follow-up proposes one.
+  the issue asks for none and the vocabulary belongs to the desk; a follow-up proposes one. Superseded by
+  question 1036 below: a name not shaped `<First> the <Creature>` is now no name.
+
+## 2026-11-01: question 1036, /chat forwards only a storefront-shaped witch name
+
+**Question 1036:** should `/chat` forward the client-supplied `witch` name to the agent only when it looks
+like a storefront name, such as `Mortimer the Witch`, and treat anything else as no name
+(guard-proxy-agenticburn#35)?
+
+**Answer:** accept only a storefront-shaped name. Decided by hecaton's research under Michael's standing
+rules, not by Michael. The research cited the workshop's own record: every bypass of a guarded path it has
+met (the console's route to the unauthenticated `/toggle`, pods skipping the model gateway, the
+`/brief.html` side door) was closed rather than kept as a stage beat (Unleash_an_Agent_Watch_It_Burn
+decisions.md, #333, #481, #490, #511).
+
+What it changes:
+
+- **Both builds forward `witch` only when, trimmed, it is `<First> the <Creature>`**: each word one
+  capital ASCII letter then 1 to 15 lowercase ones (`[A-Z][a-z]{1,15} the [A-Z][a-z]{1,15}`, whole
+  string). Anything else is no name and the message is exactly the prompt, so a direct POST can no longer
+  carry an injection past the guards in this field.
+- **The 16-letter bound per word is the length cap.** The bare pattern `[A-Z][a-z]+` admits a word of any
+  length; the desk's longest first name is 10 letters and its longest creature 8, so 16 leaves room for
+  new ones without letting the field carry a paragraph. All 768 desk names (32 first names times 24
+  creatures, `gitops/ai-layer/ticket_site.py`) pass.
+- **No vocabulary copy.** guard-proxy checks the shape, not the desk's list, so adding a capitalized
+  one-word first name or creature at the desk needs no change here. A name with a hyphen, accent or space
+  would be dropped until the pattern is widened.
+- **A dropped name logs `witch_name_refused`** at INFO with its length, not its text, so a desk name the
+  pattern misses shows in the logs instead of silently losing HC-666's `joker-<slug>`.
+- **Accepted residue:** a short injection that fits two capitalized words, such as `Ignore the Rules`,
+  still passes; it carries very little payload.
+- Conformance in `test_chat_witch.py`; Go's `TestWitchNameRE`; two mutants in `mutation_check.py`.

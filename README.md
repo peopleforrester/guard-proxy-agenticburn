@@ -171,10 +171,12 @@ time with a task still running, the turn answers its 502 and guard-proxy then se
 cannot be reached. kagent runs a turn detached from the request, so without the cancel a turn nobody
 is waiting for keeps calling tools and the model.
 
-A `/chat` body can carry `witch`, the visitor's name the storefront assigns (#34). When it is a
-non-blank string, the A2A message gets a second text part after the prompt, `The person chatting with
-you gave their name as <name>.`, so the agent knows who it is talking to. No guard scans the name and
-the prompt feed does not show it. Without one the message is exactly the prompt.
+A `/chat` body can carry `witch`, the visitor's name the storefront assigns (#34). When it is shaped
+like a storefront name, `<First> the <Creature>` with each word capitalized and at most 16 letters (#35),
+the A2A message gets a second text part after the prompt, `The person chatting with you gave their name
+as <name>.`, so the agent knows who it is talking to. No guard scans the name and the prompt feed does
+not show it. Without one, or with a name of any other shape (logged as `witch_name_refused`), the message
+is exactly the prompt.
 
 `COST_CAP_USD` (default `0` for none) is the cluster-wide backstop on spend. `GET
 /toggle?cost_cap=2.00` lowers it at runtime, keeping the tally an env change would reset, and

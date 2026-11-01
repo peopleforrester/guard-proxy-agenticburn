@@ -215,6 +215,16 @@ MUTANTS: list[tuple[str, str, str]] = [
         '        prompt = f"{prompt} {witch}" if isinstance(prompt, str) and witch else prompt\n',
     ),
     (
+        "a chat witch name of any shape forwarded",
+        "        if witch and not _WITCH_NAME_RE.fullmatch(witch):\n",
+        "        if False:\n",
+    ),
+    (
+        "a chat witch name of unbounded length forwarded",
+        '_WITCH_NAME_RE = re.compile(r"[A-Z][a-z]{1,15} the [A-Z][a-z]{1,15}")',
+        '_WITCH_NAME_RE = re.compile(r"[A-Z][a-z]+ the [A-Z][a-z]+")',
+    ),
+    (
         "a refused cancel logged as done",
         "    if not isinstance(result, dict):\n        error = ",
         "    if False:\n        error = ",
