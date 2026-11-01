@@ -55,8 +55,15 @@ forward fails or runs out of time; decision recorded 2026-10-31. Conformance in 
 `tasks/cancel` (read from source, see decisions.md), so the cancel works only if the live Agent is
 `runtime: go`. The proxy side needs #27 on main and re-pinned by Unleash_an_Agent_Watch_It_Burn#742.
 
+### Agent-task #32: persist the spend tally so a restart does not reset it (PRD #412 M3, part)
+The Go build keeps the cluster tally, each session's spend and the runtime cost cap in a bbolt file at
+the required `SPEND_STORE_PATH` (`spend.store_path`); decision recorded 2026-11-01. Each reply's spend is
+committed before the reply leaves. The rest of M3 (CountTokens reservation, capped `max_tokens`) waits on
+the model-path hop question asked on Unleash_an_Agent_Watch_It_Burn#736. The workshop volume and
+`strategy: Recreate` belong to the Go cutover, Unleash_an_Agent_Watch_It_Burn#738.
+
 ## Branch & Tests
-- Branch: agent/27-14041 (#27), on staging at de53427
+- Branch: agent/32-15201 (#32)
 - Working tree: clean
 - Last CI: green on d0793a7 (staging and main)
 
@@ -74,3 +81,4 @@ _(append-only. Each phase transition adds one line, oldest first.)_
 - 2026-10-31 3.3 Go port promoted to main at d0793a7; #22 closed. Open: #26 (test-helper race), U8 (Go spans, M5) for Michael
 - 2026-10-31 #27 implemented and verified locally (2.3) on agent/27-14041: proxy.py and Go suites green
 - 2026-10-31 #29 Python runtime's cancel read from source (unsupported); live check escalated, no cluster access
+- 2026-11-01 #32 implemented and verified locally (2.3) on agent/32-15201: proxy.py and Go suites green, go test -race green

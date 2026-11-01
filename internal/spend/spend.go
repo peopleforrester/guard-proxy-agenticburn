@@ -104,26 +104,41 @@ const (
 	Budget
 )
 
-// Meter tallies spend for the cluster and for each /chat session, and holds the runtime cost cap.
+// Meter tallies spend for the cluster and for each /chat session, and holds the runtime cost cap. All
+// of it lives in a Store, so a restart picks up where the last process stopped.
 type Meter struct {
 	prices Prices
+	envCap float64
+	store  *Store
 
 	mu      sync.Mutex
 	totals  Totals
-	session map[string]float64
+	session map[sessionKey]float64
 	costCap float64
 }
 
-// NewMeter returns a meter pricing at p, with the cost cap at costCap (0 is off).
-func NewMeter(p Prices, costCap float64) *Meter {
-	return &Meter{prices: p, session: map[string]float64{}, costCap: costCap}
+// NewMeter returns a meter pricing at p, with the state st holds. envCap is COST_CAP_USD (0 is off). A
+// stored runtime cost cap applies only while it is still a lowering of envCap, so raising or setting
+// COST_CAP_USD below it on a restart takes effect.
+func NewMeter(p Prices, envCap float64, st *Store) (*Meter, error) {
+	saved, err := st.load()
+	if err != nil {
+		return nil, err
+	}
+	m := &Meter{prices: p, envCap: envCap, store: st, totals: saved.totals, session: saved.session, costCap: envCap}
+	if saved.costCapSet && saved.costCap > 0 && (envCap == 0 || saved.costCap <= envCap) {
+		m.costCap = saved.costCap
+	}
+	return m, nil
 }
 
 // Prices is the meter's price per 1,000 tokens.
 func (m *Meter) Prices() Prices { return m.prices }
 
-// Record adds one model call's usage to the cluster tally and, when session is set, to that session.
-func (m *Meter) Record(u Usage, session string) {
+// Record adds one model call's usage to the cluster tally and, when session is set, to that session,
+// and commits it to the store before returning. The tally in memory counts the call even when the
+// commit fails, so the caps still hold in this process; the next commit writes the whole tally again.
+func (m *Meter) Record(u Usage, session string) error {
 	spent := m.prices.Cost(u.In, u.Out)
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -132,9 +147,12 @@ func (m *Meter) Record(u Usage, session string) {
 	m.totals.OutputTokens += u.Out
 	m.totals.TotalTokens += u.Total
 	m.totals.USD += spent
-	if session != "" {
-		m.session[session] += spent
+	if session == "" {
+		return m.store.saveSpend(m.totals, nil, 0)
 	}
+	k := keyOf(session)
+	m.session[k] += spent
+	return m.store.saveSpend(m.totals, &k, m.session[k])
 }
 
 // Totals is a snapshot of the cluster tally.
@@ -148,7 +166,7 @@ func (m *Meter) Totals() Totals {
 func (m *Meter) SessionUSD(session string) float64 {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.session[session]
+	return m.session[keyOf(session)]
 }
 
 // CostCap is the runtime cost cap.
@@ -158,11 +176,16 @@ func (m *Meter) CostCap() float64 {
 	return m.costCap
 }
 
-// SetCostCap replaces the runtime cost cap. The tally is untouched.
-func (m *Meter) SetCostCap(usd float64) {
+// SetCostCap replaces the runtime cost cap and stores it. A cap equal to COST_CAP_USD is the default and
+// is stored as no runtime cap. The tally is untouched.
+func (m *Meter) SetCostCap(usd float64) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.store.saveCostCap(usd, usd != m.envCap); err != nil {
+		return err
+	}
 	m.costCap = usd
+	return nil
 }
 
 // Capped reports which cap spend has reached. The cost cap is measured against the cluster total; the
@@ -173,7 +196,7 @@ func (m *Meter) Capped(session string, budgetOn bool, budgetCap float64) Cap {
 	spend := m.totals.USD
 	sessionSpend := spend
 	if session != "" {
-		sessionSpend = m.session[session]
+		sessionSpend = m.session[keyOf(session)]
 	}
 	if m.costCap > 0 && spend >= m.costCap {
 		return CostCap

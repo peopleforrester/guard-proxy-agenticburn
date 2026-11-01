@@ -12,7 +12,7 @@ import (
 func TestSpendDefaults(t *testing.T) {
 	c := mustLoad(t, "", agentOnly)
 	want := Spend{BudgetCapUSD: 0.03, ModelTier: "haiku", ModelName: "us.anthropic.claude-haiku-4-5-20251001-v1:0",
-		CostPer1KIn: 0.001, CostPer1KOut: 0.005}
+		CostPer1KIn: 0.001, CostPer1KOut: 0.005, StorePath: testStore}
 	if c.Spend != want {
 		t.Errorf("Spend = %+v, want %+v", c.Spend, want)
 	}
@@ -79,6 +79,28 @@ func TestSpendFromYAML(t *testing.T) {
 	if s.CostCapUSD != 10 || s.BudgetCapUSD != 0.2 || s.RateLimitRPM != 5 || s.RateLimitSessionRPM != 2 ||
 		s.ModelTier != "nova" || s.CostPer1KIn != 0.0008 || s.CostPer1KOut != 0.0032 {
 		t.Errorf("Spend = %+v", s)
+	}
+}
+
+func TestSpendStorePath(t *testing.T) {
+	if s := mustLoad(t, "", withBase(map[string]string{"SPEND_STORE_PATH": "/var/lib/guard-proxy/spend.db"})).Spend; s.StorePath != "/var/lib/guard-proxy/spend.db" {
+		t.Errorf("StorePath = %q", s.StorePath)
+	}
+	path := writeFile(t, "agent: {url: http://a}\nllm_guard: {url: http://g}\nspend: {store_path: /data/from-yaml.db}\n")
+	if c, err := Load(path, envFrom(nil)); err != nil || c.Spend.StorePath != "/data/from-yaml.db" {
+		t.Errorf("Load = %+v, %v", c.Spend, err)
+	}
+	// Unset or blank, startup stops: the tally is never kept in memory alone.
+	for name, env := range map[string]map[string]string{
+		"unset": {"AGENT_URL": "http://a", "LLM_GUARD_URL": "http://g"},
+		"blank": {"AGENT_URL": "http://a", "LLM_GUARD_URL": "http://g", "SPEND_STORE_PATH": " "},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := Load("", envFrom(env))
+			if err == nil || !strings.Contains(err.Error(), "spend.store_path (or SPEND_STORE_PATH) is required") {
+				t.Errorf("Load = %v", err)
+			}
+		})
 	}
 }
 

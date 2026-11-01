@@ -172,3 +172,57 @@ kagent v0.10.1 with `runtime: go` (`go/adk/pkg/a2a`) on a2a-go v0.3.15 (`interna
 - **Not a budget control.** The Go port's entry above rejects cancelling a turn mid-flight as a way to
   bound spend, and this does not change that: the cancel stops work on a turn the proxy has already given
   up on, and the model call in flight when it lands is still billed.
+
+## 2026-11-01: the Go build keeps spend in a bbolt file on the pod's volume
+
+PRD #412 decision 2 (approved 2026-10-11) says budget state persists across restarts in an embedded
+store, SQLite or bbolt, file-backed on the pod's volume, so a restart cannot reset a budget
+(guard-proxy-agenticburn#32, from Unleash_an_Agent_Watch_It_Burn#737, M3). Until now `internal/spend`
+kept the tally in memory, so restarting the process was a way around both caps. `proxy.py`, which
+KubeCon runs, does not change.
+
+- **`go.etcd.io/bbolt` v1.5.0**, the latest release on proxy.golang.org on 2026-11-01 (published
+  2026-06-03), with `golang.org/x/sys` v0.45.0 as its only dependency. Pure Go, so it builds with
+  `CGO_ENABLED=0` (#30). Chosen over `modernc.org/sqlite` because the state is three keyed values and
+  needs no queries: bbolt is one small package where the SQLite port is a transpiled C library and a
+  much larger binary. Each `db.Update` fsyncs on commit by default (`NoSync` is left off).
+- **What is stored.** The cluster tally `/cost` reports, each session's spend, and the runtime cost cap
+  `/toggle?cost_cap=` sets. Session ids are hashed with SHA-256 before they are keys, since the id is
+  whatever the browser sends and a bbolt key is at most 32 KiB.
+- **The runtime cost cap is stored too.** The KubeCon finale lowers it so the room can trip it; if the
+  pod restarted mid-finale and the cap went back to `COST_CAP_USD`, a restart would reopen a kitchen the
+  instructor closed. A cap equal to `COST_CAP_USD` (`cost_cap=default`) is stored as no runtime cap, so a
+  later change to `COST_CAP_USD` applies. On start a stored cap applies only while it is above 0 and, when
+  `COST_CAP_USD` is set, no higher than it, the same rule `/toggle` enforces; otherwise `COST_CAP_USD`
+  does. Since the runtime cap only lowers, keeping it never lifts the backstop.
+- **`spend.store_path` (or `SPEND_STORE_PATH`) is required.** Unset or blank stops startup. There is no
+  memory-only mode, because the PRD says fail closed by default and a silent memory fallback is the
+  restart bypass this closes. A path the process cannot open for writing (a read-only or missing
+  directory, a directory) stops startup before the port is bound, and so does a file another process
+  holds: bbolt takes an exclusive `flock`, the open waits 2 s for it, and two processes metering into
+  one file would each overwrite the other's tally. The workshop Deployment therefore needs
+  `strategy: Recreate` (or one pod at a time) as well as the volume, at the Go cutover
+  (Unleash_an_Agent_Watch_It_Burn#738).
+- **Each reply's spend is committed before the reply is returned.** `Meter.Record` adds to the tally in
+  memory and then commits the whole tally and the session's new total in one transaction, under the
+  meter's lock, so the file is never behind a reply that has left. When the commit fails the spend still
+  counts in memory, so the caps hold in this process, the next commit writes the whole tally again, and
+  the reply is withheld: `/chat` answers its 502 sentence (also after the optional thinking-only retry),
+  the A2A path a 502 naming the error, and both log `spend_store_error` (ERROR). The model call was
+  already billed, but returning the reply would leave spend that the next restart forgets. A `/toggle`
+  whose cap cannot be stored answers 500 and applies nothing, guard keys included.
+- **Reset stays a fresh session.** The issue describes Reset as "the /toggle path that clears a session's
+  budget", but no such path exists in either build. The storefront's Reset (`resetChat()` in the
+  workshop's `gitops/ai-layer/web/burritbot.html`, pinned by its `verify/test_fresh_context.py`) mints a
+  new session id, and a new id has no stored spend, so Reset after a restart gives the same fresh
+  budget it gave before. The old session's spend stays in the store and in the cluster tally. No
+  server-side clear is added: `/toggle` has no auth and the agent's tool pod can reach it (the
+  2026-10-30 cost cap entry), so an endpoint that zeroes a session's spend would let a prompt-injected
+  agent lift its own budget cap.
+- **The window is unchanged:** the tally runs from the first start on a fresh file. Only deleting the
+  file (or giving the pod a new volume) resets it; a restart no longer does. The scoped windows (per
+  cluster, per session, per identity) come with the M3 reservation.
+- **The conformance suite gives every proxy start its own `SPEND_STORE_PATH`** under the test's
+  `tmp_path`, so no test inherits another's spend; `proxy.py` ignores it. The restart test is Go's
+  (`cmd/guard-proxy`'s `TestSpendSurvivesAKillMidWindow`), since `proxy.py` has no store and the default
+  test command runs the suite against it.

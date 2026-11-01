@@ -1,5 +1,5 @@
-// ABOUTME: guard-proxy entry point: loads and validates config, serves HTTP, and drains in-flight
-// ABOUTME: requests on SIGTERM. A config error exits non-zero before the port is bound.
+// ABOUTME: guard-proxy entry point: loads and validates config, opens the spend store, serves HTTP, and
+// ABOUTME: drains in-flight requests on SIGTERM. A config or store error exits non-zero before the port is bound.
 // SPDX-License-Identifier: Apache-2.0
 package main
 
@@ -18,6 +18,7 @@ import (
 	"github.com/peopleforrester/guard-proxy-agenticburn/internal/config"
 	"github.com/peopleforrester/guard-proxy-agenticburn/internal/logging"
 	"github.com/peopleforrester/guard-proxy-agenticburn/internal/server"
+	"github.com/peopleforrester/guard-proxy-agenticburn/internal/spend"
 )
 
 // shutdownGrace bounds how long in-flight requests may finish after SIGTERM. It matches the
@@ -48,12 +49,22 @@ func run() error {
 	}
 
 	log := logging.New(os.Stdout)
+	// The store closes last, after every in-flight request has recorded its spend.
+	store, err := spend.OpenStore(cfg.Spend.StorePath)
+	if err != nil {
+		return err
+	}
+	defer store.Close()
+	handler, err := server.New(cfg, log, store)
+	if err != nil {
+		return err
+	}
 	ln, err := net.Listen("tcp", cfg.Listen)
 	if err != nil {
 		return err
 	}
 	srv := &http.Server{
-		Handler:           server.New(cfg, log),
+		Handler:           handler,
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 

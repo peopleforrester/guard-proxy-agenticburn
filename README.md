@@ -27,7 +27,7 @@ block the *next* request, and so can agentgateway's budgets. Tracked in
 | M0 conformance suite | done |
 | M1 skeleton: listener, agent forwarding, config validation, health | done: passes the `passthrough` conformance subset |
 | M2 guards on the A2A path: block-list, LLM Guard classifier, output guard, fail closed | done: passes the `guards` conformance subset |
-| M3 budget reservation: count tokens and cap `max_tokens` before the model is called | not started; needs a design that puts the proxy on the model path (below) |
+| M3 budget reservation: count tokens and cap `max_tokens` before the model is called | the embedded store is done: spend survives a restart (#32). The reservation is not started; it needs a design that puts the proxy on the model path (below) |
 | M4 rate limits, routing, toggles, the prompt feed | done as `proxy.py` does them: passes the whole suite except its span tests |
 | M5 telemetry: OpenTelemetry spans | not started; the `spans` conformance tests are deselected for Go |
 | M6 signed image, M7 live validation | not started |
@@ -40,7 +40,7 @@ reply, exactly as `proxy.py` does, and the reservation waits on a design for tha
 ```
 go test ./...                                   # unit tests, plus an end-to-end test of the binary
 go build -o bin/guard-proxy ./cmd/guard-proxy
-AGENT_URL=http://localhost:3000 LLM_GUARD_URL=http://localhost:8000 bin/guard-proxy --listen 127.0.0.1:8080 [--config guard-proxy.yaml]
+AGENT_URL=http://localhost:3000 LLM_GUARD_URL=http://localhost:8000 SPEND_STORE_PATH=/tmp/spend.db bin/guard-proxy --listen 127.0.0.1:8080 [--config guard-proxy.yaml]
 ```
 
 It serves every endpoint `proxy.py` does, with the same guards, limits, caps, toggles and prompt feed
@@ -65,6 +65,14 @@ Where it differs from `proxy.py` on purpose:
   its default, as in `proxy.py`.
 - Whole-word matching in the profanity list and the topic phrases uses RE2's ASCII `\b`, where Python's
   is Unicode-aware. A term next to a non-ASCII letter ("fuckñ") is masked in Go and not in `proxy.py`.
+- The cost tally, each session's spend and the `/toggle` cost cap are kept in a bbolt file at
+  `SPEND_STORE_PATH` (`spend.store_path`), so a restart, a crash or an OOM kill does not reset spend.
+  `proxy.py` keeps them in memory and a restart zeroes them. The path is required, and one the process
+  cannot open for writing, or that another process holds, stops startup. Each reply's spend is committed
+  before the reply is returned; if the commit fails the reply is withheld (`/chat` answers its 502, the
+  A2A path a 502 with the error) and `spend_store_error` is logged. Only deleting the file resets the
+  tally; Reset in the storefront still means a fresh session, which has no stored spend. See
+  [decisions.md](decisions.md) for why.
 
 Config is one YAML file, decoded strictly: an unknown key stops the process at start.
 
@@ -93,6 +101,7 @@ spend:
   rate_limit_session_rpm: 0   # default, off; per /chat conversation, checked first
   model_tier: haiku        # default; nova, haiku, sonnet or opus prices the tally
   # model_name, cost_per_1k_in and cost_per_1k_out default from the tier
+  store_path: /var/lib/guard-proxy/spend.db   # required (or SPEND_STORE_PATH); on the pod's volume
 feed:
   enabled: false           # default; GET /prompts records nothing until this is on
   profanity: [cilantro]    # replaces the default list; whole words, plural included
@@ -110,7 +119,8 @@ controls:                  # the in-cluster defaults; override to point at anoth
 ```
 
 Every environment variable `proxy.py` reads (listed under [Configuration](#configuration)) overrides
-the file, with the same meaning, except the two OpenTelemetry ones, `PEER_SERVICE` and
+the file, with the same meaning, and `SPEND_STORE_PATH` sets `spend.store_path`. The exceptions are
+the two OpenTelemetry ones, `PEER_SERVICE` and
 `OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT`, which wait for M5. The guard switches and
 `STREAM_PROMPTS` are on only for the value `on`, as in `proxy.py`. Read [docs/gotchas-go.md](docs/gotchas-go.md)
 before changing the upstream hop or adding a dependency.

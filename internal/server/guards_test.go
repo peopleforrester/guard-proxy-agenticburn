@@ -30,7 +30,7 @@ func guardedProxy(t *testing.T, agentURL, guardURL string, g config.Guards, fail
 		FailClosed: failClosed,
 		Guards:     g,
 	}
-	return New(cfg, logging.New(&logs)), &logs
+	return newServer(t, cfg, logging.New(&logs)), &logs
 }
 
 func records(t *testing.T, logs *bytes.Buffer) []map[string]any {

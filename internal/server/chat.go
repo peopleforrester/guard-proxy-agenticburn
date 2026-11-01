@@ -162,7 +162,10 @@ func (s *Server) chatTurn(ctx context.Context, w http.ResponseWriter, r *http.Re
 
 	// Every model call is billed, so each attempt is metered as it returns, not only the reply the turn
 	// ends on (guard-proxy-agenticburn#3). spent sums the turn for the storefront.
+	// A reply whose spend the store did not commit is not returned, even from the optional retry, so
+	// answered stops the turn after that retry too.
 	var spent spend.Usage
+	answered := false
 	attempt := func(optional bool) (any, bool) {
 		resp, running, err := s.forwardChat(ctx, prompt, s.contextID(session))
 		if err != nil {
@@ -175,7 +178,14 @@ func (s *Server) chatTurn(ctx context.Context, w http.ResponseWriter, r *http.Re
 			}
 			return nil, false
 		}
-		if u, ok := s.meterValue(resp, session); ok {
+		u, ok, err := s.meterValue(resp, session)
+		if err != nil {
+			s.storeError(err)
+			send(w, http.StatusBadGateway, chatReply{Reply: kitchenDown})
+			answered = true
+			return nil, false
+		}
+		if ok {
 			spent.In += u.In
 			spent.Out += u.Out
 		}
@@ -201,6 +211,9 @@ func (s *Server) chatTurn(ctx context.Context, w http.ResponseWriter, r *http.Re
 		s.log.Info("model returned reasoning with no answer; retrying once", "event", "thinking_only_retry")
 		if retry, ok := attempt(true); ok && !isThinkingOnly(replyText(retry)) {
 			resp, thinkingOnly = retry, false
+		}
+		if answered {
+			return nil
 		}
 	}
 	reply := replyText(resp)

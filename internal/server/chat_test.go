@@ -83,7 +83,7 @@ func TestDanglingToolUse(t *testing.T) {
 }
 
 func TestContextGenerations(t *testing.T) {
-	s := New(config.Config{Agent: config.Agent{URL: "http://unused.invalid"}}, nil)
+	s := newServer(t, config.Config{Agent: config.Agent{URL: "http://unused.invalid"}}, nil)
 	if got := s.contextID("s1"); got != "s1" {
 		t.Errorf("contextID = %q", got)
 	}
@@ -177,7 +177,7 @@ func TestChatCancelsATaskPastTheForwardDeadline(t *testing.T) {
 			"result": map[string]any{"kind": "task", "id": "t7", "status": map[string]any{"state": state}}})
 	})
 	var logs lockedBuffer
-	s := New(config.Config{Agent: config.Agent{URL: a.URL, Timeout: config.Duration{Duration: 400 * time.Millisecond}}}, logging.New(&logs))
+	s := newServer(t, config.Config{Agent: config.Agent{URL: a.URL, Timeout: config.Duration{Duration: 400 * time.Millisecond}}}, logging.New(&logs))
 	start := time.Now()
 	w := do(s, http.MethodPost, "/chat", `{"prompt": "hi"}`, nil)
 	if w.Code != http.StatusBadGateway || !strings.Contains(w.Body.String(), kitchenDown) {

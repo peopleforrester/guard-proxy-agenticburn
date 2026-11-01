@@ -179,6 +179,9 @@ def start_proxy(
                 "LLM_GUARD_URL": guard.url,
                 "LLM_GUARD_TOKEN": GUARD_TOKEN,
                 "PROXY_TIMEOUT": "5",
+                # The Go build keeps its spend tally in this file and will not start without one; each
+                # start gets its own, so no test inherits another's spend. proxy.py ignores it.
+                "SPEND_STORE_PATH": str(tmp_path / f"spend-{len(running)}.db"),
             }
         )
         full.update(env)

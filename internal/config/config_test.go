@@ -27,9 +27,20 @@ func writeFile(t *testing.T, body string) string {
 	return p
 }
 
+// testStore is the spend store path the helpers below set, unless a test sets SPEND_STORE_PATH itself.
+const testStore = "/data/spend.db"
+
+func withStore(env map[string]string) map[string]string {
+	out := map[string]string{"SPEND_STORE_PATH": testStore}
+	for k, v := range env {
+		out[k] = v
+	}
+	return out
+}
+
 func mustLoad(t *testing.T, path string, env map[string]string) Config {
 	t.Helper()
-	c, err := Load(path, envFrom(env))
+	c, err := Load(path, envFrom(withStore(env)))
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -38,7 +49,7 @@ func mustLoad(t *testing.T, path string, env map[string]string) Config {
 
 func loadErr(t *testing.T, path string, env map[string]string) string {
 	t.Helper()
-	_, err := Load(path, envFrom(env))
+	_, err := Load(path, envFrom(withStore(env)))
 	if err == nil {
 		t.Fatal("Load succeeded; want an error")
 	}

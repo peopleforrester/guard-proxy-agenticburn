@@ -82,6 +82,10 @@ type Spend struct {
 	// CostPer1KIn and CostPer1KOut are USD per 1,000 tokens; they default from the tier.
 	CostPer1KIn  float64 `yaml:"cost_per_1k_in"`
 	CostPer1KOut float64 `yaml:"cost_per_1k_out"`
+	// StorePath is the file the cost tally, each session's spend and the runtime cost cap are kept in,
+	// on the pod's volume, so a restart does not reset spend. It is required: there is no memory-only
+	// mode, and a path that cannot be opened for writing stops startup.
+	StorePath string `yaml:"store_path"`
 
 	inSet, outSet bool
 }
@@ -401,6 +405,9 @@ func applySpendEnv(s *Spend, getenv func(string) (string, bool)) error {
 	if v, ok := getenv("MODEL_NAME"); ok {
 		s.ModelName = v
 	}
+	if v, ok := getenv("SPEND_STORE_PATH"); ok {
+		s.StorePath = v
+	}
 	return nil
 }
 
@@ -473,6 +480,9 @@ func (c Config) validate() error {
 	}
 	if c.Spend.RateLimitRPM < 0 || c.Spend.RateLimitSessionRPM < 0 {
 		return errors.New("config: spend rate limits must not be negative")
+	}
+	if strings.TrimSpace(c.Spend.StorePath) == "" {
+		return errors.New("config: spend.store_path (or SPEND_STORE_PATH) is required: the spend tally is kept on disk")
 	}
 	if c.Chat.TurnTimeout.Duration < 0 {
 		return fmt.Errorf("config: chat turn_timeout %v must not be negative", c.Chat.TurnTimeout.Duration)

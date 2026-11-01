@@ -7,8 +7,10 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -16,6 +18,7 @@ import (
 
 	"github.com/peopleforrester/guard-proxy-agenticburn/internal/config"
 	"github.com/peopleforrester/guard-proxy-agenticburn/internal/logging"
+	"github.com/peopleforrester/guard-proxy-agenticburn/internal/spend"
 )
 
 type seen struct {
@@ -57,6 +60,21 @@ func replyJSON(body string) http.HandlerFunc {
 	}
 }
 
+// newServer is a Server metering into a fresh store in the test's temporary directory.
+func newServer(t *testing.T, cfg config.Config, log *slog.Logger) *Server {
+	t.Helper()
+	st, err := spend.OpenStore(filepath.Join(t.TempDir(), "spend.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	s, err := New(cfg, log, st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return s
+}
+
 func newProxy(t *testing.T, agentURL string, g config.Guards) (*Server, *bytes.Buffer) {
 	t.Helper()
 	var logs bytes.Buffer
@@ -65,7 +83,7 @@ func newProxy(t *testing.T, agentURL string, g config.Guards) (*Server, *bytes.B
 		Agent:  config.Agent{URL: agentURL, Timeout: config.Duration{Duration: 2 * time.Second}},
 		Guards: g,
 	}
-	return New(cfg, logging.New(&logs)), &logs
+	return newServer(t, cfg, logging.New(&logs)), &logs
 }
 
 func do(s *Server, method, target string, body string, h map[string]string) *httptest.ResponseRecorder {
@@ -154,7 +172,7 @@ func TestChatWithAQueryIsA2A(t *testing.T) {
 func TestCORSEchoesOnlyAllowedOrigins(t *testing.T) {
 	cfg := config.Config{Agent: config.Agent{URL: "http://unused.invalid"},
 		CORS: config.CORS{ConsoleOrigins: []string{"https://console.example"}}}
-	s := New(cfg, logging.New(io.Discard))
+	s := newServer(t, cfg, logging.New(io.Discard))
 	for _, tc := range []struct {
 		origin, host string
 		allowed      bool

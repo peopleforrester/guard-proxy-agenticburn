@@ -79,3 +79,15 @@ checked. Read this before adding a dependency or changing how the proxy talks to
 - **Go's `$` without `(?m)` matches only at the very end; Python's also matches before a final
   newline.** The scratchpad pattern's unclosed-tag branch reaches a trailing newline in Go and stops
   before it in Python. Both strip the result, so the answers agree.
+
+## The spend store (bbolt)
+
+- **`go.etcd.io/bbolt`, not `github.com/boltdb/bolt`.** The original is archived; etcd's fork is the
+  maintained one. v1.5.0 (2026-06-03) was latest on proxy.golang.org on 2026-11-01.
+- **`bolt.Open` waits forever for the file lock unless `Options.Timeout` is set.** A second process on
+  the same file, such as a rolling update's new pod beside the old one, would hang at start instead of
+  failing. `spend.OpenStore` sets 2 s and reports `held by another process` (`bolt.ErrTimeout`).
+- **A bbolt key is at most 32 KiB and must not be empty.** Session ids come from the browser, so they
+  are hashed before use as keys.
+- **Durability comes from the commit's fsync.** Leave `NoSync` off; with it on, a crash loses the last
+  replies' spend, which is the restart bypass the store exists to close.

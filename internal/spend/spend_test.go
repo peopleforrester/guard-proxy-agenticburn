@@ -6,6 +6,7 @@ package spend
 import (
 	"encoding/json"
 	"math"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -61,10 +62,32 @@ func TestUsageCountsCoerceLikeInt(t *testing.T) {
 	}
 }
 
+// newMeter is a meter on a fresh store in the test's temporary directory.
+func newMeter(t *testing.T, p Prices, envCap float64) *Meter {
+	t.Helper()
+	st, err := OpenStore(filepath.Join(t.TempDir(), "spend.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	m, err := NewMeter(p, envCap, st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return m
+}
+
+func record(t *testing.T, m *Meter, u Usage, session string) {
+	t.Helper()
+	if err := m.Record(u, session); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestMeterTalliesClusterAndSession(t *testing.T) {
-	m := NewMeter(Prices{In: 0.001, Out: 0.005}, 0)
-	m.Record(Usage{In: 1000, Out: 1000, Total: 2000}, "a")
-	m.Record(Usage{In: 1000, Out: 0, Total: 1000}, "")
+	m := newMeter(t, Prices{In: 0.001, Out: 0.005}, 0)
+	record(t, m, Usage{In: 1000, Out: 1000, Total: 2000}, "a")
+	record(t, m, Usage{In: 1000, Out: 0, Total: 1000}, "")
 	tot := m.Totals()
 	if tot.Requests != 2 || tot.InputTokens != 2000 || tot.OutputTokens != 1000 || tot.TotalTokens != 3000 {
 		t.Errorf("Totals = %+v", tot)
@@ -78,11 +101,11 @@ func TestMeterTalliesClusterAndSession(t *testing.T) {
 }
 
 func TestCapPrecedence(t *testing.T) {
-	m := NewMeter(Prices{In: 1, Out: 0}, 2)
+	m := newMeter(t, Prices{In: 1, Out: 0}, 2)
 	if got := m.Capped("a", true, 1); got != None {
 		t.Errorf("fresh: %v", got)
 	}
-	m.Record(Usage{In: 1000}, "a") // $1 for a, $1 cluster
+	record(t, m, Usage{In: 1000}, "a") // $1 for a, $1 cluster
 	if got := m.Capped("a", true, 1); got != Budget {
 		t.Errorf("budget reached: %v", got)
 	}
@@ -96,25 +119,29 @@ func TestCapPrecedence(t *testing.T) {
 	if got := m.Capped("", true, 1); got != Budget {
 		t.Errorf("no session: %v", got)
 	}
-	m.Record(Usage{In: 1000}, "b") // $2 cluster: the cost cap, at exactly the cap
+	record(t, m, Usage{In: 1000}, "b") // $2 cluster: the cost cap, at exactly the cap
 	if got := m.Capped("a", true, 1); got != CostCap {
 		t.Errorf("both tripped: %v", got)
 	}
-	m.SetCostCap(0)
+	if err := m.SetCostCap(0); err != nil {
+		t.Fatal(err)
+	}
 	if got := m.Capped("c", false, 1); got != None {
 		t.Errorf("cost cap off: %v", got)
 	}
 }
 
 func TestCapUSD(t *testing.T) {
-	m := NewMeter(Prices{}, 25)
+	m := newMeter(t, Prices{}, 25)
 	if got := m.CapUSD(false, 0.05); got != 25 {
 		t.Errorf("CapUSD = %v", got)
 	}
 	if got := m.CapUSD(true, 0.05); got != 0.05 {
 		t.Errorf("CapUSD = %v", got)
 	}
-	m.SetCostCap(0)
+	if err := m.SetCostCap(0); err != nil {
+		t.Fatal(err)
+	}
 	if got := m.CapUSD(false, 0.05); got != 0 {
 		t.Errorf("CapUSD = %v", got)
 	}

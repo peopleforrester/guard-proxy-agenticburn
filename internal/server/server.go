@@ -57,8 +57,13 @@ type Server struct {
 	chatSeq atomic.Int64
 }
 
-// New builds a Server from a validated configuration.
-func New(cfg config.Config, log *slog.Logger) *Server {
+// New builds a Server from a validated configuration, metering into store. It fails when the spend
+// state in store cannot be read.
+func New(cfg config.Config, log *slog.Logger, store *spend.Store) (*Server, error) {
+	meter, err := spend.NewMeter(spend.Prices{In: cfg.Spend.CostPer1KIn, Out: cfg.Spend.CostPer1KOut}, cfg.Spend.CostCapUSD, store)
+	if err != nil {
+		return nil, err
+	}
 	blocklist := guard.Blocklist(cfg.Blocklist)
 	origins := map[string]bool{}
 	for _, o := range cfg.CORS.ConsoleOrigins {
@@ -77,7 +82,7 @@ func New(cfg config.Config, log *slog.Logger) *Server {
 		topicRefusal: cfg.Topic.Refusal,
 		turnTimeout:  cfg.Chat.TurnTimeout.Duration,
 
-		meter:      spend.NewMeter(spend.Prices{In: cfg.Spend.CostPer1KIn, Out: cfg.Spend.CostPer1KOut}, cfg.Spend.CostCapUSD),
+		meter:      meter,
 		limiter:    spend.NewLimiter(cfg.Spend.RateLimitRPM, cfg.Spend.RateLimitSessionRPM),
 		envCostCap: cfg.Spend.CostCapUSD,
 		budgetCap:  cfg.Spend.BudgetCapUSD,
@@ -90,7 +95,7 @@ func New(cfg config.Config, log *slog.Logger) *Server {
 
 		guards: cfg.Guards,
 		ctxGen: map[string]int{},
-	}
+	}, nil
 }
 
 // ServeHTTP routes on the raw request target, query included, as the reference does: /cost and
@@ -177,7 +182,8 @@ func (s *Server) cost(w http.ResponseWriter) {
 
 // toggle flips guards at runtime, with no restart and no spec change, and sets the cost cap. A guard
 // key is on only for the value "on"; input=on flips both input stages, and a specific key wins over
-// it. A refused cost_cap answers 400 and changes nothing, guards included. Unknown keys are ignored.
+// it. A refused cost_cap answers 400 and changes nothing, guards included, and so does a cap the store
+// cannot keep, with a 500. Unknown keys are ignored.
 func (s *Server) toggle(w http.ResponseWriter, r *http.Request) {
 	q, _ := url.ParseQuery(r.URL.RawQuery)
 	capVals, capAsked := q["cost_cap"]
@@ -192,6 +198,13 @@ func (s *Server) toggle(w http.ResponseWriter, r *http.Request) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if capAsked {
+		if err := s.meter.SetCostCap(newCap); err != nil {
+			s.storeError(err)
+			send(w, http.StatusInternalServerError, map[string]string{"error": "cost cap not set: " + err.Error()})
+			return
+		}
+	}
 	set := func(key string, dst *bool) {
 		if v, ok := firstNonBlank(q[key]); ok {
 			*dst = strings.ToLower(v) == "on"
@@ -206,9 +219,6 @@ func (s *Server) toggle(w http.ResponseWriter, r *http.Request) {
 	set("output", &s.guards.Output)
 	set("budget", &s.guards.Budget)
 	set("topic", &s.guards.Topic)
-	if capAsked {
-		s.meter.SetCostCap(newCap)
-	}
 	send(w, http.StatusOK, map[string]any{
 		"input_blocklist":  s.guards.InputBlocklist,
 		"input_classifier": s.guards.InputClassifier,
@@ -290,7 +300,11 @@ func (s *Server) forwardA2A(w http.ResponseWriter, r *http.Request) {
 		send(w, http.StatusBadGateway, map[string]string{"error": "agent forward failed: " + err.Error()})
 		return
 	}
-	s.meterReply(body, "")
+	if _, _, err := s.meterReply(body, ""); err != nil {
+		s.storeError(err)
+		send(w, http.StatusBadGateway, map[string]string{"error": "spend not recorded: " + err.Error()})
+		return
+	}
 	if g.Output {
 		if body, err = s.scrubReply(r.Context(), body); err != nil {
 			// The scrubbed reply cannot be produced, and the unscrubbed one must not leave.
@@ -302,21 +316,27 @@ func (s *Server) forwardA2A(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, body)
 }
 
-// meterReply adds a reply's token usage to the cost tally. A reply without usage is not counted.
-func (s *Server) meterReply(body []byte, session string) (spend.Usage, bool) {
+// meterReply adds a reply's token usage to the cost tally. A reply without usage is not counted. An
+// error is a tally the store did not commit, and the reply must not be returned.
+func (s *Server) meterReply(body []byte, session string) (spend.Usage, bool, error) {
 	var v any
 	if json.Unmarshal(body, &v) != nil {
-		return spend.Usage{}, false
+		return spend.Usage{}, false, nil
 	}
 	return s.meterValue(v, session)
 }
 
-func (s *Server) meterValue(v any, session string) (spend.Usage, bool) {
+func (s *Server) meterValue(v any, session string) (spend.Usage, bool, error) {
 	u, ok := spend.UsageOf(v)
-	if ok {
-		s.meter.Record(u, session)
+	if !ok {
+		return u, false, nil
 	}
-	return u, ok
+	return u, true, s.meter.Record(u, session)
+}
+
+// storeError logs a write the spend store did not commit.
+func (s *Server) storeError(err error) {
+	s.log.Error(err.Error(), "event", "spend_store_error")
 }
 
 // agent makes one upstream call to the same request URI on the agent. Only a JSON Content-Type
