@@ -97,7 +97,7 @@ Unleash_an_Agent_Watch_It_Burn#738.
 ## Branch & Tests
 - Branch: agent/33-15515 (#33)
 - Working tree: clean
-- Last CI: green on d0793a7 (staging and main)
+- Last CI: green on 3407cef (staging and main)
 
 ## Phase History
 _(append-only. Each phase transition adds one line, oldest first.)_
@@ -117,3 +117,4 @@ _(append-only. Each phase transition adds one line, oldest first.)_
 - 2026-11-01 #34 implemented and verified locally (2.3) on agent/34-15345: proxy.py and Go suites green
 - 2026-11-01 #33 implemented and verified locally (2.3) on agent/33-15515: question 1033's reset-spend; proxy.py and Go suites green, go test -race green
 - 2026-11-01 1.3 M5 approved by Michael; 2.1 starting T1
+- 2026-11-01 3.3 M5 promoted to main at 3407cef; #36 closed; status on Unleash#412
