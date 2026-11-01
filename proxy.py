@@ -940,6 +940,11 @@ def _is_thinking_only(reply):
     return len(_THINK_TAG_RE.sub("", reply).strip()) < 2
 
 
+def witch_context(witch):
+    """The sentence /chat adds to the agent's message for the visitor's witch name."""
+    return f"The person chatting with you gave their name as {witch}."
+
+
 def chat_reply_text(resp):
     """The AGENT's reply text from an A2A response. kagent echoes the SAME text into artifacts AND the
     agent-role history, so take ONE source (artifacts first, then agent history, then status) rather than
@@ -1301,8 +1306,8 @@ class Handler(BaseHTTPRequestHandler):
                              "guarded": False, "input_tokens": 0, "output_tokens": 0})
 
     def _chat_turn(self, deadline):
-        """BurritoBot storefront contract (B1): POST {prompt} -> {reply, guarded, input_tokens,
-        output_tokens}. Wraps the prompt as an A2A message/send and runs the SAME input/output guards,
+        """BurritoBot storefront contract (B1): POST {prompt, session, witch} -> {reply, guarded,
+        input_tokens, output_tokens}. Wraps the prompt as an A2A message/send and runs the SAME input/output guards,
         rate/cost cap, cost metering, and agent forward as the A2A root, then reshapes the response. The
         guard TOGGLES apply identically, so the guardrail toggles affect BurritoBot too."""
         raw = self.rfile.read(int(self.headers.get("Content-Length", "0")))
@@ -1310,13 +1315,18 @@ class Handler(BaseHTTPRequestHandler):
             body = json.loads(raw) or {}
             prompt = body.get("prompt", "")
             session = body.get("session", "")  # per-browser-session id -> A2A contextId for conversation memory
+            witch = body.get("witch", "")  # the visitor's display name, assigned by the storefront (#34)
         except Exception:
             prompt = ""
             session = ""
+            witch = ""
         # A non-string session (an object, array, number) is no session: an unhashable one would
         # otherwise crash the per-session cost lookup and drop the connection.
         if not isinstance(session, str):
             session = ""
+        # The name is context for the agent, not part of the prompt: no guard scans it, the feed does not
+        # show it, and a blank or non-string one is no name, so the message is exactly the prompt.
+        witch = witch.strip() if isinstance(witch, str) else ""
         if session:
             self._stamp("session.id", session)  # OTel semconv; joins one browser session's traces
         if not isinstance(prompt, str) or not prompt.strip():
@@ -1399,6 +1409,11 @@ class Handler(BaseHTTPRequestHandler):
             _chat_seq += 1
             m = {"role": "user", "messageId": f"chat-{_chat_seq}",
                  "parts": [{"kind": "text", "text": prompt}]}
+            if witch:
+                # A second text part: kagent hands every text part to the model, so the agent knows who it
+                # is talking to (HC-666 names its Deployment joker-<slug> from this), and parts[0] stays
+                # the prompt as typed.
+                m["parts"].append({"kind": "text", "text": witch_context(witch)})
             if ctx:
                 # Carry the (self-heal-generationed) browser session as the A2A contextId so kagent
                 # threads the order across turns.

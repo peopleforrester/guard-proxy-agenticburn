@@ -199,6 +199,22 @@ MUTANTS: list[tuple[str, str, str]] = [
         "            fwd_deadline = time.monotonic() + 3600\n",
     ),
     (
+        "the chat witch name dropped",
+        '                m["parts"].append({"kind": "text", "text": witch_context(witch)})',
+        "                pass",
+    ),
+    (
+        "a blank chat witch name forwarded",
+        "            if witch:\n                # A second text part",
+        "            if True:\n                # A second text part",
+    ),
+    (
+        "the chat witch name scanned as part of the prompt",
+        '        witch = witch.strip() if isinstance(witch, str) else ""\n',
+        '        witch = witch.strip() if isinstance(witch, str) else ""\n'
+        '        prompt = f"{prompt} {witch}" if isinstance(prompt, str) and witch else prompt\n',
+    ),
+    (
         "a refused cancel logged as done",
         "    if not isinstance(result, dict):\n        error = ",
         "    if False:\n        error = ",

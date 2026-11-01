@@ -62,12 +62,12 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// chatRequest reads {prompt, session}. A body that is not a JSON object has neither, and a session
-// that is not a string is no session.
-func chatRequest(raw []byte) (prompt any, session string) {
+// chatRequest reads {prompt, session, witch}. A body that is not a JSON object has none of them, a session
+// that is not a string is no session, and a witch name that is not a string or is blank is no name.
+func chatRequest(raw []byte) (prompt any, session, witch string) {
 	var body any
 	if json.Unmarshal(raw, &body) != nil {
-		return "", ""
+		return "", "", ""
 	}
 	obj, _ := body.(map[string]any)
 	prompt = ""
@@ -75,7 +75,8 @@ func chatRequest(raw []byte) (prompt any, session string) {
 		prompt = p
 	}
 	session, _ = obj["session"].(string)
-	return prompt, session
+	witch, _ = obj["witch"].(string)
+	return prompt, session, strings.TrimSpace(witch)
 }
 
 // chatTurn answers the turn, or returns errTurnExpired without answering when a guard stage ran out of
@@ -85,7 +86,7 @@ func (s *Server) chatTurn(ctx context.Context, w http.ResponseWriter, r *http.Re
 	if err != nil {
 		raw = nil
 	}
-	p, session := chatRequest(raw)
+	p, session, witch := chatRequest(raw)
 	prompt, ok := p.(string)
 	if !ok || strings.TrimSpace(prompt) == "" {
 		send(w, http.StatusBadRequest, chatReply{Reply: emptyPrompt})
@@ -167,7 +168,7 @@ func (s *Server) chatTurn(ctx context.Context, w http.ResponseWriter, r *http.Re
 	var spent spend.Usage
 	answered := false
 	attempt := func(optional bool) (any, bool) {
-		resp, running, err := s.forwardChat(ctx, prompt, s.contextID(session))
+		resp, running, err := s.forwardChat(ctx, prompt, witch, s.contextID(session))
 		if err != nil {
 			s.log.Error("chat forward failed: "+err.Error(), "event", "forward_error")
 			if !optional {
@@ -262,16 +263,24 @@ const (
 )
 
 // forwardChat sends the prompt to the agent root as a non-blocking A2A message/send, under contextID when
-// set so kagent threads the conversation, and polls the task to its end. PROXY_TIMEOUT bounds the whole
+// set so kagent threads the conversation, with the visitor's witch name as a second text part when set,
+// and polls the task to its end. PROXY_TIMEOUT bounds the whole
 // forward, the send and every poll, and the turn's deadline cuts it shorter. On an error, running is the
 // id of the task the agent may still be working on, or "" when there is none to cancel.
-func (s *Server) forwardChat(ctx context.Context, prompt, contextID string) (resp any, running string, err error) {
+func (s *Server) forwardChat(ctx context.Context, prompt, witch, contextID string) (resp any, running string, err error) {
 	ctx, cancel := context.WithTimeout(ctx, s.agentTimeout)
 	defer cancel()
+	parts := []map[string]string{{"kind": "text", "text": prompt}}
+	if witch != "" {
+		// The name is context, not prompt: no guard scans it and parts[0] stays the prompt as typed. kagent
+		// hands every text part to the model, so the agent knows who it is talking to (HC-666 names its
+		// Deployment joker-<slug> from this).
+		parts = append(parts, map[string]string{"kind": "text", "text": witchContext(witch)})
+	}
 	msg := map[string]any{
 		"role":      "user",
 		"messageId": fmt.Sprintf("chat-%d", s.chatSeq.Add(1)),
-		"parts":     []map[string]string{{"kind": "text", "text": prompt}},
+		"parts":     parts,
 	}
 	if contextID != "" {
 		msg["contextId"] = contextID
@@ -307,6 +316,11 @@ func (s *Server) forwardChat(ctx context.Context, prompt, contextID string) (res
 		}
 	}
 	return resp, "", nil
+}
+
+// witchContext is the sentence /chat adds to the agent's message for the visitor's witch name.
+func witchContext(witch string) string {
+	return "The person chatting with you gave their name as " + witch + "."
 }
 
 // runningTaskID is the id of the task an A2A response carries while the agent is still working on it,

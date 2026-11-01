@@ -62,8 +62,14 @@ committed before the reply leaves. The rest of M3 (CountTokens reservation, capp
 the model-path hop question asked on Unleash_an_Agent_Watch_It_Burn#736. The workshop volume and
 `strategy: Recreate` belong to the Go cutover, Unleash_an_Agent_Watch_It_Burn#738.
 
+### Agent-task #34: forward the /chat `witch` name into the agent context
+Asked by Unleash_an_Agent_Watch_It_Burn#762 for HC-666's `joker-<slug>`. Both implementations send a
+non-blank `witch` string as a second A2A text part after the prompt, outside every guard; decision
+recorded 2026-11-01. Conformance in `test_chat_witch.py`. The live HC-666 check waits on the workshop
+repinning guard-proxy.
+
 ## Branch & Tests
-- Branch: agent/32-15201 (#32)
+- Branch: agent/34-15345 (#34)
 - Working tree: clean
 - Last CI: green on d0793a7 (staging and main)
 
@@ -82,3 +88,4 @@ _(append-only. Each phase transition adds one line, oldest first.)_
 - 2026-10-31 #27 implemented and verified locally (2.3) on agent/27-14041: proxy.py and Go suites green
 - 2026-10-31 #29 Python runtime's cancel read from source (unsupported); live check escalated, no cluster access
 - 2026-11-01 #32 implemented and verified locally (2.3) on agent/32-15201: proxy.py and Go suites green, go test -race green
+- 2026-11-01 #34 implemented and verified locally (2.3) on agent/34-15345: proxy.py and Go suites green

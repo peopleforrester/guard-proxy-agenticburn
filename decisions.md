@@ -226,3 +226,24 @@ KubeCon runs, does not change.
   `tmp_path`, so no test inherits another's spend; `proxy.py` ignores it. The restart test is Go's
   (`cmd/guard-proxy`'s `TestSpendSurvivesAKillMidWindow`), since `proxy.py` has no store and the default
   test command runs the suite against it.
+
+## 2026-11-01: the /chat `witch` name rides the A2A message as a second text part
+
+The storefront now assigns each visitor a witch name and sends it as `witch` with every `/chat` POST
+(guard-proxy-agenticburn#34, from Unleash_an_Agent_Watch_It_Burn#762). Challenge 3 (HC-666) asks the
+agent for a Deployment named `joker-` plus the name the person chatting gave, so the agent must see it.
+
+- **A second text part, not message metadata.** kagent v0.10.1's Go runtime (`runtime: go`, which the
+  workshop Agent sets) converts the inbound message with `messageToGenAIContent` in
+  `go/adk/pkg/a2a/converter.go`, which hands every text part to the model; message metadata goes only to
+  telemetry (`SetMessageMetadataAttributes` in `executor.go`). Read from the v0.10.1 source on
+  2026-11-01. Metadata would never reach the model.
+- **After the prompt.** `parts[0]` stays the prompt as typed, so anything reading the first part sees
+  what it saw before. The part reads `The person chatting with you gave their name as <name>.`, echoing
+  HC-666's wording so the agent ties the two together; the agent still forms `joker-<slug>` itself.
+- **Outside every guard.** The block-list, the injection classifier, the topic guard, the prompt feed and
+  the span attributes see only the prompt, as the issue requires. The name is trimmed; a blank or
+  non-string `witch` is no name and the message is exactly the prompt, as before.
+- **Trade-off, left to the workshop.** The field is client-supplied, so anyone who POSTs `/chat` directly
+  can put any text in it and it reaches the model unscanned. No shape or length check is added because
+  the issue asks for none and the vocabulary belongs to the desk; a follow-up proposes one.

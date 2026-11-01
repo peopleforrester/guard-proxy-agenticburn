@@ -97,18 +97,22 @@ func TestContextGenerations(t *testing.T) {
 }
 
 func TestChatRequest(t *testing.T) {
-	for body, want := range map[string][2]any{
-		`{"prompt": "hi", "session": "s"}`: {"hi", "s"},
-		`{"prompt": "hi", "session": 42}`:  {"hi", ""},
-		`{"prompt": 42}`:                   {42.0, ""},
-		`{}`:                               {"", ""},
-		`null`:                             {"", ""},
-		`["prompt"]`:                       {"", ""},
-		`not json`:                         {"", ""},
+	for body, want := range map[string][3]any{
+		`{"prompt": "hi", "session": "s"}`:                   {"hi", "s", ""},
+		`{"prompt": "hi", "session": 42}`:                    {"hi", "", ""},
+		`{"prompt": "hi", "witch": "Mortimer the Witch"}`:    {"hi", "", "Mortimer the Witch"},
+		`{"prompt": "hi", "witch": " Mortimer the Witch\n"}`: {"hi", "", "Mortimer the Witch"},
+		`{"prompt": "hi", "witch": "   "}`:                   {"hi", "", ""},
+		`{"prompt": "hi", "witch": ["Mortimer the Witch"]}`:  {"hi", "", ""},
+		`{"prompt": 42}`: {42.0, "", ""},
+		`{}`:             {"", "", ""},
+		`null`:           {"", "", ""},
+		`["prompt"]`:     {"", "", ""},
+		`not json`:       {"", "", ""},
 	} {
-		p, s := chatRequest([]byte(body))
-		if p != want[0] || s != want[1] {
-			t.Errorf("%s: chatRequest = %v, %q", body, p, s)
+		p, s, w := chatRequest([]byte(body))
+		if p != want[0] || s != want[1] || w != want[2] {
+			t.Errorf("%s: chatRequest = %v, %q, %q", body, p, s, w)
 		}
 	}
 }

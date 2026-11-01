@@ -3,6 +3,20 @@
 What each guard-proxy build a consumer can pin changes, newest first, naming its commit. The workshop
 repo repins its `gitops/ai-layer/guard-proxy` submodule from these entries.
 
+## 2026-11-01: /chat forwards the visitor's witch name to the agent
+
+Repin the workshop's `gitops/ai-layer/guard-proxy` submodule to this entry's commit (or a later one) to
+pick this up (guard-proxy-agenticburn#34, asked by Unleash_an_Agent_Watch_It_Burn#762).
+
+- `POST /chat` reads an optional `witch` string beside `prompt` and `session`. When it is set, the A2A
+  message carries a second text part after the prompt: `The person chatting with you gave their name as
+  Mortimer the Witch.` kagent passes every text part to the model, so HC-666 can name its Deployment
+  `joker-<slug>` without the visitor typing their name.
+- The name is not scanned or scrubbed: the block-list, the input classifier, the topic guard and the
+  prompt feed see only the prompt, exactly as before.
+- A request without `witch`, or with a blank or non-string one, sends exactly the prompt, as today.
+- Not yet checked on a live cluster: an HC-666 run creating `joker-<visitor slug>`.
+
 ## 2026-10-31: `5fe5a7c`, a timed-out /chat turn stops the agent's work
 
 Repin the workshop's `gitops/ai-layer/guard-proxy` submodule to `5fe5a7c` (or a later commit) to pick this
