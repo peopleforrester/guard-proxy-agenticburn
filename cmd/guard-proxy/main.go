@@ -21,11 +21,15 @@ import (
 	"github.com/peopleforrester/guard-proxy-agenticburn/internal/logging"
 	"github.com/peopleforrester/guard-proxy-agenticburn/internal/server"
 	"github.com/peopleforrester/guard-proxy-agenticburn/internal/spend"
+	"github.com/peopleforrester/guard-proxy-agenticburn/internal/telemetry"
 )
 
 // shutdownGrace bounds how long in-flight requests may finish after SIGTERM. It matches the
 // Kubernetes default terminationGracePeriodSeconds.
 const shutdownGrace = 30 * time.Second
+
+// telemetryFlush bounds the export of the last spans and the final gauge reading at exit.
+const telemetryFlush = 5 * time.Second
 
 func main() {
 	run := serve
@@ -55,6 +59,21 @@ func serve() error {
 	}
 
 	log := logging.New(os.Stdout)
+	// Telemetry starts before the server registers its gauge, and flushes after the last request.
+	tel, err := telemetry.Setup(context.Background())
+	if err != nil {
+		return err
+	}
+	defer func() {
+		flushCtx, cancel := context.WithTimeout(context.Background(), telemetryFlush)
+		defer cancel()
+		if err := tel.Shutdown(flushCtx); err != nil {
+			log.Error("telemetry flush failed: " + err.Error())
+		}
+	}()
+	if !tel.Enabled() {
+		log.Info("telemetry off: set OTEL_EXPORTER_OTLP_ENDPOINT to export spans and metrics")
+	}
 	// The store closes last, after every in-flight request has recorded its spend.
 	store, err := spend.OpenStore(cfg.Spend.StorePath)
 	if err != nil {

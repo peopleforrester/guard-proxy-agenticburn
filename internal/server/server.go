@@ -5,6 +5,7 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -16,11 +17,16 @@ import (
 	"sync/atomic"
 	"time"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/propagation"
+	"go.opentelemetry.io/otel/trace"
+
 	"github.com/peopleforrester/guard-proxy-agenticburn/internal/config"
 	"github.com/peopleforrester/guard-proxy-agenticburn/internal/controls"
 	"github.com/peopleforrester/guard-proxy-agenticburn/internal/feed"
 	"github.com/peopleforrester/guard-proxy-agenticburn/internal/guard"
 	"github.com/peopleforrester/guard-proxy-agenticburn/internal/spend"
+	"github.com/peopleforrester/guard-proxy-agenticburn/internal/telemetry/semconv"
 )
 
 // Server routes every request. It is safe for concurrent use.
@@ -48,6 +54,11 @@ type Server struct {
 	controls       *controls.Reader
 	publicHost     string
 
+	tracer      trace.Tracer
+	capture     bool
+	peerService string
+	modelName   string
+
 	mu     sync.Mutex
 	guards config.Guards
 
@@ -69,7 +80,7 @@ func New(cfg config.Config, log *slog.Logger, store *spend.Store) (*Server, erro
 	for _, o := range cfg.CORS.ConsoleOrigins {
 		origins[o] = true
 	}
-	return &Server{
+	s := &Server{
 		agentURL:     cfg.Agent.URL,
 		agentTimeout: cfg.Agent.Timeout.Duration,
 		client:       &http.Client{Timeout: cfg.Agent.Timeout.Duration},
@@ -93,9 +104,18 @@ func New(cfg config.Config, log *slog.Logger, store *spend.Store) (*Server, erro
 		controls:       controls.NewReader(cfg.Controls.APIURL, cfg.Controls.TokenPath, cfg.Controls.CAPath),
 		publicHost:     cfg.Controls.PublicHost,
 
+		tracer:      otel.Tracer(instrumentation),
+		capture:     cfg.Telemetry.CaptureContent,
+		peerService: cfg.Telemetry.PeerService,
+		modelName:   cfg.Spend.ModelName,
+
 		guards: cfg.Guards,
 		ctxGen: map[string]int{},
-	}, nil
+	}
+	if err := s.registerCostGauge(); err != nil {
+		return nil, fmt.Errorf("registering gen_ai.client.cost: %w", err)
+	}
+	return s, nil
 }
 
 // ServeHTTP routes on the raw request target, query included, as the reference does: /cost and
@@ -130,11 +150,13 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	case http.MethodPost:
 		s.cors(w, r)
+		sw, r, end := s.serverSpan(w, r, uri)
+		defer end()
 		if strings.TrimRight(uri, "/") == "/chat" {
-			s.chat(w, r)
+			s.chat(sw, r)
 			return
 		}
-		s.forwardA2A(w, r)
+		s.forwardA2A(sw, r)
 	default:
 		send(w, http.StatusNotImplemented, map[string]string{"error": "unsupported method " + r.Method})
 	}
@@ -200,7 +222,7 @@ func (s *Server) toggle(w http.ResponseWriter, r *http.Request) {
 	defer s.mu.Unlock()
 	if capAsked {
 		if err := s.meter.SetCostCap(newCap); err != nil {
-			s.storeError(err)
+			s.storeError(r.Context(), err)
 			send(w, http.StatusInternalServerError, map[string]string{"error": "cost cap not set: " + err.Error()})
 			return
 		}
@@ -242,7 +264,7 @@ func firstNonBlank(vals []string) (string, bool) {
 
 // getPassthrough forwards agent-card and other discovery GETs, without the client's headers.
 func (s *Server) getPassthrough(w http.ResponseWriter, r *http.Request) {
-	body, status, err := s.agent(r, http.MethodGet, nil)
+	body, status, err := s.agent(r.Context(), r.URL.RequestURI(), http.MethodGet, nil)
 	if err != nil {
 		s.cors(w, r)
 		send(w, http.StatusBadGateway, map[string]string{"error": "agent GET failed: " + err.Error()})
@@ -270,45 +292,21 @@ func (s *Server) forwardA2A(w http.ResponseWriter, r *http.Request) {
 	id, text := parseA2A(raw)
 	if text != "" {
 		s.feed.Record(text) // moderated, before any guard, so a blocked prompt shows masked
-		if blocked := s.inputGuards(r.Context(), g, text); blocked != "" {
-			send(w, http.StatusForbidden, rpcError{JSONRPC: "2.0", ID: id, Error: rpcErrorBody{Code: -32600, Message: blocked}})
-			return
-		}
 	}
-	// Protect the demo from itself: the rate limit and the caps, before any model token is spent.
-	if s.limiter.Cluster() {
-		send(w, http.StatusTooManyRequests, rpcError{JSONRPC: "2.0", ID: id, Error: rpcErrorBody{Code: -32000,
-			Message: fmt.Sprintf("Rate limit reached (%d/min on this cluster). Slow down; the cost demo will not run away.", s.limiter.ClusterRPM())}})
-		return
-	}
-	switch s.meter.Capped("", g.Budget, s.budgetCap) {
-	case spend.CostCap:
-		send(w, http.StatusTooManyRequests, rpcError{JSONRPC: "2.0", ID: id, Error: rpcErrorBody{Code: -32000,
-			Message: fmt.Sprintf("Cost cap reached ($%.2f on this cluster). Spend is frozen for everyone; a blocked request costs nothing.", s.meter.CostCap())}})
-		return
-	case spend.Budget:
-		send(w, http.StatusTooManyRequests, rpcError{JSONRPC: "2.0", ID: id, Error: rpcErrorBody{Code: -32000,
-			Message: fmt.Sprintf("Budget cap reached ($%.2f on this cluster). Spend is frozen; a blocked request costs nothing.", s.budgetCap)}})
-		return
-	}
-	body, _, err := s.agent(r, http.MethodPost, raw)
-	if err == nil && !json.Valid(body) {
-		err = fmt.Errorf("agent reply is not JSON (%d bytes)", len(body))
-	}
-	if err != nil {
-		s.log.Error("agent forward failed: "+err.Error(), "event", "forward_error")
-		send(w, http.StatusBadGateway, map[string]string{"error": "agent forward failed: " + err.Error()})
+	ctx := r.Context()
+	body, ok := s.sanitize(ctx, w, r, g, id, text, raw)
+	if !ok {
 		return
 	}
 	if _, _, err := s.meterReply(body, ""); err != nil {
-		s.storeError(err)
+		s.storeError(ctx, err)
 		send(w, http.StatusBadGateway, map[string]string{"error": "spend not recorded: " + err.Error()})
 		return
 	}
 	if g.Output {
-		if body, err = s.scrubReply(r.Context(), body); err != nil {
+		if body, err = s.scrubReply(ctx, body); err != nil {
 			// The scrubbed reply cannot be produced, and the unscrubbed one must not leave.
-			s.log.Error("output guard failed: "+err.Error(), "event", "guard_error")
+			s.log.ErrorContext(ctx, "output guard failed: "+err.Error(), "event", "guard_error")
 			send(w, http.StatusBadGateway, map[string]string{"error": "output guard failed: " + err.Error()})
 			return
 		}
@@ -335,24 +333,85 @@ func (s *Server) meterValue(v any, session string) (spend.Usage, bool, error) {
 }
 
 // storeError logs a write the spend store did not commit.
-func (s *Server) storeError(err error) {
-	s.log.Error(err.Error(), "event", "spend_store_error")
+func (s *Server) storeError(ctx context.Context, err error) {
+	s.log.ErrorContext(ctx, err.Error(), "event", "spend_store_error")
+}
+
+// sanitize is the guard decision and the forward, inside the gen_ai "sanitize" span Datadog renders as an
+// LLM call. It answers a refusal or a failed forward itself; ok is false then. The prompt is forwarded
+// unchanged, so the span's input is the prompt and its output the agent's raw, unscrubbed reply.
+func (s *Server) sanitize(ctx context.Context, w http.ResponseWriter, r *http.Request, g config.Guards,
+	id json.RawMessage, text string, raw []byte) (body []byte, ok bool) {
+	ctx, span := s.tracer.Start(ctx, "sanitize", trace.WithSpanKind(trace.SpanKindInternal),
+		trace.WithAttributes(append(s.genAI(), s.inputMessages(text)...)...))
+	defer span.End()
+	if text != "" {
+		if blocked := s.inputGuards(ctx, g, text); blocked != "" {
+			send(w, http.StatusForbidden, rpcError{JSONRPC: "2.0", ID: id, Error: rpcErrorBody{Code: -32600, Message: blocked}})
+			return nil, false
+		}
+	}
+	// Protect the demo from itself: the rate limit and the caps, before any model token is spent.
+	if s.limiter.Cluster() {
+		send(w, http.StatusTooManyRequests, rpcError{JSONRPC: "2.0", ID: id, Error: rpcErrorBody{Code: -32000,
+			Message: fmt.Sprintf("Rate limit reached (%d/min on this cluster). Slow down; the cost demo will not run away.", s.limiter.ClusterRPM())}})
+		return nil, false
+	}
+	switch s.meter.Capped("", g.Budget, s.budgetCap) {
+	case spend.CostCap:
+		send(w, http.StatusTooManyRequests, rpcError{JSONRPC: "2.0", ID: id, Error: rpcErrorBody{Code: -32000,
+			Message: fmt.Sprintf("Cost cap reached ($%.2f on this cluster). Spend is frozen for everyone; a blocked request costs nothing.", s.meter.CostCap())}})
+		return nil, false
+	case spend.Budget:
+		send(w, http.StatusTooManyRequests, rpcError{JSONRPC: "2.0", ID: id, Error: rpcErrorBody{Code: -32000,
+			Message: fmt.Sprintf("Budget cap reached ($%.2f on this cluster). Spend is frozen; a blocked request costs nothing.", s.budgetCap)}})
+		return nil, false
+	}
+	uri := r.URL.RequestURI()
+	fctx, fwd := s.clientSpan(ctx, semconv.UrlFullKey.String(s.agentURL+uri))
+	body, status, err := s.agent(fctx, uri, http.MethodPost, raw)
+	if err == nil && !json.Valid(body) {
+		err = fmt.Errorf("agent reply is not JSON (%d bytes)", len(body))
+	}
+	if status != 0 {
+		fwd.SetAttributes(semconv.HttpResponseStatusCodeKey.Int(status))
+	}
+	if err != nil {
+		httpStatus := 0 // a reply that is not JSON arrived with a 2xx, which is not the failure
+		if status < 200 || status > 299 {
+			httpStatus = status
+		}
+		failSpan(fwd, httpStatus, err)
+		fwd.End()
+		s.log.ErrorContext(ctx, "agent forward failed: "+err.Error(), "event", "forward_error")
+		send(w, http.StatusBadGateway, map[string]string{"error": "agent forward failed: " + err.Error()})
+		return nil, false
+	}
+	fwd.End()
+	var v any
+	if json.Unmarshal(body, &v) == nil {
+		span.SetAttributes(s.outputMessages(replyText(v))...)
+	}
+	return body, true
 }
 
 // agent makes one upstream call to the same request URI on the agent. Only a JSON Content-Type
 // travels with it. A status outside 2xx is an error, as it is in the reference proxy.
-func (s *Server) agent(r *http.Request, method string, body []byte) ([]byte, int, error) {
+func (s *Server) agent(ctx context.Context, uri, method string, body []byte) ([]byte, int, error) {
 	var rd io.Reader
 	if body != nil {
 		rd = bytes.NewReader(body)
 	}
-	req, err := http.NewRequestWithContext(r.Context(), method, s.agentURL+r.URL.RequestURI(), rd)
+	req, err := http.NewRequestWithContext(ctx, method, s.agentURL+uri, rd)
 	if err != nil {
 		return nil, 0, err
 	}
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
+	// The forward hop's W3C context, so the agent's spans parent onto it. A request outside a span
+	// carries none.
+	otel.GetTextMapPropagator().Inject(ctx, propagation.HeaderCarrier(req.Header))
 	resp, err := s.client.Do(req)
 	if err != nil {
 		return nil, 0, err
@@ -360,10 +419,10 @@ func (s *Server) agent(r *http.Request, method string, body []byte) ([]byte, int
 	defer resp.Body.Close()
 	out, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, 0, err
+		return nil, resp.StatusCode, err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return nil, 0, fmt.Errorf("HTTP %d from agent", resp.StatusCode)
+		return nil, resp.StatusCode, fmt.Errorf("HTTP %d from agent", resp.StatusCode)
 	}
 	return out, resp.StatusCode, nil
 }

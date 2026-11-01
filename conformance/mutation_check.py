@@ -19,6 +19,21 @@ LAUNCHER = ROOT / "conformance" / "launch_python.py"
 # silently testing nothing.
 MUTANTS: list[tuple[str, str, str]] = [
     (
+        "content capture ignores the mode",
+        '_CAPTURE_CONTENT = _CAPTURE_MODE in ("SPAN_ONLY", "EVENT_ONLY", "SPAN_AND_EVENT")',
+        "_CAPTURE_CONTENT = True",
+    ),
+    (
+        "server span drops the caller's trace",
+        'f"POST {self.path}", context=extract(dict(self.headers)), kind=SpanKind.SERVER)',
+        'f"POST {self.path}", kind=SpanKind.SERVER)',
+    ),
+    (
+        "A2A forward drops the trace context",
+        '                    client_span.set_attribute("url.full", fwd_url)\n                    inject(fwd_headers)',
+        '                    client_span.set_attribute("url.full", fwd_url)',
+    ),
+    (
         "fail-open by default",
         'os.environ.get("PROXY_FAIL_CLOSED", "true")',
         'os.environ.get("PROXY_FAIL_CLOSED", "false")',

@@ -70,7 +70,7 @@ func textOf(parts []any) string {
 func (s *Server) inputGuards(ctx context.Context, g config.Guards, text string) string {
 	if g.InputBlocklist {
 		if term, hit := s.blocklist.Match(text); hit {
-			s.log.Info(fmt.Sprintf("input blocked by deterministic block-list (matched '%s')", term),
+			s.log.InfoContext(ctx, fmt.Sprintf("input blocked by deterministic block-list (matched '%s')", term),
 				"event", "input_blocklist_hit")
 			return fmt.Sprintf("Request blocked by input block-list (matched '%s'). No model tokens were spent.", term)
 		}
@@ -78,7 +78,7 @@ func (s *Server) inputGuards(ctx context.Context, g config.Guards, text string) 
 	if g.InputClassifier {
 		v, err := s.llmGuard.ScanPrompt(ctx, text)
 		if err != nil {
-			s.guardError("input classifier", err)
+			s.guardError(ctx, "input classifier", err)
 			v.Allowed = !s.failClosed
 		}
 		if !v.Allowed {
@@ -86,7 +86,7 @@ func (s *Server) inputGuards(ctx context.Context, g config.Guards, text string) 
 			for i, f := range v.Flagged {
 				names[i] = f.Scanner
 			}
-			s.log.Info("input blocked by prompt-injection classifier", "event", "input_classifier_block",
+			s.log.InfoContext(ctx, "input blocked by prompt-injection classifier", "event", "input_classifier_block",
 				"scanners", names)
 			// Name the scanners, as the block-list names its term; without scores (or with no
 			// verdict, failing closed) the message stays the generic one.
@@ -100,7 +100,7 @@ func (s *Server) inputGuards(ctx context.Context, g config.Guards, text string) 
 	// tokens and takes no rate-limit slot. With no turn deadline here, it cannot run out of time.
 	if g.Topic {
 		if step, _ := s.topicRefused(ctx, text); step != "" {
-			s.log.Info("input refused as off-topic (step "+step+")", "event", "topic_guard_block", "step", step)
+			s.log.InfoContext(ctx, "input refused as off-topic (step "+step+")", "event", "topic_guard_block", "step", step)
 			return s.topicRefusal
 		}
 	}
@@ -122,7 +122,7 @@ func (s *Server) topicRefused(ctx context.Context, text string) (string, error) 
 		if s.turnExpired(ctx) {
 			return "", errTurnExpired
 		}
-		s.guardError("topic classifier", err)
+		s.guardError(ctx, "topic classifier", err)
 		allowed = !s.failClosed
 	}
 	if !allowed {
@@ -131,12 +131,12 @@ func (s *Server) topicRefused(ctx context.Context, text string) (string, error) 
 	return "", nil
 }
 
-func (s *Server) guardError(stage string, err error) {
+func (s *Server) guardError(ctx context.Context, stage string, err error) {
 	policy := "failing open"
 	if s.failClosed {
 		policy = "failing closed"
 	}
-	s.log.Warn(fmt.Sprintf("%s unavailable, %s: %v", stage, policy, err), "event", "guard_error")
+	s.log.WarnContext(ctx, fmt.Sprintf("%s unavailable, %s: %v", stage, policy, err), "event", "guard_error")
 }
 
 // scrubReply passes every agent-authored text part of a reply through the output guard: the
@@ -167,14 +167,14 @@ func (s *Server) scrubReply(ctx context.Context, body []byte) ([]byte, error) {
 			}
 			out, err := s.llmGuard.ScanOutput(ctx, text)
 			if err != nil {
-				s.guardError("output guard", err)
+				s.guardError(ctx, "output guard", err)
 				out = text
 				if s.failClosed {
 					out = outputBlocked
 				}
 			}
 			if out != text {
-				s.log.Info("output guardrail modified response content", "event", "output_scrub")
+				s.log.InfoContext(ctx, "output guardrail modified response content", "event", "output_scrub")
 				m["text"] = out
 				changed = true
 			}

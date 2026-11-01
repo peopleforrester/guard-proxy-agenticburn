@@ -169,3 +169,27 @@ func TestControlsDefaultsAndEnvironment(t *testing.T) {
 		t.Errorf("APIURL = %q", c.Controls.APIURL)
 	}
 }
+
+func TestTelemetryDefaultsAndEnvironment(t *testing.T) {
+	c := mustLoad(t, "", agentOnly)
+	if c.Telemetry != (Telemetry{PeerService: "burritobot-gateway"}) {
+		t.Errorf("Telemetry = %+v", c.Telemetry)
+	}
+	for mode, want := range map[string]bool{
+		"SPAN_ONLY": true, "event_only": true, "Span_And_Event": true,
+		"NO_CONTENT": false, "true": false, "": false, "span-only": false,
+	} {
+		c = mustLoad(t, "", withBase(map[string]string{"OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT": mode}))
+		if c.Telemetry.CaptureContent != want {
+			t.Errorf("%q: CaptureContent = %v", mode, c.Telemetry.CaptureContent)
+		}
+	}
+	c = mustLoad(t, "", withBase(map[string]string{"PEER_SERVICE": "agentgateway"}))
+	if c.Telemetry.PeerService != "agentgateway" {
+		t.Errorf("PeerService = %q", c.Telemetry.PeerService)
+	}
+	// An empty override keeps the default, as the reference's `or` does.
+	if c = mustLoad(t, "", withBase(map[string]string{"PEER_SERVICE": ""})); c.Telemetry.PeerService != "burritobot-gateway" {
+		t.Errorf("PeerService = %q", c.Telemetry.PeerService)
+	}
+}

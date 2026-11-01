@@ -32,6 +32,8 @@ type Config struct {
 	Topic    Topic    `yaml:"topic"`
 	CORS     CORS     `yaml:"cors"`
 	Controls Controls `yaml:"controls"`
+	// Telemetry is what the spans carry. Where they are exported to is the standard OTEL_* environment.
+	Telemetry Telemetry `yaml:"telemetry"`
 	// Blocklist is the input block-list, normalized to trimmed lowercase terms.
 	Blocklist []string `yaml:"blocklist"`
 	// FailClosed blocks a request or a reply when LLM Guard cannot give a verdict.
@@ -120,6 +122,15 @@ type Controls struct {
 	PublicHost string `yaml:"public_host"`
 }
 
+// Telemetry is the span content guard-proxy controls itself.
+type Telemetry struct {
+	// CaptureContent records prompts and replies on the gen_ai spans as gen_ai.input.messages and
+	// gen_ai.output.messages. It is off by default because those carry what attendees typed.
+	CaptureContent bool `yaml:"capture_content"`
+	// PeerService names the agent hop on the agent.forward spans, the node the Service Map draws.
+	PeerService string `yaml:"peer_service"`
+}
+
 // TierPrice is the list price of one model tier, in USD per 1,000 tokens.
 type TierPrice struct{ In, Out float64 }
 
@@ -205,6 +216,7 @@ func Load(path string, getenv func(string) (string, bool)) (Config, error) {
 		Feed:       Feed{Profanity: SplitList(DefaultProfanity)},
 		Topic:      Topic{Refusal: "BurritoBot only talks burritos: the menu, our hours, and our locations."},
 		CORS:       CORS{ConsoleOrigins: []string{"https://start.agenticburn.com", "https://start.burritobot.co"}},
+		Telemetry:  Telemetry{PeerService: "burritobot-gateway"},
 		Controls: Controls{
 			APIURL:    "https://kubernetes.default.svc",
 			TokenPath: "/var/run/secrets/kubernetes.io/serviceaccount/token",
@@ -315,6 +327,20 @@ func applyEnv(c *Config, getenv func(string) (string, bool)) error {
 	}
 	if v, ok := getenv("K8S_TOKEN_PATH"); ok && v != "" {
 		c.Controls.TokenPath = v
+	}
+	// The OTel GenAI capture variable's enum: SPAN_ONLY, EVENT_ONLY and SPAN_AND_EVENT capture, and
+	// anything else, including "true", does not. Read here because the SDK does not apply it to spans
+	// an application writes itself.
+	if v, ok := getenv("OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT"); ok {
+		switch strings.ToUpper(strings.TrimSpace(v)) {
+		case "SPAN_ONLY", "EVENT_ONLY", "SPAN_AND_EVENT":
+			c.Telemetry.CaptureContent = true
+		default:
+			c.Telemetry.CaptureContent = false
+		}
+	}
+	if v, ok := getenv("PEER_SERVICE"); ok && v != "" {
+		c.Telemetry.PeerService = v
 	}
 	if v, ok := getenv("WIB_PUBLIC_HOST"); ok {
 		c.Controls.PublicHost = v

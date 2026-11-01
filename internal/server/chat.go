@@ -16,7 +16,12 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/propagation"
+	"go.opentelemetry.io/otel/trace"
+
 	"github.com/peopleforrester/guard-proxy-agenticburn/internal/spend"
+	"github.com/peopleforrester/guard-proxy-agenticburn/internal/telemetry/semconv"
 )
 
 const (
@@ -56,7 +61,7 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request) {
 		defer cancel()
 	}
 	if err := s.chatTurn(ctx, w, r); errors.Is(err, errTurnExpired) {
-		s.log.Error(fmt.Sprintf("chat turn ran out of time: the %gs turn deadline (TURN_TIMEOUT) passed",
+		s.log.ErrorContext(ctx, fmt.Sprintf("chat turn ran out of time: the %gs turn deadline (TURN_TIMEOUT) passed",
 			s.turnTimeout.Seconds()), "event", "turn_timeout")
 		send(w, http.StatusBadGateway, chatReply{Reply: kitchenDown})
 	}
@@ -87,8 +92,12 @@ func (s *Server) chatTurn(ctx context.Context, w http.ResponseWriter, r *http.Re
 		raw = nil
 	}
 	p, session, witch := chatRequest(raw)
+	root := trace.SpanFromContext(ctx)
+	if session != "" {
+		root.SetAttributes(semconv.SessionIdKey.String(session)) // joins one browser session's traces
+	}
 	if witch != "" && !witchNameRE.MatchString(witch) {
-		s.log.Info(fmt.Sprintf("chat witch name dropped: %d characters, not shaped <First> the <Creature>",
+		s.log.InfoContext(ctx, fmt.Sprintf("chat witch name dropped: %d characters, not shaped <First> the <Creature>",
 			utf8.RuneCountInString(witch)), "event", "witch_name_refused")
 		witch = ""
 	}
@@ -103,7 +112,8 @@ func (s *Server) chatTurn(ctx context.Context, w http.ResponseWriter, r *http.Re
 	// The input guards and the topic guard, then the limits and the caps. A blocked turn spends nothing.
 	if g.InputBlocklist {
 		if hit, found := s.blocklist.Match(prompt); found {
-			s.log.Info(fmt.Sprintf("chat input blocked by block-list (matched '%s')", hit), "event", "input_blocklist_hit")
+			s.log.InfoContext(ctx, fmt.Sprintf("chat input blocked by block-list (matched '%s')", hit), "event", "input_blocklist_hit")
+			decision(ctx, semconv.WitbGuardDecisionInputBlocklist)
 			send(w, http.StatusOK, guarded(fmt.Sprintf("BurritoBot can't help with that (blocked: '%s'). No model tokens were spent.", hit)))
 			return nil
 		}
@@ -114,7 +124,7 @@ func (s *Server) chatTurn(ctx context.Context, w http.ResponseWriter, r *http.Re
 			if s.turnExpired(ctx) {
 				return errTurnExpired
 			}
-			s.guardError("input classifier", err)
+			s.guardError(ctx, "input classifier", err)
 			v.Allowed = !s.failClosed
 		}
 		if !v.Allowed {
@@ -122,7 +132,8 @@ func (s *Server) chatTurn(ctx context.Context, w http.ResponseWriter, r *http.Re
 			for i, f := range v.Flagged {
 				names[i] = f.Scanner
 			}
-			s.log.Info("chat input blocked by classifier", "event", "input_classifier_block", "scanners", names)
+			s.log.InfoContext(ctx, "chat input blocked by classifier", "event", "input_classifier_block", "scanners", names)
+			decision(ctx, semconv.WitbGuardDecisionInputClassifier)
 			reason := ""
 			if len(v.Flagged) > 0 {
 				reason = ": " + v.Describe()
@@ -137,17 +148,20 @@ func (s *Server) chatTurn(ctx context.Context, w http.ResponseWriter, r *http.Re
 			return err
 		}
 		if step != "" {
-			s.log.Info("chat input refused as off-topic (step "+step+")", "event", "topic_guard_block", "step", step)
+			s.log.InfoContext(ctx, "chat input refused as off-topic (step "+step+")", "event", "topic_guard_block", "step", step)
+			decision(ctx, semconv.WitbGuardDecisionTopic)
 			send(w, http.StatusOK, guarded(s.topicRefusal))
 			return nil
 		}
 	}
 	// The conversation's own window first, so one phone's refusals take no slot from the room.
 	if s.limiter.Session(session) {
+		decision(ctx, semconv.WitbGuardDecisionRateLimit)
 		send(w, http.StatusOK, guarded(fmt.Sprintf("Slow down, hungry traveler. (%d/min per conversation.)", s.limiter.SessionRPM())))
 		return nil
 	}
 	if s.limiter.Cluster() {
+		decision(ctx, semconv.WitbGuardDecisionRateLimit)
 		send(w, http.StatusOK, guarded(fmt.Sprintf("Slow down, hungry traveler. (%d/min cap on this cluster.)", s.limiter.ClusterRPM())))
 		return nil
 	}
@@ -155,16 +169,26 @@ func (s *Server) chatTurn(ctx context.Context, w http.ResponseWriter, r *http.Re
 	case spend.CostCap:
 		// The cluster-wide backstop holds every conversation, so Reset does not help and the reply must
 		// not offer it: in the KubeCon finale the whole room reads this at once.
+		decision(ctx, semconv.WitbGuardDecisionCostCap)
 		send(w, http.StatusOK, guarded(fmt.Sprintf("The kitchen is closed: this cluster hit its $%.2f spend cap, "+
 			"so BurritoBot isn't sending anything else to the model for anyone. A blocked request costs nothing.", s.meter.CostCap())))
 		return nil
 	case spend.Budget:
 		// The way out is Reset: a fresh conversation gets a fresh budget with the guardrail still armed.
+		decision(ctx, semconv.WitbGuardDecisionBudget)
 		send(w, http.StatusOK, guarded(fmt.Sprintf("The kitchen tab is frozen. This conversation hit its $%.2f "+
 			"spend budget, so I'm not sending anything else to the model. A blocked request costs nothing. "+
 			"Press Reset for a fresh conversation; the budget guard stays on.", s.budgetCap)))
 		return nil
 	}
+
+	// The turn reaches the model, so the root and a gen_ai "chat" span carry what Datadog LLM Observability
+	// reads: the root for the trace list preview, the chat span for drill-down. The forwards parent onto
+	// the chat span, and so do the logs from here on.
+	root.SetAttributes(append(s.genAI(), s.inputMessages(prompt)...)...)
+	ctx, chatSpan := s.tracer.Start(ctx, "chat", trace.WithSpanKind(trace.SpanKindInternal),
+		trace.WithAttributes(append(s.genAI(), s.inputMessages(prompt)...)...))
+	defer chatSpan.End()
 
 	// Every model call is billed, so each attempt is metered as it returns, not only the reply the turn
 	// ends on (guard-proxy-agenticburn#3). spent sums the turn for the storefront.
@@ -175,7 +199,7 @@ func (s *Server) chatTurn(ctx context.Context, w http.ResponseWriter, r *http.Re
 	attempt := func(optional bool) (any, bool) {
 		resp, running, err := s.forwardChat(ctx, prompt, witch, s.contextID(session))
 		if err != nil {
-			s.log.Error("chat forward failed: "+err.Error(), "event", "forward_error")
+			s.log.ErrorContext(ctx, "chat forward failed: "+err.Error(), "event", "forward_error")
 			if !optional {
 				send(w, http.StatusBadGateway, chatReply{Reply: kitchenDown})
 			}
@@ -186,7 +210,7 @@ func (s *Server) chatTurn(ctx context.Context, w http.ResponseWriter, r *http.Re
 		}
 		u, ok, err := s.meterValue(resp, session)
 		if err != nil {
-			s.storeError(err)
+			s.storeError(ctx, err)
 			send(w, http.StatusBadGateway, chatReply{Reply: kitchenDown})
 			answered = true
 			return nil, false
@@ -205,7 +229,7 @@ func (s *Server) chatTurn(ctx context.Context, w http.ResponseWriter, r *http.Re
 	// rotate to a fresh contextId, abandoning the poisoned history, and retry once.
 	if session != "" && isDanglingToolUse(replyText(resp)) {
 		gen := s.rotateContext(session)
-		s.log.Info(fmt.Sprintf("chat session poisoned by dangling tool_use; rotated contextId to gen %d", gen), "event", "ctx_rotate")
+		s.log.InfoContext(ctx, fmt.Sprintf("chat session poisoned by dangling tool_use; rotated contextId to gen %d", gen), "event", "ctx_rotate")
 		if resp, ok = attempt(false); !ok {
 			return nil
 		}
@@ -214,7 +238,7 @@ func (s *Server) chatTurn(ctx context.Context, w http.ResponseWriter, r *http.Re
 	// still usable, so a failed retry keeps it instead of answering 502 (guard-proxy-agenticburn#1).
 	thinkingOnly := isThinkingOnly(replyText(resp))
 	if thinkingOnly {
-		s.log.Info("model returned reasoning with no answer; retrying once", "event", "thinking_only_retry")
+		s.log.InfoContext(ctx, "model returned reasoning with no answer; retrying once", "event", "thinking_only_retry")
 		if retry, ok := attempt(true); ok && !isThinkingOnly(replyText(retry)) {
 			resp, thinkingOnly = retry, false
 		}
@@ -228,11 +252,13 @@ func (s *Server) chatTurn(ctx context.Context, w http.ResponseWriter, r *http.Re
 	if thinkingOnly && reply != "" {
 		if inner := strings.TrimSpace(scratchpad(reply)); inner != "" {
 			reply = inner
-			s.log.Info("model returned reasoning twice; surfacing it rather than an empty reply", "event", "thinking_only_surfaced")
+			s.log.InfoContext(ctx, "model returned reasoning twice; surfacing it rather than an empty reply", "event", "thinking_only_surfaced")
 		} else {
 			reply = ""
 		}
 	}
+	// The chat span records what the model said; the root, below, what left the proxy.
+	chatSpan.SetAttributes(s.outputMessages(reply)...)
 	isGuarded := false
 	if g.Output && reply != "" {
 		out, err := s.llmGuard.ScanOutput(ctx, reply)
@@ -241,7 +267,7 @@ func (s *Server) chatTurn(ctx context.Context, w http.ResponseWriter, r *http.Re
 			// Failing open would hand back a reply the scrub had no time to read.
 			return errTurnExpired
 		case err != nil:
-			s.guardError("output guard", err)
+			s.guardError(ctx, "output guard", err)
 			if s.failClosed {
 				reply, isGuarded = outputBanned, true
 			}
@@ -249,11 +275,18 @@ func (s *Server) chatTurn(ctx context.Context, w http.ResponseWriter, r *http.Re
 			reply, isGuarded = out, true
 		}
 	}
-	if reply == "" {
-		reply = "..."
+	if isGuarded {
+		// ctx is the chat span's by now, and the decision belongs on the root.
+		root.SetAttributes(semconv.WitbGuardDecisionKey.String(semconv.WitbGuardDecisionOutputRedacted))
+	}
+	sent := reply
+	if sent == "" {
+		sent = "..."
 	}
 	cost := s.meter.Prices().Cost(spent.In, spent.Out)
-	send(w, http.StatusOK, chatReply{Reply: reply, Guarded: isGuarded, InputTokens: spent.In, OutputTokens: spent.Out, CostUSD: &cost})
+	send(w, http.StatusOK, chatReply{Reply: sent, Guarded: isGuarded, InputTokens: spent.In, OutputTokens: spent.Out, CostUSD: &cost})
+	chatSpan.End()
+	root.SetAttributes(s.outputMessages(reply)...)
 	return nil
 }
 
@@ -273,6 +306,14 @@ const (
 // forward, the send and every poll, and the turn's deadline cuts it shorter. On an error, running is the
 // id of the task the agent may still be working on, or "" when there is none to cancel.
 func (s *Server) forwardChat(ctx context.Context, prompt, witch, contextID string) (resp any, running string, err error) {
+	// One agent.forward span for the send and every poll; each request carries its W3C context.
+	ctx, span := s.clientSpan(ctx)
+	defer func() {
+		if err != nil {
+			failSpan(span, 0, err)
+		}
+		span.End()
+	}()
 	ctx, cancel := context.WithTimeout(ctx, s.agentTimeout)
 	defer cancel()
 	parts := []map[string]string{{"kind": "text", "text": prompt}}
@@ -358,7 +399,7 @@ func (s *Server) cancelTask(ctx context.Context, taskID, reason string) {
 	resp, err := s.agentRPC(ctx, map[string]any{"jsonrpc": "2.0", "id": "cancel", "method": "tasks/cancel",
 		"params": map[string]any{"id": taskID}})
 	if err != nil {
-		s.log.Error(fmt.Sprintf("could not cancel the agent's task %s: %v", taskID, err), "event", "task_cancel_failed")
+		s.log.ErrorContext(ctx, fmt.Sprintf("could not cancel the agent's task %s: %v", taskID, err), "event", "task_cancel_failed")
 		return
 	}
 	result, ok := field(resp, "result").(map[string]any)
@@ -367,10 +408,10 @@ func (s *Server) cancelTask(ctx context.Context, taskID, reason string) {
 		if errBody == nil {
 			errBody = resp
 		}
-		s.log.Error(fmt.Sprintf("the agent did not cancel task %s: %s", taskID, truncate(errBody, 200)), "event", "task_cancel_failed")
+		s.log.ErrorContext(ctx, fmt.Sprintf("the agent did not cancel task %s: %s", taskID, truncate(errBody, 200)), "event", "task_cancel_failed")
 		return
 	}
-	s.log.Info(fmt.Sprintf("cancelled the agent's task %s (state %v) after the chat forward failed: %s",
+	s.log.InfoContext(ctx, fmt.Sprintf("cancelled the agent's task %s (state %v) after the chat forward failed: %s",
 		taskID, field(result["status"], "state"), reason), "event", "task_cancel")
 }
 
@@ -395,6 +436,7 @@ func (s *Server) agentRPC(ctx context.Context, rpc map[string]any) (any, error) 
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	otel.GetTextMapPropagator().Inject(ctx, propagation.HeaderCarrier(req.Header))
 	res, err := s.client.Do(req)
 	if err != nil {
 		return nil, err

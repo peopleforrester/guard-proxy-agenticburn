@@ -1,12 +1,15 @@
-// ABOUTME: The structured logger: one JSON object per line with timestamp, level, logger, message and
-// ABOUTME: an optional event name, the same keys the reference proxy emits.
+// ABOUTME: The structured logger: one JSON object per line with timestamp, level, logger, message, an
+// ABOUTME: optional event name, and the active span's trace_id and span_id, the keys the reference emits.
 // SPDX-License-Identifier: Apache-2.0
 package logging
 
 import (
+	"context"
 	"io"
 	"log/slog"
 	"time"
+
+	"go.opentelemetry.io/otel/trace"
 )
 
 // Name is the value of every line's "logger" key.
@@ -34,5 +37,25 @@ func New(w io.Writer) *slog.Logger {
 			return a
 		},
 	})
-	return slog.New(h).With("logger", Name)
+	return slog.New(spanHandler{h}).With("logger", Name)
+}
+
+// spanHandler adds the trace_id and span_id of the span in a record's context, in the OTel-standard
+// lowercase hex Datadog recognizes, so a guard-decision log joins its trace. A record logged without a
+// context, or outside a valid span, carries neither.
+type spanHandler struct{ slog.Handler }
+
+func (h spanHandler) Handle(ctx context.Context, r slog.Record) error {
+	if sc := trace.SpanContextFromContext(ctx); sc.IsValid() {
+		r.AddAttrs(slog.String("trace_id", sc.TraceID().String()), slog.String("span_id", sc.SpanID().String()))
+	}
+	return h.Handler.Handle(ctx, r)
+}
+
+func (h spanHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
+	return spanHandler{h.Handler.WithAttrs(attrs)}
+}
+
+func (h spanHandler) WithGroup(name string) slog.Handler {
+	return spanHandler{h.Handler.WithGroup(name)}
 }

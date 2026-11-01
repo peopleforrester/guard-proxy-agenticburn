@@ -16,12 +16,11 @@ package = false
 [tool.pytest.ini_options]
 testpaths = ["conformance"]
 addopts = "-q --strict-markers"
-# Milestone subsets for an implementation that does not yet cover everything. The Python reference
-# runs every test regardless; the Go build runs `-m "not spans"` until it emits OpenTelemetry spans.
+# Milestone subsets, kept for selecting one area. Both implementations run the whole suite.
 markers = [
     "passthrough: forwarding to the agent with every guard off, plus /guards and upstream failures (PRD #412 M1)",
     "guards: the input and output guards and their fail-closed policy on the A2A path (PRD #412 M2)",
-    "spans: the OpenTelemetry spans the reference emits, which the Go build does not yet (PRD #412 M5)",
+    "spans: the OpenTelemetry spans, cost gauge and log correlation, read from a fake OTLP collector (PRD #412 M5)",
 ]
 
 [tool.ruff]

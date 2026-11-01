@@ -5,10 +5,13 @@ package logging
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
 	"time"
+
+	"go.opentelemetry.io/otel/trace"
 )
 
 func lines(t *testing.T, buf *bytes.Buffer) []map[string]any {
@@ -76,5 +79,30 @@ func TestDebugIsNotEmitted(t *testing.T) {
 	New(&buf).Debug("access line")
 	if buf.Len() != 0 {
 		t.Errorf("debug line emitted: %q", buf.String())
+	}
+}
+
+func TestLinesCarryTheSpanFromTheContext(t *testing.T) {
+	var buf bytes.Buffer
+	log := New(&buf)
+	sc := trace.NewSpanContext(trace.SpanContextConfig{
+		TraceID: trace.TraceID{0x0a, 0xf7, 0x65, 0x19, 0x16, 0xcd, 0x43, 0xdd, 0x84, 0x48, 0xeb, 0x21, 0x1c, 0x80, 0x31, 0x9c},
+		SpanID:  trace.SpanID{0xb7, 0xad, 0x6b, 0x71, 0x69, 0x20, 0x33, 0x31},
+	})
+	log.InfoContext(trace.ContextWithSpanContext(context.Background(), sc), "in a span", "event", "e")
+	log.InfoContext(context.Background(), "no span")
+	lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
+	var in, out map[string]any
+	if err := json.Unmarshal([]byte(lines[0]), &in); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal([]byte(lines[1]), &out); err != nil {
+		t.Fatal(err)
+	}
+	if in["trace_id"] != "0af7651916cd43dd8448eb211c80319c" || in["span_id"] != "b7ad6b7169203331" {
+		t.Errorf("in a span: %v", in)
+	}
+	if _, ok := out["trace_id"]; ok {
+		t.Errorf("no span: %v", out)
 	}
 }

@@ -47,11 +47,27 @@ checked. Read this before adding a dependency or changing how the proxy talks to
   them in `ReplaceAttr`. Timestamps are RFC 3339 in UTC, whereas the reference uses Python's
   local-time `formatTime`. Nothing parses the value positionally.
 
-## Telemetry (for M5)
+## Telemetry
 
 - **otel-go has no `gen_ai.*` semantic-convention constants.** Checked in PRD #412 against otel-go
   v1.47.0. The attribute names come from `weaver/registry/guard-proxy-spans.yaml` in the workshop
-  repository, generated into Go rather than typed by hand.
+  repository, generated into `internal/telemetry/semconv/attributes_gen.go` by
+  `scripts/gen-semconv.sh` (weaver 0.24.2, template in `weaver/templates/registry/go/`). The header
+  records the workshop commit it came from. Three names `proxy.py` sets are not in that registry yet
+  (`gen_ai.request.model`, `gen_ai.provider.name`, `error.type`) and live in `semconv/extra.go`.
+- **The global propagator is a no-op until one is set.** Python's API defaults to tracecontext and
+  baggage; Go's does not, so without `otel.SetTextMapPropagator` a caller's `traceparent` would neither
+  join the server span nor reach the agent. `telemetry.Setup` sets it even when export is off.
+- **The OTLP exporters read the process environment themselves.** `otlptracehttp.New` and
+  `otlpmetrichttp.New` take the endpoint, headers and timeouts from `OTEL_EXPORTER_OTLP_*`, so the
+  enable decision in `telemetry.Setup` reads the same `os.Getenv` rather than an injected lookup; a test
+  sets them with `t.Setenv`. The SDK's batcher and periodic reader read `OTEL_BSP_SCHEDULE_DELAY` and
+  `OTEL_METRIC_EXPORT_INTERVAL`, which the conformance collector shortens.
+- **`contrib/exporters/autoexport` is not used.** It selects exporters from `OTEL_*_EXPORTER`, but
+  pulls in the gRPC, Prometheus and log exporters (checked 2026-11-01 at v0.72.0), which the static
+  image would carry for nothing. The build ships OTLP/HTTP only and refuses other values at startup.
+- **A log line joins its trace only through the context.** `internal/logging` reads the span from the
+  record's context, so a call must be `InfoContext(ctx, ...)`; a plain `Info` carries no `trace_id`.
 
 ## JSON
 

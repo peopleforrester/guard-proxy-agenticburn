@@ -1,0 +1,9 @@
+# ABOUTME: Weaver codegen config: one Go file of attribute keys and enum values for the attributes the
+# ABOUTME: workshop's guard-proxy span groups declare. Run through scripts/gen-semconv.sh.
+templates:
+  - pattern: attributes.go.j2
+    filter: >
+      [.groups[] | select((.id | startswith("span.witb.")) or (.id | startswith("registry.witb.")))
+       | .attributes[]] | unique_by(.name) | sort_by(.name)
+    application_mode: single
+    file_name: attributes_gen.go
