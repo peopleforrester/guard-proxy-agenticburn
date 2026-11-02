@@ -8,13 +8,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"strings"
 	"sync"
 	"syscall"
@@ -38,14 +38,26 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-func freeAddr(t *testing.T) string {
-	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
+// anyPort is the --listen address every test passes: the binary binds a free loopback port itself.
+const anyPort = "127.0.0.1:0"
+
+// listeningOn matches the message the binary logs once it has bound its port.
+var listeningOn = regexp.MustCompile(`^listening on (127\.0\.0\.1:\d+),`)
+
+// announcedAddr is the address in the binary's "listening on" log line, or "" before it is written.
+func announcedAddr(output string) string {
+	for _, line := range strings.Split(output, "\n") {
+		var rec struct {
+			Message string `json:"message"`
+		}
+		if json.Unmarshal([]byte(line), &rec) != nil {
+			continue
+		}
+		if m := listeningOn.FindStringSubmatch(rec.Message); m != nil {
+			return m[1]
+		}
 	}
-	defer ln.Close()
-	return ln.Addr().String()
+	return ""
 }
 
 // proxy is a running binary.
@@ -73,11 +85,12 @@ func (b *syncBuffer) String() string {
 	return b.buf.String()
 }
 
-// start runs the binary with env on a free port and waits until it answers /healthz.
+// start runs the binary with env on a port it binds itself, reads that port from its log, and waits
+// until it answers /healthz there.
 func start(t *testing.T, env ...string) *proxy {
 	t.Helper()
-	p := &proxy{addr: freeAddr(t), output: &syncBuffer{}}
-	p.cmd = exec.Command(binary, "--listen", p.addr)
+	p := &proxy{output: &syncBuffer{}}
+	p.cmd = exec.Command(binary, "--listen", anyPort)
 	p.cmd.Env = env
 	p.cmd.Stdout, p.cmd.Stderr = p.output, p.output
 	if err := p.cmd.Start(); err != nil {
@@ -85,14 +98,22 @@ func start(t *testing.T, env ...string) *proxy {
 	}
 	deadline := time.Now().Add(10 * time.Second)
 	for {
-		if r, err := http.Get("http://" + p.addr + "/healthz"); err == nil {
-			r.Body.Close()
-			return p
+		if p.addr == "" {
+			p.addr = announcedAddr(p.output.String())
+		}
+		if p.addr != "" {
+			if r, err := http.Get("http://" + p.addr + "/healthz"); err == nil {
+				r.Body.Close()
+				return p
+			}
 		}
 		if time.Now().After(deadline) {
 			_ = p.cmd.Process.Kill()
 			_ = p.cmd.Wait()
-			t.Fatalf("never became healthy; output: %s", p.output.String())
+			if p.addr == "" {
+				t.Fatalf("announced no listening port; output: %s", p.output.String())
+			}
+			t.Fatalf("never became healthy on %s; output: %s", p.addr, p.output.String())
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
@@ -179,7 +200,7 @@ func TestSpendSurvivesAKillMidWindow(t *testing.T) {
 	}
 
 	// A second process on the same store while the first holds it would overwrite its tally.
-	second := exec.Command(binary, "--listen", freeAddr(t))
+	second := exec.Command(binary, "--listen", anyPort)
 	second.Env = env
 	if out, err := second.CombinedOutput(); err == nil || !strings.Contains(string(out), "held by another process") {
 		t.Errorf("a second process on a held store: %v, %s", err, out)
@@ -340,8 +361,7 @@ func TestConfigErrorsExitBeforeServing(t *testing.T) {
 		"unwritable store": {env: []string{agent, "SPEND_STORE_PATH=" + filepath.Join(readOnly, "spend.db")}, stderr: "permission denied"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			addr := freeAddr(t)
-			cmd := exec.Command(binary, append([]string{"--listen", addr}, tc.args...)...)
+			cmd := exec.Command(binary, append([]string{"--listen", anyPort}, tc.args...)...)
 			cmd.Env = append([]string{"PATH=" + os.Getenv("PATH"), "LLM_GUARD_URL=http://127.0.0.1:1"}, tc.env...)
 			var stderr bytes.Buffer
 			cmd.Stderr = &stderr
@@ -351,6 +371,47 @@ func TestConfigErrorsExitBeforeServing(t *testing.T) {
 			}
 			if !strings.HasPrefix(stderr.String(), "guard-proxy: ") || !strings.Contains(stderr.String(), tc.stderr) {
 				t.Errorf("stderr = %q, want it to name %q", stderr.String(), tc.stderr)
+			}
+		})
+	}
+}
+
+// TestStartReachesTheProxyAtThePortItBound: start hands the binary port 0 and talks to the port its log
+// announces. A port the test picked and released first could be taken by another process on a busy
+// host before the binary bound it, and that process would then answer /healthz and the test.
+func TestStartReachesTheProxyAtThePortItBound(t *testing.T) {
+	p := start(t, "AGENT_URL=http://127.0.0.1:1", "LLM_GUARD_URL=http://127.0.0.1:1",
+		"SPEND_STORE_PATH="+filepath.Join(t.TempDir(), "spend.db"))
+	defer p.kill(t)
+	if want := []string{binary, "--listen", "127.0.0.1:0"}; !reflect.DeepEqual(p.cmd.Args, want) {
+		t.Errorf("args = %q, want %q", p.cmd.Args, want)
+	}
+	if got := announcedAddr(p.output.String()); got != p.addr || strings.HasSuffix(got, ":0") {
+		t.Errorf("announced %q, start reached %q", got, p.addr)
+	}
+	r, err := http.Get("http://" + p.addr + "/healthz")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.Body.Close()
+	if r.StatusCode != http.StatusOK {
+		t.Errorf("/healthz = %d", r.StatusCode)
+	}
+}
+
+func TestAnnouncedAddr(t *testing.T) {
+	for name, tc := range map[string]struct{ output, want string }{
+		"nothing yet":      {"", ""},
+		"other lines only": {`{"level":"INFO","message":"telemetry off: set OTEL_EXPORTER_OTLP_ENDPOINT"}` + "\n", ""},
+		"announced": {`{"level":"INFO","message":"telemetry off"}` + "\n" +
+			`{"level":"INFO","message":"listening on 127.0.0.1:41234, agent http://a"}` + "\n", "127.0.0.1:41234"},
+		"line still being written": {`{"level":"INFO","message":"listening on 127.0.0.1:41`, ""},
+		"not a log line":           {"listening on 127.0.0.1:41234, agent http://a\n", ""},
+		"not at the start":         {`{"message":"was listening on 127.0.0.1:41234, agent http://a"}` + "\n", ""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := announcedAddr(tc.output); got != tc.want {
+				t.Errorf("announcedAddr = %q, want %q", got, tc.want)
 			}
 		})
 	}
