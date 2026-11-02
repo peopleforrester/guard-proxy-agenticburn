@@ -403,3 +403,12 @@ explicit `MODEL_NAME` still wins. Choices the issue left open:
   so `NewMeter` refuses it with a message naming `guard-proxy reset-spend` rather than reporting series
   that do not add up. The Go build is not deployed yet (the cutover is Unleash_an_Agent_Watch_It_Burn#738),
   so no live store hits this. `proxy.py` keeps the split in memory, as it does the tally.
+
+## 2026-11-02: tests that read GitHub live in e2e/, run only by the E2E command
+
+guard-proxy-agenticburn#41 asked for a test that fails when no comment on #39 names the cause of its hung
+mutation-check wait. That fact lives on GitHub, so the test reads it with `gh issue view` and needs `gh`
+and the network. It sits in `e2e/`, outside `testpaths`, so the Test command and CI, which must pass
+everywhere, never collect it; the E2E command runs `pytest e2e` after the conformance suite and fails
+with a named message when `gh` is missing or the call fails. "Names the cause" means one comment holds
+all of "by process name", "pgrep -f mutation_check.py" and "own command line", the run report's wording.
