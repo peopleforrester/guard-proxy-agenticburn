@@ -282,9 +282,7 @@ MUTANTS: list[tuple[str, str, str]] = [
 ]
 
 
-def _run_mutant(
-    source: str, work: Path, old: str, new: str, port_base: int
-) -> tuple[bool, float, str]:
+def _run_mutant(source: str, work: Path, old: str, new: str) -> tuple[bool, float, str]:
     """Run the suite against one mutant. Returns (caught, seconds, output tail on a harness error)."""
     with tempfile.TemporaryDirectory(dir=work) as d:
         (Path(d) / "proxy.py").write_text(source.replace(old, new))
@@ -303,7 +301,7 @@ def _run_mutant(
                 "no:cacheprovider",
                 str(ROOT / "conformance"),
             ],
-            env={**os.environ, "GUARD_PROXY_CMD": cmd, "CONFORMANCE_PORT_BASE": str(port_base)},
+            env={**os.environ, "GUARD_PROXY_CMD": cmd},
             cwd=ROOT,
             capture_output=True,
             text=True,
@@ -336,8 +334,7 @@ def main() -> int:
     started = time.monotonic()
     with ThreadPoolExecutor(max_workers=jobs) as pool:
         futures = {
-            pool.submit(_run_mutant, source, work, old, new, 10000 + 1000 * i): name
-            for i, (name, old, new) in enumerate(MUTANTS)
+            pool.submit(_run_mutant, source, work, old, new): name for name, old, new in MUTANTS
         }
         for done, fut in enumerate(as_completed(futures), 1):
             name = futures[fut]

@@ -257,8 +257,10 @@ GUARD_PROXY_CMD="$PWD/bin/guard-proxy --listen 127.0.0.1:{port}" uv run pytest  
 uv run python conformance/mutation_check.py           # negative control, see below
 ```
 
-`GUARD_PROXY_CMD` is the only adapter. `{port}` is replaced with a free loopback port, and the suite
-waits for `GET /guards` to answer.
+`GUARD_PROXY_CMD` is the only adapter. `{port}` is replaced with 0: the implementation binds a free
+loopback port itself and logs `listening on 127.0.0.1:<port>`, and the suite waits for `GET /guards` to
+answer there. A port the suite picked and released first could be taken by another process on a busy
+host before the implementation bound it.
 
 Both implementations run the whole suite. The span tests (`-m spans`) start a fake OTLP/HTTP collector
 and point the implementation at it with `OTEL_EXPORTER_OTLP_ENDPOINT`, so they read what production

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shlex
 import subprocess
 import sys
@@ -17,14 +18,18 @@ from typing import Any
 
 import pytest
 
-from fakes import FakeUpstream, Recorded, Reply, a2a_result, free_port, verdict
+from fakes import FakeUpstream, Recorded, Reply, a2a_result, verdict
 from otlp import Collector
 
 HERE = Path(__file__).resolve().parent
 DEFAULT_CMD = (
     f"{shlex.quote(sys.executable)} {shlex.quote(str(HERE / 'launch_python.py'))} {{port}}"
 )
-STARTUP_TIMEOUT = 15.0
+# A healthy start takes under a second. This bounds only a child that never comes up, so it sits far
+# above the stalls a swapping host has shown: four starts at once took over 15 s there.
+STARTUP_TIMEOUT = 60.0
+# The line an implementation logs once it has bound its port: the Go build's, and launch_python.py's.
+_LISTENING = re.compile(r"listening on 127\.0\.0\.1:(\d+)\b")
 GUARD_TOKEN = "conformance-token"
 SA_TOKEN = "conformance-sa-token"
 # The workshop-agent Agent the implementation reads its bound model from, and how long one read lasts.
@@ -62,31 +67,58 @@ def http(
 
 
 class Proxy:
-    """A running implementation under test, plus helpers for its HTTP surface and its log stream."""
+    """A running implementation under test, plus helpers for its HTTP surface and its log stream.
+
+    `{port}` in the command is 0: the implementation binds a free loopback port itself and announces it
+    in a log line, `listening on 127.0.0.1:<port>`. A port the harness picked and released first could
+    be taken by another process on a busy host before the implementation bound it, and that process
+    would then answer for the proxy."""
 
     def __init__(self, env: dict[str, str], log_path: Path) -> None:
-        self.port = free_port()
-        self.url = f"http://127.0.0.1:{self.port}"
+        self.port = 0
+        self.url = ""
         self.log_path = log_path
-        cmd = os.environ.get("GUARD_PROXY_CMD", DEFAULT_CMD).replace("{port}", str(self.port))
+        cmd = os.environ.get("GUARD_PROXY_CMD", DEFAULT_CMD).replace("{port}", "0")
         self._log = open(log_path, "wb")  # noqa: SIM115  (outlives __init__; closed in stop())
         self._proc = subprocess.Popen(
             shlex.split(cmd), env=env, stdout=self._log, stderr=subprocess.STDOUT
         )
         self._wait_ready()
 
+    def _announced_port(self) -> int:
+        """The port the implementation's log says it is listening on, or 0 before it says so."""
+        for line in self.log_path.read_text().splitlines():
+            try:
+                rec = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(rec, dict) and isinstance(rec.get("message"), str):
+                m = _LISTENING.match(rec["message"])
+                if m:
+                    return int(m.group(1))
+        return 0
+
     def _wait_ready(self) -> None:
         deadline = time.monotonic() + STARTUP_TIMEOUT
         while time.monotonic() < deadline:
             if self._proc.poll() is not None:
                 break
+            if not self.port:
+                self.port = self._announced_port()
+                if not self.port:
+                    time.sleep(0.05)
+                    continue
+                self.url = f"http://127.0.0.1:{self.port}"
             try:
                 if http("GET", self.url + "/guards", timeout=1).status == 200:
                     return
             except OSError:
                 time.sleep(0.05)
+        status = self._proc.poll()
         self.stop()
-        raise RuntimeError(f"proxy did not become ready; output:\n{self.log_path.read_text()}")
+        when = f"exited with {status}" if status is not None else f"after {STARTUP_TIMEOUT:g}s"
+        what = "did not answer GET /guards" if self.port else "announced no listening port"
+        raise RuntimeError(f"proxy {what} ({when}); output:\n{self.log_path.read_text()}")
 
     def get(self, path: str, headers: dict[str, str] | None = None) -> Response:
         return http("GET", self.url + path, headers=headers)

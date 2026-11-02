@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 import socket
 import threading
 import time
@@ -97,34 +96,20 @@ class FakeUpstream:
         self._server.server_close()
 
 
-# Concurrent suite runs (the mutation check) each get a private port range through
-# CONFORMANCE_PORT_BASE, set below the kernel's ephemeral range. Without it, a port this run released
-# (a proxy's, or an "unreachable" one) could be bound by another run's fake, and a test would talk to
-# the wrong process.
-_next_port = int(os.environ.get("CONFORMANCE_PORT_BASE", "0"))
-
-
-def free_port() -> int:
-    """A loopback port that is free now and, within a private range, never handed out twice."""
-    global _next_port
-    if not _next_port:
-        with socket.socket() as s:
-            s.bind(("127.0.0.1", 0))
-            return s.getsockname()[1]
-    for _ in range(1000):
-        port, _next_port = _next_port, _next_port + 1
-        with socket.socket() as s:
-            try:
-                s.bind(("127.0.0.1", port))
-            except OSError:
-                continue
-            return port
-    raise RuntimeError("no free port left in this run's CONFORMANCE_PORT_BASE range")
+# The sockets behind unreachable_url(), held until the run ends. A port released after it was picked
+# could be bound by another process on a busy host (another run's fake, say), and a test expecting a
+# refused connection would talk to that process instead.
+_unreachable: list[socket.socket] = []
 
 
 def unreachable_url() -> str:
-    """A loopback URL with nothing listening, so a connection is refused immediately."""
-    return f"http://127.0.0.1:{free_port()}"
+    """A loopback URL with nothing listening, so a connection is refused immediately.
+
+    Its port stays bound, never listening, for the rest of the run, so no other process can take it."""
+    s = socket.socket()
+    s.bind(("127.0.0.1", 0))
+    _unreachable.append(s)
+    return f"http://127.0.0.1:{s.getsockname()[1]}"
 
 
 def a2a_result(

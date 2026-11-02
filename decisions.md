@@ -403,3 +403,26 @@ explicit `MODEL_NAME` still wins. Choices the issue left open:
   so `NewMeter` refuses it with a message naming `guard-proxy reset-spend` rather than reporting series
   that do not add up. The Go build is not deployed yet (the cutover is Unleash_an_Agent_Watch_It_Burn#738),
   so no live store hits this. `proxy.py` keeps the split in memory, as it does the tally.
+
+## 2026-11-02: the implementation under test binds its own port and logs it
+
+Two conformance tests failed in a 12-minute run on a host with a load average of 23 to 36
+(guard-proxy-agenticburn#40) and passed on rerun. The cause was a port race, not a timeout. The harness
+picked a free port with `bind(0)`, released it, and passed it to the implementation through `{port}`.
+Other processes could take the port in between: another run's fake upstream, a Postgres started by
+another suite, or a client socket. Then that process answered the readiness `GET /guards` and the test.
+Eight concurrent copies of two test files reproduced it twice in 24 runs: one `/guards` read returned an
+A2A body, and one fake agent recorded another run's `GET /guards`.
+
+`{port}` is now 0. The implementation binds a free loopback port itself and logs
+`listening on 127.0.0.1:<port>`, which the Go build already logged and `launch_python.py` now logs. The
+harness reads the port from that line and fails loudly when none comes. `unreachable_url()` keeps its
+port bound, never listening, for the rest of the run, so it stays refused. Nothing releases a port
+before using it any more, so the per-run `CONFORMANCE_PORT_BASE` ranges the mutation check used are gone.
+Its bases of `10000 + 1000 * i` also reached the kernel's ephemeral range from the 23rd mutant on.
+
+Eight concurrent copies under the fix ran 80 times with no collision. Four starts in one burst still
+missed the 15 s `STARTUP_TIMEOUT` with no output, at a moment when the host had 32 GB in swap and 40 to
+60 % iowait. A healthy start takes 0.2 to 0.5 s (160 starts, eight at a time), so that limit now sits at
+60 s: it bounds only a child that never comes up, and its error says whether the child exited or the
+time ran out.

@@ -35,8 +35,11 @@ import proxy  # noqa: E402  (environment is read at import, so the path must be 
 
 
 def main() -> None:
-    port = int(sys.argv[1])
-    ThreadingHTTPServer(("127.0.0.1", port), proxy.Handler).serve_forever()
+    server = ThreadingHTTPServer(("127.0.0.1", int(sys.argv[1])), proxy.Handler)
+    # The suite passes port 0 and reads the bound port back from this line, as the Go build logs it.
+    host, port = server.server_address[:2]
+    proxy.log.info("listening on %s:%d, agent %s", host, port, proxy.AGENT_URL)
+    server.serve_forever()
 
 
 if __name__ == "__main__":
