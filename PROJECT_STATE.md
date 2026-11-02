@@ -130,3 +130,4 @@ _(append-only. Each phase transition adds one line, oldest first.)_
 - 2026-11-01 #33 implemented and verified locally (2.3) on agent/33-15515: question 1033's reset-spend; proxy.py and Go suites green, go test -race green
 - 2026-11-01 1.3 M5 approved by Michael; 2.1 starting T1
 - 2026-11-01 3.3 M5 promoted to main at 3407cef; #36 closed; status on Unleash#412
+- 2026-11-02 #38 implemented and verified locally (2.3) on agent/38-15774: proxy.py and Go suites 395/395, mutation check 56/56 caught
