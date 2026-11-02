@@ -217,8 +217,16 @@ other ModelConfig, such as `gateway-local-qwen3`. A read that fails keeps the ti
 Each change of binding is logged once, as `price_tier`, or as the warning `price_tier_unknown` for a
 ModelConfig with no tier. `/cost` reports the tier in effect as `tier`; spend already metered keeps the
 price it was metered at. `COST_PER_1K_IN` and `COST_PER_1K_OUT` each fix their price whatever the
-binding. `gen_ai.request.model` on the spans and the cost gauge still comes from `MODEL_TIER` or
-`MODEL_NAME`.
+binding.
+
+`gen_ai.request.model` follows the same binding (#38): the A2A `sanitize` span, the `/chat` root and
+`chat` spans report the model ID of the tier the request is priced at, such as
+`us.anthropic.claude-opus-4-8` for `bedrock-opus`, and `MODEL_NAME`, when set, is reported instead
+whatever the binding. The cost gauge `gen_ai.client.cost` has one series per `gen_ai.request.model`,
+each what that model has spent, so the series add up to `/cost`'s `usd`; query it with `sum:`, not
+`max:`, to read a cluster's bill. The model bound now always has a series, at $0 until it spends. The Go
+build keeps the split in its spend store, and refuses a store written before it with spend on it (clear
+it with `guard-proxy reset-spend`).
 
 Several overlap (`BUDGET_CAP_USD` and `COST_CAP_USD`, `INPUT_GUARD` and `INPUT_CLASSIFIER`). Some of
 that is history and some is a live toggle the workshop flips. Rationalizing them is part of the

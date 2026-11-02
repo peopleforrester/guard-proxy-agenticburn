@@ -1,5 +1,5 @@
-// ABOUTME: The Meter's file-backed store: a bbolt database on the pod's volume holding the cluster
-// ABOUTME: tally, each session's spend and the runtime cost cap, so a restart does not reset spend.
+// ABOUTME: The Meter's file-backed store: a bbolt database on the pod's volume holding the cluster tally,
+// ABOUTME: its split by model, each session's spend and the runtime cost cap, so a restart resets none.
 // SPDX-License-Identifier: Apache-2.0
 package spend
 
@@ -22,6 +22,7 @@ var (
 	meterBucket   = []byte("meter")
 	sessionBucket = []byte("sessions")
 	totalsKey     = []byte("totals")
+	modelsKey     = []byte("models")
 	costCapKey    = []byte("cost_cap")
 )
 
@@ -64,16 +65,20 @@ func OpenStore(path string) (*Store, error) {
 // Close releases the file.
 func (s *Store) Close() error { return s.db.Close() }
 
-// state is everything the store holds. costCap is set only when a runtime cap was stored.
+// state is everything the store holds. costCap is set only when a runtime cap was stored. unsplit is
+// spend with no split by model, which a store written before guard-proxy-agenticburn#38 holds: every
+// commit since writes the split with the tally, so no model can be named for it.
 type state struct {
 	totals     Totals
+	models     map[string]float64
+	unsplit    bool
 	session    map[sessionKey]float64
 	costCap    float64
 	costCapSet bool
 }
 
 func (s *Store) load() (state, error) {
-	st := state{session: map[sessionKey]float64{}}
+	st := state{models: map[string]float64{}, session: map[sessionKey]float64{}}
 	err := s.db.View(func(tx *bolt.Tx) error {
 		meter := tx.Bucket(meterBucket)
 		if raw := meter.Get(totalsKey); raw != nil {
@@ -81,6 +86,13 @@ func (s *Store) load() (state, error) {
 				return fmt.Errorf("totals: %w", err)
 			}
 		}
+		raw := meter.Get(modelsKey)
+		if raw != nil {
+			if err := json.Unmarshal(raw, &st.models); err != nil {
+				return fmt.Errorf("spend by model: %w", err)
+			}
+		}
+		st.unsplit = raw == nil && st.totals.USD != 0
 		if raw := meter.Get(costCapKey); raw != nil {
 			c, err := strconv.ParseFloat(string(raw), 64)
 			if err != nil {
@@ -106,14 +118,23 @@ func (s *Store) load() (state, error) {
 	return st, nil
 }
 
-// saveSpend writes the cluster tally and, when session is set, that session's spend, in one commit.
-func (s *Store) saveSpend(t Totals, session *sessionKey, sessionUSD float64) error {
+// saveSpend writes the cluster tally, its split by model and, when session is set, that session's spend,
+// in one commit.
+func (s *Store) saveSpend(t Totals, models map[string]float64, session *sessionKey, sessionUSD float64) error {
 	raw, err := json.Marshal(t)
 	if err != nil {
 		return err
 	}
+	byModel, err := json.Marshal(models)
+	if err != nil {
+		return err
+	}
 	err = s.db.Update(func(tx *bolt.Tx) error {
-		if err := tx.Bucket(meterBucket).Put(totalsKey, raw); err != nil {
+		meter := tx.Bucket(meterBucket)
+		if err := meter.Put(totalsKey, raw); err != nil {
+			return err
+		}
+		if err := meter.Put(modelsKey, byModel); err != nil {
 			return err
 		}
 		if session == nil {
@@ -150,10 +171,10 @@ type Cleared struct {
 	CostCapSet bool
 }
 
-// Reset clears the cluster tally, every session's spend and the runtime cost cap in one commit, so the
-// next process starts from $0 under COST_CAP_USD. It is the instructor's reset between deliveries, run
-// against a stopped proxy: no HTTP path reaches it, since /toggle has no auth and the agent's tool pod
-// can reach the proxy.
+// Reset clears the cluster tally and its split by model, every session's spend and the runtime cost cap
+// in one commit, so the next process starts from $0 under COST_CAP_USD. It is the instructor's reset
+// between deliveries, run against a stopped proxy: no HTTP path reaches it, since /toggle has no auth and
+// the agent's tool pod can reach the proxy.
 func (s *Store) Reset() (Cleared, error) {
 	st, err := s.load()
 	if err != nil {
@@ -161,7 +182,7 @@ func (s *Store) Reset() (Cleared, error) {
 	}
 	err = s.db.Update(func(tx *bolt.Tx) error {
 		meter := tx.Bucket(meterBucket)
-		for _, k := range [][]byte{totalsKey, costCapKey} {
+		for _, k := range [][]byte{totalsKey, modelsKey, costCapKey} {
 			if err := meter.Delete(k); err != nil {
 				return err
 			}

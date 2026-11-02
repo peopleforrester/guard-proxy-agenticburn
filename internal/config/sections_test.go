@@ -11,8 +11,7 @@ import (
 
 func TestSpendDefaults(t *testing.T) {
 	c := mustLoad(t, "", agentOnly)
-	want := Spend{BudgetCapUSD: 0.03, ModelTier: "haiku", ModelName: "us.anthropic.claude-haiku-4-5-20251001-v1:0",
-		CostPer1KIn: 0.001, CostPer1KOut: 0.005, StorePath: testStore}
+	want := Spend{BudgetCapUSD: 0.03, ModelTier: "haiku", CostPer1KIn: 0.001, CostPer1KOut: 0.005, StorePath: testStore}
 	if c.Spend != want {
 		t.Errorf("Spend = %+v, want %+v", c.Spend, want)
 	}
@@ -28,14 +27,14 @@ func TestSpendEnvironment(t *testing.T) {
 		t.Errorf("Spend = %+v", s)
 	}
 	// The tier is lowercased, and an unset price comes from it.
-	if s.ModelTier != "sonnet" || s.CostPer1KIn != 0.003 || s.CostPer1KOut != 0.015 || s.ModelName != "us.anthropic.claude-sonnet-4-6" {
+	if s.ModelTier != "sonnet" || s.CostPer1KIn != 0.003 || s.CostPer1KOut != 0.015 || s.ModelAt(s.ModelTier) != "us.anthropic.claude-sonnet-4-6" {
 		t.Errorf("Spend = %+v", s)
 	}
 }
 
 func TestSpendUnknownTierPricesAsHaikuAndNamesItself(t *testing.T) {
 	s := mustLoad(t, "", withBase(map[string]string{"MODEL_TIER": "mystery"})).Spend
-	if s.ModelTier != "mystery" || s.CostPer1KIn != 0.001 || s.CostPer1KOut != 0.005 || s.ModelName != "mystery" {
+	if s.ModelTier != "mystery" || s.CostPer1KIn != 0.001 || s.CostPer1KOut != 0.005 || s.ModelAt(s.ModelTier) != "mystery" {
 		t.Errorf("Spend = %+v", s)
 	}
 }
@@ -44,8 +43,36 @@ func TestSpendExplicitPricesWinOverTheTier(t *testing.T) {
 	s := mustLoad(t, "", withBase(map[string]string{
 		"MODEL_TIER": "opus", "COST_PER_1K_IN": "1", "COST_PER_1K_OUT": "0", "MODEL_NAME": "m",
 	})).Spend
-	if s.CostPer1KIn != 1 || s.CostPer1KOut != 0 || s.ModelName != "m" {
+	if s.CostPer1KIn != 1 || s.CostPer1KOut != 0 || s.ModelAt("opus") != "m" {
 		t.Errorf("Spend = %+v", s)
+	}
+}
+
+// The model a request reports is its bound tier's model, unless MODEL_NAME names one
+// (guard-proxy-agenticburn#38).
+func TestSpendModelAtTheBoundTier(t *testing.T) {
+	s := mustLoad(t, "", withBase(map[string]string{"MODEL_TIER": "nova"})).Spend
+	for tier, want := range map[string]string{
+		"nova":    "us.amazon.nova-pro-v1:0",
+		"haiku":   "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+		"sonnet":  "us.anthropic.claude-sonnet-4-6",
+		"opus":    "us.anthropic.claude-opus-4-8",
+		"mystery": "mystery", // a tier with no model id names itself, as MODEL_TIER does
+	} {
+		if got := s.ModelAt(tier); got != want {
+			t.Errorf("ModelAt(%q) = %q, want %q", tier, got, want)
+		}
+	}
+	for _, env := range []map[string]string{{"MODEL_NAME": "burrito-model"}, {"MODEL_NAME": "burrito-model", "MODEL_TIER": "opus"}} {
+		named := mustLoad(t, "", withBase(env)).Spend
+		for _, tier := range []string{"nova", "opus", "mystery"} {
+			if got := named.ModelAt(tier); got != "burrito-model" {
+				t.Errorf("with MODEL_NAME, ModelAt(%q) = %q", tier, got)
+			}
+		}
+	}
+	if got := mustLoad(t, "", withBase(map[string]string{"MODEL_NAME": ""})).Spend.ModelAt("opus"); got != "us.anthropic.claude-opus-4-8" {
+		t.Errorf("an empty MODEL_NAME reports %q, want the tier's model", got)
 	}
 }
 

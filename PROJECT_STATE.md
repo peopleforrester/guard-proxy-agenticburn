@@ -100,8 +100,14 @@ Asked by Unleash_an_Agent_Watch_It_Burn#130's design note (build piece 1). Both 
 start-up default and the price for a ModelConfig with no tier. Decision recorded 2026-11-02; conformance
 in `test_spend.py`. The workshop side (submodule bump, `verify/model_pin_check.py`) is a follow-up there.
 
+### Agent-task #38: name the bound model on the spans and the cost gauge
+Follow-up of #37. Both builds report `gen_ai.request.model` as the bound tier's model ID (an explicit
+`MODEL_NAME` still wins), and `gen_ai.client.cost` has one series per model, which sum to `/cost`.
+Decision recorded 2026-11-02; conformance in `test_telemetry.py`. The workshop's `max:` cost queries must
+move to `sum:` with the submodule repin, a follow-up on Unleash_an_Agent_Watch_It_Burn.
+
 ## Branch & Tests
-- Branch: agent/37-15713 (#37)
+- Branch: agent/38-15774 (#38)
 - Working tree: clean
 - Last CI: green on 3407cef (staging and main)
 

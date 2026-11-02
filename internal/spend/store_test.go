@@ -66,6 +66,64 @@ func TestSpendSurvivesReopeningTheStore(t *testing.T) {
 	}
 }
 
+func TestTheSplitByModelSurvivesReopeningTheStore(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "spend.db")
+	st := openStore(t, path)
+	m, err := NewMeter(0, st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, model := range []string{"nova-pro", "opus", "opus"} {
+		if _, err := m.Record(Usage{In: 1234, Out: 567}, Prices{In: 0.003, Out: 0.015}, model, ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	before := m.ByModel()
+
+	m, _ = reopen(t, st, path, 0)
+	got := m.ByModel()
+	// Exactly, as the tally: the series carry on from where the last process left them.
+	if len(got) != 2 || got["nova-pro"] != before["nova-pro"] || got["opus"] != before["opus"] {
+		t.Errorf("ByModel after reopening = %v, want %v", got, before)
+	}
+}
+
+// A store written before the split was kept holds spend no model can be named for. It is refused, so the
+// gauge never reports series that do not add up to /cost; reset-spend clears it.
+func TestAStoreWithSpendButNoSplitByModelFailsToLoad(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "spend.db")
+	st := openStore(t, path)
+	defer st.Close()
+	if err := st.db.Update(func(tx *bolt.Tx) error {
+		return tx.Bucket(meterBucket).Put(totalsKey, []byte(`{"Requests":1,"USD":0.5}`))
+	}); err != nil {
+		t.Fatal(err)
+	}
+	want := "spend store: reading " + path + ": $0.5 of spend is not split by model; clear it with guard-proxy reset-spend"
+	if _, err := NewMeter(0, st); err == nil || err.Error() != want {
+		t.Errorf("NewMeter = %v, want %q", err, want)
+	}
+	// The reset the message names clears it, and the store meters again from $0.
+	if c, err := st.Reset(); err != nil || c.Totals.USD != 0.5 {
+		t.Fatalf("Reset = %+v, %v", c, err)
+	}
+	if m, err := NewMeter(0, st); err != nil || m.Totals().USD != 0 {
+		t.Errorf("NewMeter after Reset = %v", err)
+	}
+}
+
+func TestACorruptSplitByModelFailsToLoad(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "spend.db")
+	st := openStore(t, path)
+	defer st.Close()
+	if err := st.db.Update(func(tx *bolt.Tx) error { return tx.Bucket(meterBucket).Put(modelsKey, []byte("[")) }); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewMeter(0, st); err == nil || !strings.HasPrefix(err.Error(), "spend store: reading "+path+": spend by model: ") {
+		t.Errorf("NewMeter = %v", err)
+	}
+}
+
 func TestABudgetTrippedBeforeReopeningStillHolds(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "spend.db")
 	p := Prices{In: 1}
@@ -179,7 +237,7 @@ func TestRecordReportsAFailedCommitAndKeepsTheSpendInMemory(t *testing.T) {
 	if err := st.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := m.Record(Usage{In: 1000}, Prices{In: 1}, "a"); err == nil || !strings.HasPrefix(err.Error(), "spend store: ") {
+	if _, err := m.Record(Usage{In: 1000}, Prices{In: 1}, testModel, "a"); err == nil || !strings.HasPrefix(err.Error(), "spend store: ") {
 		t.Errorf("Record on a closed store = %v", err)
 	}
 	if got := m.Capped("a", true, 1); got != Budget {
@@ -232,6 +290,9 @@ func TestResetClearsSpendSessionsAndTheRuntimeCostCap(t *testing.T) {
 	m, st = reopen(t, st, path, 25)
 	if got := m.Totals(); got != (Totals{}) {
 		t.Errorf("Totals after Reset = %+v, want zero", got)
+	}
+	if got := m.ByModel(); len(got) != 0 {
+		t.Errorf("ByModel after Reset = %v, want empty", got)
 	}
 	if got := m.SessionUSD("a"); got != 0 {
 		t.Errorf("SessionUSD(a) after Reset = %v, want 0", got)

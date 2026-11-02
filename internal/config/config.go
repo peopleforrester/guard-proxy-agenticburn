@@ -80,7 +80,8 @@ type Spend struct {
 	// ModelTier is the tier the cluster starts on, which prices a request until the workshop-agent's
 	// bound model has been read and whenever that names no tier (PricesAt). An unknown tier prices as haiku.
 	ModelTier string `yaml:"model_tier"`
-	// ModelName is the model id reported to telemetry; it defaults from the tier.
+	// ModelName, when set, is the model id reported to telemetry for every request, whatever the agent
+	// is bound to. Unset, each request reports the model of the tier it is priced at (ModelAt).
 	ModelName string `yaml:"model_name"`
 	// CostPer1KIn and CostPer1KOut are USD per 1,000 tokens at ModelTier; they default from it. One that
 	// is set is fixed, whatever tier a request is priced at.
@@ -145,7 +146,8 @@ var TierPrices = map[string]TierPrice{
 	"opus":   {0.005, 0.025},
 }
 
-// tierModelIDs is the Bedrock model id per tier, reported when ModelName is not set.
+// tierModelIDs is the Bedrock model id per tier, reported for a request priced at that tier when ModelName
+// is not set.
 var tierModelIDs = map[string]string{
 	"nova":   "us.amazon.nova-pro-v1:0",
 	"haiku":  "us.anthropic.claude-haiku-4-5-20251001-v1:0",
@@ -455,6 +457,18 @@ func (s Spend) PricesAt(tier string) TierPrice {
 	return p
 }
 
+// ModelAt is gen_ai.request.model for a request priced at tier: ModelName when set, else the tier's model
+// id, else the tier name itself (guard-proxy-agenticburn#38).
+func (s Spend) ModelAt(tier string) string {
+	if s.ModelName != "" {
+		return s.ModelName
+	}
+	if id, ok := tierModelIDs[tier]; ok {
+		return id
+	}
+	return tier
+}
+
 // modelConfigPrefix starts the name of each workshop ModelConfig that binds a tier: bedrock-<tier>.
 const modelConfigPrefix = "bedrock-"
 
@@ -468,17 +482,11 @@ func TierOf(modelConfig string) (string, bool) {
 	return tier, true
 }
 
-// resolve lowercases the tier and fills the prices and model name it implies, where none was set.
+// resolve lowercases the tier and fills the prices it implies, where none was set.
 func (s *Spend) resolve() {
 	s.ModelTier = strings.ToLower(s.ModelTier)
 	p := s.PricesAt(s.ModelTier)
 	s.CostPer1KIn, s.CostPer1KOut = p.In, p.Out
-	if s.ModelName == "" {
-		s.ModelName = tierModelIDs[s.ModelTier]
-		if s.ModelName == "" {
-			s.ModelName = s.ModelTier
-		}
-	}
 }
 
 // SplitList splits a comma-separated list, trimming each term and dropping empty ones. Case is kept.

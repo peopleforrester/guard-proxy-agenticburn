@@ -27,6 +27,9 @@ DEFAULT_CMD = (
 STARTUP_TIMEOUT = 15.0
 GUARD_TOKEN = "conformance-token"
 SA_TOKEN = "conformance-sa-token"
+# The workshop-agent Agent the implementation reads its bound model from, and how long one read lasts.
+AGENT_CR = "/apis/kagent.dev/v1alpha2/namespaces/agent/agents/workshop-agent"
+BINDING_TTL = 5.0
 
 # Only these are inherited from the caller. Everything the proxy reads is set explicitly per test, so a
 # variable in the developer's shell (an OTEL_* export, a stray COST_CAP_USD) cannot change a verdict.
@@ -194,6 +197,14 @@ def start_proxy(
     yield start
     for p in running:
         p.stop()
+
+
+def bound_agent(model_config: str | None) -> dict:
+    """The workshop-agent Agent, bound to `model_config`, or with no modelConfig at all for None."""
+    declarative: dict = {"tools": []}
+    if model_config is not None:
+        declarative["modelConfig"] = model_config
+    return {"kind": "Agent", "spec": {"declarative": declarative}}
 
 
 @pytest.fixture

@@ -4,15 +4,19 @@ from __future__ import annotations
 
 import http.client
 import json
+import time
 from urllib.parse import urlparse
 
 import pytest
 
+from conftest import AGENT_CR, BINDING_TTL, bound_agent
 from fakes import Reply, a2a_result
 
 pytestmark = pytest.mark.spans
 
 MODEL = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+NOVA = "us.amazon.nova-pro-v1:0"
+OPUS = "us.anthropic.claude-opus-4-8"
 UPSTREAM_TRACE = "0af7651916cd43dd8448eb211c80319c"
 UPSTREAM_SPAN = "b7ad6b7169203331"
 CAPTURE = {"OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT": "SPAN_ONLY"}
@@ -227,6 +231,98 @@ def test_cost_gauge_reports_the_cluster_spend(traced, agent):
     (value, attrs), *_ = collector.wait_for(latest, "a gen_ai.client.cost reading of the spend")
     assert value == pytest.approx(usd)
     assert attrs == {"gen_ai.request.model": MODEL, "gen_ai.provider.name": "aws.bedrock"}
+
+
+# --- The model the workshop-agent is bound to (guard-proxy-agenticburn#38) ------------------------
+# gen_ai.request.model follows the model each request is priced at: the bound ModelConfig's tier, read as
+# the pricing reads it, unless MODEL_NAME names a model. The cost gauge has one series per model, each
+# that model's spend, so a live swap moves new spend onto the new model's series.
+
+
+def _models(points) -> dict[str, float]:
+    """The gauge's points as USD by gen_ai.request.model, checking each carries the provider."""
+    assert all(a["gen_ai.provider.name"] == "aws.bedrock" for _, a in points)
+    return {a["gen_ai.request.model"]: v for v, a in points}
+
+
+def _gauge_matching(collector, usd_by_model: dict[str, float]):
+    def latest(_spans):
+        got = _models(collector.gauge("gen_ai.client.cost"))
+        if set(got) == set(usd_by_model) and all(
+            got[m] == pytest.approx(usd) for m, usd in usd_by_model.items()
+        ):
+            return got
+        return None
+
+    return collector.wait_for(latest, f"a gen_ai.client.cost reading of {usd_by_model}")
+
+
+def test_spans_report_the_bound_model_not_model_tier(traced, agent, kube_api):
+    kube_api.objects[AGENT_CR] = bound_agent("bedrock-opus")
+    p, collector = traced(**kube_api.env, MODEL_TIER="nova")
+    assert p.chat("one burrito").status == 200
+    assert p.a2a("two burritos").status == 200
+    spans = _by_name(collector, {"POST /chat", "chat", "sanitize"})
+    for name in ("POST /chat", "chat", "sanitize"):
+        assert spans[name]["attributes"]["gen_ai.request.model"] == OPUS, name
+
+
+def test_a_live_swap_moves_the_spans_and_the_new_spend_to_the_new_model(traced, agent, kube_api):
+    """The swap Unleash_an_Agent_Watch_It_Burn#130 teaches: Nova Pro to Opus on a running cluster."""
+    kube_api.objects[AGENT_CR] = bound_agent("bedrock-nova")
+    p, collector = traced(**kube_api.env, MODEL_TIER="nova")
+    nova_usd = p.chat("one burrito").json()["cost_usd"]
+    _gauge_matching(collector, {NOVA: nova_usd})
+    kube_api.objects[AGENT_CR] = bound_agent("bedrock-opus")
+    time.sleep(BINDING_TTL + 0.5)
+    opus_usd = p.chat("two burritos").json()["cost_usd"]
+    p.a2a("three burritos")
+    total = p.get("/cost").json()["usd"]
+    got = _gauge_matching(collector, {NOVA: nova_usd, OPUS: total - nova_usd})
+    # The series add up to the cluster's spend, which is what /cost and the console's counter show.
+    assert sum(got.values()) == pytest.approx(total)
+    assert opus_usd > nova_usd
+    chats = [s for s in collector.spans() if s["name"] == "chat"]
+    assert [s["attributes"]["gen_ai.request.model"] for s in chats] == [NOVA, OPUS]
+    sanitize = _by_name(collector, {"sanitize"})["sanitize"]
+    assert sanitize["attributes"]["gen_ai.request.model"] == OPUS
+
+
+def test_a_model_config_with_no_tier_reports_model_tiers_model(traced, agent, kube_api):
+    """It is priced at MODEL_TIER, so it is reported as MODEL_TIER's model, as before the binding."""
+    kube_api.objects[AGENT_CR] = bound_agent("gateway-local-qwen3")
+    p, collector = traced(**kube_api.env, MODEL_TIER="opus")
+    usd = p.chat("one burrito").json()["cost_usd"]
+    chat = _by_name(collector, {"chat"})["chat"]
+    assert chat["attributes"]["gen_ai.request.model"] == OPUS
+    _gauge_matching(collector, {OPUS: usd})
+
+
+def test_an_explicit_model_name_wins_over_the_bound_model(traced, agent, kube_api):
+    kube_api.objects[AGENT_CR] = bound_agent("bedrock-nova")
+    p, collector = traced(**kube_api.env, MODEL_TIER="nova", MODEL_NAME="burrito-model")
+    first = p.chat("one burrito").json()["cost_usd"]
+    kube_api.objects[AGENT_CR] = bound_agent("bedrock-opus")
+    time.sleep(BINDING_TTL + 0.5)
+    second = p.chat("two burritos").json()["cost_usd"]
+    chats = [s for s in collector.spans() if s["name"] == "chat"]
+    assert {s["attributes"]["gen_ai.request.model"] for s in chats} == {"burrito-model"}
+    # Still priced at the bound model; only the name reported is fixed.
+    assert second > first
+    _gauge_matching(collector, {"burrito-model": first + second})
+
+
+def test_the_bound_model_has_a_series_before_it_spends(traced, agent, kube_api):
+    """An idle cluster reads $0, as it did with one series, and a swap shows the new model at $0 until
+    it answers, beside the old model's spend."""
+    kube_api.objects[AGENT_CR] = bound_agent("bedrock-nova")
+    p, collector = traced(**kube_api.env, MODEL_TIER="haiku")
+    _gauge_matching(collector, {NOVA: 0.0})
+    usd = p.chat("one burrito").json()["cost_usd"]
+    _gauge_matching(collector, {NOVA: usd})
+    kube_api.objects[AGENT_CR] = bound_agent("bedrock-opus")
+    time.sleep(BINDING_TTL + 0.5)
+    _gauge_matching(collector, {NOVA: usd, OPUS: 0.0})
 
 
 def _records(p, event):

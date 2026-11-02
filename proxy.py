@@ -583,7 +583,8 @@ TIER_PRICES_PER_1K = {
 # Requests are priced at the tier the workshop-agent is bound to (bound_tier below); this prices them
 # until the Agent has been read, and whenever it names a ModelConfig with no tier.
 MODEL_TIER = os.environ.get("MODEL_TIER", "haiku").lower()
-# Full Bedrock model ID per tier — used as gen_ai.request.model when MODEL_NAME is not explicitly set.
+# Full Bedrock model ID per tier — reported as gen_ai.request.model for a request priced at that tier,
+# when MODEL_NAME is not explicitly set (request_model below).
 # IDs verified ACTIVE 2026-06-26; update when kagent ModelConfigs are bumped.
 _TIER_TO_MODEL_ID = {
     "nova":   "us.amazon.nova-pro-v1:0",
@@ -591,8 +592,9 @@ _TIER_TO_MODEL_ID = {
     "sonnet": "us.anthropic.claude-sonnet-4-6",
     "opus":   "us.anthropic.claude-opus-4-8",
 }
-# MODEL_NAME: explicit override via env var, then tier→model-ID mapping, then tier name as fallback.
-MODEL_NAME = os.environ.get("MODEL_NAME") or _TIER_TO_MODEL_ID.get(MODEL_TIER, MODEL_TIER)
+# MODEL_NAME: an explicit model name, reported on every span and cost series whatever the agent is bound
+# to. Unset or empty, each request reports the model of the tier it is priced at.
+MODEL_NAME = os.environ.get("MODEL_NAME") or None
 # Optional explicit per-1K overrides. Each one set fixes that price whatever the agent is bound to; an
 # unset one comes from the tier table above.
 _COST_PER_1K_IN = os.environ.get("COST_PER_1K_IN")
@@ -653,6 +655,12 @@ def bound_tier():
     return priced
 
 
+def request_model(tier):
+    """gen_ai.request.model for a request priced at tier: MODEL_NAME when set, else the tier's model ID,
+    else the tier name itself (guard-proxy-agenticburn#38)."""
+    return MODEL_NAME or _TIER_TO_MODEL_ID.get(tier, tier)
+
+
 def prices_per_1k(tier):
     """(USD per 1K input tokens, USD per 1K output tokens) at tier; an unknown tier prices as haiku."""
     row = TIER_PRICES_PER_1K.get(tier, TIER_PRICES_PER_1K["haiku"])
@@ -666,6 +674,9 @@ _cost_lock = threading.Lock()
 # cluster-wide _cost below is untouched; it is what /cost reports and what the $25 backstop uses.
 _session_cost = {}
 _cost = {"requests": 0, "input_tokens": 0, "output_tokens": 0, "total_tokens": 0, "usd": 0.0}
+# The same spend split by the model each request was reported as, for the cost gauge's series. Its values
+# sum to _cost["usd"].
+_cost_by_model = {}
 
 # Export the running spend as `gen_ai.client.cost` via OTLP, the SAME pipeline as the spans and the
 # standard token metric. Tokens are the standard `gen_ai.client.token.usage` (emitted by the kagent ADK
@@ -673,14 +684,21 @@ _cost = {"requests": 0, "input_tokens": 0, "output_tokens": 0, "total_tokens": 0
 # suffix UNDER the standard gen_ai namespace (NOT a custom metric tree). Datadog derives cost from tokens
 # in LLM Observability anyway; this metric is the pre-computed visual for the live counter. Attribute is
 # the standard gen_ai.request.model.
+#
+# One series per model (guard-proxy-agenticburn#38): the workshop swaps the model live, so each series is
+# what requests reported as that model have spent, and the series sum to the cluster's spend. The model the
+# agent is bound to now always has a series, at 0 until it spends, so an idle cluster still reads $0.
 if _meter is not None:
     def _observe_cost(_options):
+        bound = request_model(bound_tier())
         with _cost_lock:
+            by_model = dict(_cost_by_model)
+        by_model.setdefault(bound, 0.0)
+        for model, usd in by_model.items():
             # gen_ai.provider.name MUST be aws.bedrock for a Bedrock model (OTel GenAI semconv); without
             # it Datadog tags the cost metric provider as "N/A". The Collector also stamps this as a safety
             # net, but set it at the source too.
-            yield Observation(_cost["usd"], {"gen_ai.request.model": MODEL_NAME,
-                                             "gen_ai.provider.name": "aws.bedrock"})
+            yield Observation(usd, {"gen_ai.request.model": model, "gen_ai.provider.name": "aws.bedrock"})
     _meter.create_observable_gauge(
         "gen_ai.client.cost", callbacks=[_observe_cost], unit="USD",
         description="Estimated Bedrock spend (USD) for this cluster, derived from token usage.")
@@ -829,7 +847,8 @@ def moderate(text):
 def record_usage(resp, session=""):
     """Pull kagent token usage from an A2A response and add it to the running cost tally.
 
-    Priced at the tier the agent is bound to now. Returns the USD it added, 0.0 for a reply without usage."""
+    Priced at the tier the agent is bound to now, and added to that tier's model in the cost gauge. Returns
+    the USD it added, 0.0 for a reply without usage."""
     result = resp.get("result", {}) if isinstance(resp, dict) else {}
 
     # Live kagent 0.9.9 emits the token usage at result.metadata.kagent_usage_metadata (confirmed on a
@@ -847,7 +866,9 @@ def record_usage(resp, session=""):
         return 0.0
     pin = int(meta.get("promptTokenCount", 0) or 0)
     pout = int(meta.get("candidatesTokenCount", 0) or 0)
-    price_in, price_out = prices_per_1k(bound_tier())
+    tier = bound_tier()
+    model = request_model(tier)
+    price_in, price_out = prices_per_1k(tier)
     spent = (pin / 1000.0) * price_in + (pout / 1000.0) * price_out
     with _cost_lock:
         _cost["requests"] += 1
@@ -855,6 +876,7 @@ def record_usage(resp, session=""):
         _cost["output_tokens"] += pout
         _cost["total_tokens"] += int(meta.get("totalTokenCount", pin + pout) or 0)
         _cost["usd"] += spent
+        _cost_by_model[model] = _cost_by_model.get(model, 0.0) + spent
         if session:
             _session_cost[session] = _session_cost.get(session, 0.0) + spent
     return spent
@@ -1224,7 +1246,8 @@ class Handler(BaseHTTPRequestHandler):
         with san_cm as san_span:
             if san_span is not None:
                 san_span.set_attribute("gen_ai.operation.name", "chat")
-                san_span.set_attribute("gen_ai.request.model", MODEL_NAME)
+                # The model the agent is bound to now (guard-proxy-agenticburn#38), as the reply is priced.
+                san_span.set_attribute("gen_ai.request.model", request_model(bound_tier()))
                 # Datadog LLM Observability reads INPUT/OUTPUT from gen_ai.input.messages /
                 # gen_ai.output.messages span ATTRIBUTES (JSON-encoded messages array with parts schema).
                 # The older gen_ai.content.prompt/completion event names are not recognised under
@@ -1551,11 +1574,14 @@ class Handler(BaseHTTPRequestHandler):
         # Annotate the outer HTTP span (the APM trace root created by OTel auto-instrumentation)
         # with gen_ai attributes so Datadog LLM Obs trace list preview shows content. The chat child
         # span below carries the same attributes for span-level drill-down.
+        # gen_ai.request.model is the model the agent is bound to as the turn reaches it
+        # (guard-proxy-agenticburn#38); each attempt is still priced and gauged at its own.
+        _turn_model = request_model(bound_tier()) if _OTEL_AVAILABLE else None
         if _OTEL_AVAILABLE:
             _root_span = trace.get_current_span()
             if _root_span.is_recording():
                 _root_span.set_attribute("gen_ai.operation.name", "chat")
-                _root_span.set_attribute("gen_ai.request.model", MODEL_NAME)
+                _root_span.set_attribute("gen_ai.request.model", _turn_model)
                 if _CAPTURE_CONTENT:
                     _root_span.set_attribute("gen_ai.input.messages", _genai_messages(prompt))
 
@@ -1567,7 +1593,7 @@ class Handler(BaseHTTPRequestHandler):
         with chat_cm as chat_span:
             if chat_span is not None:
                 chat_span.set_attribute("gen_ai.operation.name", "chat")
-                chat_span.set_attribute("gen_ai.request.model", MODEL_NAME)
+                chat_span.set_attribute("gen_ai.request.model", _turn_model)
                 if _CAPTURE_CONTENT:
                     chat_span.set_attribute("gen_ai.input.messages", _genai_messages(prompt))
             # Every model call is billed, so each attempt is metered as it returns, not only the reply

@@ -3,6 +3,23 @@
 What each guard-proxy build a consumer can pin changes, newest first, naming its commit. The workshop
 repo repins its `gitops/ai-layer/guard-proxy` submodule from these entries.
 
+## 2026-11-02: spans and the cost gauge name the model the workshop-agent is bound to
+
+Both builds (guard-proxy-agenticburn#38). Repin the workshop's `gitops/ai-layer/guard-proxy` submodule to
+this entry's commit (or a later one) to pick it up, **in the same change as the dashboard queries below**.
+
+- `gen_ai.request.model` on the A2A `sanitize` span and the `/chat` root and `chat` spans is the model ID
+  of the tier the request is priced at, so after a live swap to `bedrock-opus` Datadog shows
+  `us.anthropic.claude-opus-4-8`, not `us.amazon.nova-pro-v1:0`. An explicit `MODEL_NAME` still wins.
+- `gen_ai.client.cost` has one series per `gen_ai.request.model`, each that model's spend; the series sum
+  to `/cost`'s `usd`. The bound model always has a series, at $0 until it spends.
+- **Breaking for `max:` queries.** A query that reads one cluster's bill as
+  `max:gen_ai.client.cost{...} by {kube_cluster_name}` shows only the biggest model's share once a cluster
+  has swapped. The workshop's `infra/datadog-fleet/leaderboard.yaml` (C4, twice) and
+  `infra/datadog-fleet/dashboard.yaml` use it; change them to `sum:`. `sum:` queries are unaffected.
+- Go build only: the spend store keeps the split by model. A store written by an earlier build with spend
+  on it fails startup with a message naming `guard-proxy reset-spend`, which clears it.
+
 ## 2026-11-02: each request is priced at the model the workshop-agent is bound to
 
 Both builds (guard-proxy-agenticburn#37, asked by Unleash_an_Agent_Watch_It_Burn#130). Repin the
@@ -17,8 +34,8 @@ It needs no new RBAC: `guard-proxy-reader` already grants get on the `workshop-a
   the last tier read. Each change of binding is logged once as `price_tier`.
 - `/cost`'s `tier` is the tier in effect, not `MODEL_TIER`. `COST_PER_1K_IN` and `COST_PER_1K_OUT` still
   fix their price whatever the binding.
-- Not changed: `gen_ai.request.model` on the spans and on `gen_ai.client.cost` still follows `MODEL_TIER`
-  or `MODEL_NAME`.
+- Not changed in this entry: `gen_ai.request.model` on the spans and on `gen_ai.client.cost` still
+  follows `MODEL_TIER` or `MODEL_NAME` (changed by the entry above).
 - Not yet checked on a live cluster: a swap from `bedrock-nova` to `bedrock-haiku` priced at Haiku rates.
 
 ## 2026-11-01: `guard-proxy reset-spend` clears the Go build's spend store between deliveries

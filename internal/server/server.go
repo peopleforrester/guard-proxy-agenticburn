@@ -58,7 +58,6 @@ type Server struct {
 	tracer      trace.Tracer
 	capture     bool
 	peerService string
-	modelName   string
 
 	mu     sync.Mutex
 	guards config.Guards
@@ -110,7 +109,6 @@ func New(cfg config.Config, log *slog.Logger, store *spend.Store) (*Server, erro
 		tracer:      otel.Tracer(instrumentation),
 		capture:     cfg.Telemetry.CaptureContent,
 		peerService: cfg.Telemetry.PeerService,
-		modelName:   cfg.Spend.ModelName,
 
 		guards: cfg.Guards,
 		ctxGen: map[string]int{},
@@ -334,8 +332,9 @@ func (s *Server) meterValue(ctx context.Context, v any, session string) (spend.U
 	if !ok {
 		return u, 0, false, nil
 	}
-	p := s.prices.PricesAt(s.binding.tier(ctx))
-	spent, err := s.meter.Record(u, spend.Prices{In: p.In, Out: p.Out}, session)
+	tier := s.binding.tier(ctx)
+	p := s.prices.PricesAt(tier)
+	spent, err := s.meter.Record(u, spend.Prices{In: p.In, Out: p.Out}, s.prices.ModelAt(tier), session)
 	return u, spent, true, err
 }
 
@@ -350,7 +349,7 @@ func (s *Server) storeError(ctx context.Context, err error) {
 func (s *Server) sanitize(ctx context.Context, w http.ResponseWriter, r *http.Request, g config.Guards,
 	id json.RawMessage, text string, raw []byte) (body []byte, ok bool) {
 	ctx, span := s.tracer.Start(ctx, "sanitize", trace.WithSpanKind(trace.SpanKindInternal),
-		trace.WithAttributes(append(s.genAI(), s.inputMessages(text)...)...))
+		trace.WithAttributes(append(s.genAI(s.boundModel(ctx)), s.inputMessages(text)...)...))
 	defer span.End()
 	if text != "" {
 		if blocked := s.inputGuards(ctx, g, text); blocked != "" {

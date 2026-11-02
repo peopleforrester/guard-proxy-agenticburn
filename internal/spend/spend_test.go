@@ -77,9 +77,12 @@ func newMeter(t *testing.T, envCap float64) *Meter {
 	return m
 }
 
+// testModel is the model the record helper meters each call as.
+const testModel = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+
 func record(t *testing.T, m *Meter, p Prices, u Usage, session string) {
 	t.Helper()
-	if _, err := m.Record(u, p, session); err != nil {
+	if _, err := m.Record(u, p, testModel, session); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -104,11 +107,11 @@ func TestMeterTalliesClusterAndSession(t *testing.T) {
 func TestEachCallIsPricedAtItsOwnPrices(t *testing.T) {
 	// The agent swapped from Nova Pro to Opus between two calls (guard-proxy-agenticburn#37).
 	m := newMeter(t, 0)
-	nova, err := m.Record(Usage{In: 1000, Out: 1000}, Prices{In: 0.0008, Out: 0.0032}, "a")
+	nova, err := m.Record(Usage{In: 1000, Out: 1000}, Prices{In: 0.0008, Out: 0.0032}, "nova-pro", "a")
 	if err != nil {
 		t.Fatal(err)
 	}
-	opus, err := m.Record(Usage{In: 1000, Out: 1000}, Prices{In: 0.005, Out: 0.025}, "a")
+	opus, err := m.Record(Usage{In: 1000, Out: 1000}, Prices{In: 0.005, Out: 0.025}, "opus", "a")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -120,6 +123,31 @@ func TestEachCallIsPricedAtItsOwnPrices(t *testing.T) {
 	}
 	if got := m.SessionUSD("a"); math.Abs(got-0.034) > 1e-12 {
 		t.Errorf("SessionUSD(a) = %v, want 0.034", got)
+	}
+}
+
+func TestSpendIsSplitByTheModelEachCallWasMeteredAs(t *testing.T) {
+	// The cost gauge's series, one per model (guard-proxy-agenticburn#38).
+	m := newMeter(t, 0)
+	if got := m.ByModel(); len(got) != 0 {
+		t.Errorf("ByModel of a fresh meter = %v, want empty", got)
+	}
+	for _, c := range []struct {
+		model string
+		p     Prices
+	}{{"nova-pro", Prices{In: 0.0008, Out: 0.0032}}, {"opus", Prices{In: 0.005, Out: 0.025}}, {"nova-pro", Prices{In: 0.0008, Out: 0.0032}}} {
+		if _, err := m.Record(Usage{In: 1000, Out: 1000}, c.p, c.model, ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got := m.ByModel()
+	if len(got) != 2 || math.Abs(got["nova-pro"]-0.008) > 1e-12 || math.Abs(got["opus"]-0.03) > 1e-12 {
+		t.Errorf("ByModel = %v, want nova-pro 0.008 and opus 0.03", got)
+	}
+	// A copy: the caller cannot change the meter's split.
+	got["opus"] = 99
+	if m.ByModel()["opus"] == 99 {
+		t.Error("ByModel returned the meter's own map")
 	}
 }
 

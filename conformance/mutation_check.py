@@ -133,8 +133,28 @@ MUTANTS: list[tuple[str, str, str]] = [
     ),
     (
         "pricing ignores the bound model",
-        "    price_in, price_out = prices_per_1k(bound_tier())",
+        "    price_in, price_out = prices_per_1k(tier)",
         "    price_in, price_out = prices_per_1k(MODEL_TIER)",
+    ),
+    (
+        "spans and the gauge report MODEL_TIER's model",
+        "    return MODEL_NAME or _TIER_TO_MODEL_ID.get(tier, tier)",
+        "    return MODEL_NAME or _TIER_TO_MODEL_ID.get(MODEL_TIER, MODEL_TIER)",
+    ),
+    (
+        "the bound model no longer gives way to MODEL_NAME",
+        "    return MODEL_NAME or _TIER_TO_MODEL_ID.get(tier, tier)",
+        "    return _TIER_TO_MODEL_ID.get(tier, tier)",
+    ),
+    (
+        "the gauge's series ignore the model each request was priced at",
+        "    model = request_model(tier)\n",
+        "    model = request_model(MODEL_TIER)\n",
+    ),
+    (
+        "the bound model has no series before it spends",
+        "        by_model.setdefault(bound, 0.0)\n",
+        "",
     ),
     (
         "an unreadable agent resets the tier",

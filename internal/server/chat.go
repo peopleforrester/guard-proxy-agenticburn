@@ -185,9 +185,12 @@ func (s *Server) chatTurn(ctx context.Context, w http.ResponseWriter, r *http.Re
 	// The turn reaches the model, so the root and a gen_ai "chat" span carry what Datadog LLM Observability
 	// reads: the root for the trace list preview, the chat span for drill-down. The forwards parent onto
 	// the chat span, and so do the logs from here on.
-	root.SetAttributes(append(s.genAI(), s.inputMessages(prompt)...)...)
+	// The model is the one the agent is bound to as the turn reaches it; each attempt is still priced and
+	// gauged at its own.
+	model := s.boundModel(ctx)
+	root.SetAttributes(append(s.genAI(model), s.inputMessages(prompt)...)...)
 	ctx, chatSpan := s.tracer.Start(ctx, "chat", trace.WithSpanKind(trace.SpanKindInternal),
-		trace.WithAttributes(append(s.genAI(), s.inputMessages(prompt)...)...))
+		trace.WithAttributes(append(s.genAI(model), s.inputMessages(prompt)...)...))
 	defer chatSpan.End()
 
 	// Every model call is billed, so each attempt is metered as it returns, not only the reply the turn

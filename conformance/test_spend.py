@@ -6,7 +6,7 @@ import time
 
 import pytest
 
-from conftest import SA_TOKEN, a2a_request
+from conftest import AGENT_CR, BINDING_TTL, SA_TOKEN, a2a_request, bound_agent
 from fakes import Reply, a2a_result
 
 # Haiku list price: $0.001/1K in, $0.005/1K out. The default agent reply is 100 in / 50 out.
@@ -94,8 +94,6 @@ def test_explicit_price_overrides_tier(start_proxy, agent):
 # is priced at the tier the Agent names, read through the API with the badges' service account token.
 # The read is cached as briefly as the badges' (5 s), so a swap is priced within that window.
 
-AGENT_CR = "/apis/kagent.dev/v1alpha2/namespaces/agent/agents/workshop-agent"
-BINDING_TTL = 5.0
 # USD for the 1,000 in and 1,000 out tokens _reply_costing answers with by default, per tier.
 TIER_USD = {
     "nova": 0.0008 + 0.0032,
@@ -103,14 +101,6 @@ TIER_USD = {
     "sonnet": 0.003 + 0.015,
     "opus": 0.005 + 0.025,
 }
-
-
-def bound_agent(model_config: str | None) -> dict:
-    """The workshop-agent Agent, bound to `model_config`, or with no modelConfig at all for None."""
-    declarative: dict = {"tools": []}
-    if model_config is not None:
-        declarative["modelConfig"] = model_config
-    return {"kind": "Agent", "spec": {"declarative": declarative}}
 
 
 @pytest.mark.parametrize("tier", ["nova", "haiku", "sonnet", "opus"])

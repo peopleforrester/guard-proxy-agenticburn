@@ -52,11 +52,17 @@ func (s *Server) serverSpan(w http.ResponseWriter, r *http.Request, uri string) 
 }
 
 // genAI is the gen_ai attributes every LLM-kind span carries, so Datadog LLM Observability classifies it.
-func (s *Server) genAI() []attribute.KeyValue {
+func (s *Server) genAI(model string) []attribute.KeyValue {
 	return []attribute.KeyValue{
 		semconv.GenAiOperationNameKey.String(semconv.GenAiOperationNameChat),
-		semconv.GenAiRequestModelKey.String(s.modelName),
+		semconv.GenAiRequestModelKey.String(model),
 	}
+}
+
+// boundModel is gen_ai.request.model for a request made now: the model of the tier the agent is bound to,
+// as the request is priced, or MODEL_NAME when set (guard-proxy-agenticburn#38).
+func (s *Server) boundModel(ctx context.Context) string {
+	return s.prices.ModelAt(s.binding.tier(ctx))
 }
 
 // inputMessages is gen_ai.input.messages for text, when content capture is on.
@@ -161,6 +167,11 @@ func decision(ctx context.Context, value string) {
 
 // registerCostGauge exports the running spend as gen_ai.client.cost, beside the standard token metric
 // the agent emits. The GenAI conventions define no monetary metric, so cost is a suffix under gen_ai.
+//
+// It has one series per model (guard-proxy-agenticburn#38): the workshop swaps the model live, so each
+// series is what requests reported as that model have spent, and the series sum to the cluster's spend.
+// The model the agent is bound to now always has a series, at 0 until it spends, so an idle cluster
+// still reads $0.
 func (s *Server) registerCostGauge() error {
 	m := otel.Meter(instrumentation)
 	gauge, err := m.Float64ObservableGauge("gen_ai.client.cost", metric.WithUnit("USD"),
@@ -168,10 +179,16 @@ func (s *Server) registerCostGauge() error {
 	if err != nil {
 		return err
 	}
-	attrs := metric.WithAttributes(semconv.GenAiRequestModelKey.String(s.modelName),
-		semconv.GenAiProviderNameKey.String(semconv.GenAiProviderNameAWSBedrock))
-	_, err = m.RegisterCallback(func(_ context.Context, o metric.Observer) error {
-		o.ObserveFloat64(gauge, s.meter.Totals().USD, attrs)
+	provider := semconv.GenAiProviderNameKey.String(semconv.GenAiProviderNameAWSBedrock)
+	_, err = m.RegisterCallback(func(ctx context.Context, o metric.Observer) error {
+		byModel := s.meter.ByModel()
+		bound := s.boundModel(ctx)
+		if _, spent := byModel[bound]; !spent {
+			byModel[bound] = 0
+		}
+		for model, usd := range byModel {
+			o.ObserveFloat64(gauge, usd, metric.WithAttributes(semconv.GenAiRequestModelKey.String(model), provider))
+		}
 		return nil
 	}, gauge)
 	return err

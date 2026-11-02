@@ -371,5 +371,35 @@ price each request at the tier its ModelConfig names. Choices the issue left ope
   overrode `MODEL_TIER`.
 - **`/cost`'s `tier` reports the tier in effect**, so the counter and the price agree.
 - **Out of scope:** `gen_ai.request.model` on the spans and the cost gauge still follows `MODEL_TIER` or
-  `MODEL_NAME`; filed as a follow-up. The workshop's submodule bump and its `verify/model_pin_check.py`
+  `MODEL_NAME`; filed as a follow-up, guard-proxy-agenticburn#38 (below). The workshop's submodule bump and its `verify/model_pin_check.py`
   extension are in Unleash_an_Agent_Watch_It_Burn, outside this repo.
+
+## 2026-11-02: gen_ai.request.model follows the binding, and the cost gauge has one series per model
+
+guard-proxy-agenticburn#38, from #37: after a live swap from `bedrock-nova` to `bedrock-opus`, Datadog
+attributed Opus calls to `us.amazon.nova-pro-v1:0`. Both builds now report, as `gen_ai.request.model`,
+the model ID of the tier each request is priced at (`_TIER_TO_MODEL_ID` / `tierModelIDs`), and an
+explicit `MODEL_NAME` still wins. Choices the issue left open:
+
+- **One series per model on `gen_ai.client.cost`**, the issue's own example. Each series is the spend
+  metered as that model, so the series sum to `/cost`'s `usd`. The alternative, one cumulative series
+  tagged with the model bound now, would keep `max:` queries working but credit Opus with every dollar
+  Nova spent before the swap, which is the misattribution the issue reports, reversed. Cost: the
+  workshop's leaderboard and fleet dashboard read a cluster's bill as `max:... by {kube_cluster_name}`,
+  which would show only the biggest model's share after a swap; they must move to `sum:` with the
+  submodule repin, filed on Unleash_an_Agent_Watch_It_Burn and called out in the release notes.
+- **The bound model always has a series**, at 0 until it spends. With one series an idle cluster read
+  $0; without this it would have no series at all and an empty leaderboard cell. The gauge callback reads
+  the binding through the same 5-second cache, so it adds at most one Agent read per export interval.
+- **A request's spans name the model as the request starts.** The `/chat` root and `chat` spans take it
+  once per turn; each attempt is still priced, and added to its model's series, at the tier it was
+  metered at, so a swap landing mid-turn moves the spend correctly even if the span names the earlier
+  model.
+- **A ModelConfig with no tier reports `MODEL_TIER`'s model**, as it is priced at `MODEL_TIER`; the
+  `price_tier_unknown` warning already flags it. Reporting the ModelConfig name would put a model on the
+  span that the price does not match.
+- **The Go store keeps the split** under a `models` key beside `totals`, written in the same commit. A
+  store with spend but no split was written before this change, and no model can be named for that spend,
+  so `NewMeter` refuses it with a message naming `guard-proxy reset-spend` rather than reporting series
+  that do not add up. The Go build is not deployed yet (the cutover is Unleash_an_Agent_Watch_It_Burn#738),
+  so no live store hits this. `proxy.py` keeps the split in memory, as it does the tally.
