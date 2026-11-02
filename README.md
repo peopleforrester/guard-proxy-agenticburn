@@ -119,8 +119,8 @@ spend:
   budget_cap_usd: 0.03     # default; the per-session cap the budget guard enforces
   rate_limit_rpm: 0        # default, off; model-bound requests per minute, both paths
   rate_limit_session_rpm: 0   # default, off; per /chat conversation, checked first
-  model_tier: haiku        # default; nova, haiku, sonnet or opus prices the tally
-  # model_name, cost_per_1k_in and cost_per_1k_out default from the tier
+  model_tier: haiku        # default; nova, haiku, sonnet or opus; the start-up tier (see below)
+  # model_name, cost_per_1k_in and cost_per_1k_out default from the tier; a price set here is fixed
   store_path: /var/lib/guard-proxy/spend.db   # required (or SPEND_STORE_PATH); on the pod's volume
 feed:
   enabled: false           # default; GET /prompts records nothing until this is on
@@ -208,6 +208,18 @@ whole kitchen is closed and stamps `witb.guard.decision` as `cost_cap`, since Re
 per-session budget cap's reply offers Reset and stamps `budget`. The cluster-wide cap answers first when
 both have tripped.
 
+Each request is priced at the model the `workshop-agent` Agent is bound to (#37), so a live patch of its
+`spec.declarative.modelConfig`, which Argo CD leaves out of its diff, needs no `MODEL_TIER` change.
+guard-proxy reads the Agent with the same get-only token as `/controls`, at most every 5 seconds, and a
+ModelConfig `bedrock-<tier>` prices at that tier: `bedrock-nova`, `bedrock-haiku`, `bedrock-sonnet` or
+`bedrock-opus`. `MODEL_TIER` prices requests until the Agent has been read, and whenever it names any
+other ModelConfig, such as `gateway-local-qwen3`. A read that fails keeps the tier the last read found.
+Each change of binding is logged once, as `price_tier`, or as the warning `price_tier_unknown` for a
+ModelConfig with no tier. `/cost` reports the tier in effect as `tier`; spend already metered keeps the
+price it was metered at. `COST_PER_1K_IN` and `COST_PER_1K_OUT` each fix their price whatever the
+binding. `gen_ai.request.model` on the spans and the cost gauge still comes from `MODEL_TIER` or
+`MODEL_NAME`.
+
 Several overlap (`BUDGET_CAP_USD` and `COST_CAP_USD`, `INPUT_GUARD` and `INPUT_CLASSIFIER`). Some of
 that is history and some is a live toggle the workshop flips. Rationalizing them is part of the
 rewrite.
@@ -251,7 +263,7 @@ The suite covers:
 - both input stages, the output guard, and fail-closed against an unreachable, erroring, malformed or
   slow scanner;
 - the rate limit, the cluster-wide cost cap and the per-session budget cap, and the order they run in;
-- token metering and tier pricing;
+- token metering, and pricing at the model the Agent is bound to, through a live swap;
 - the self-heal retries;
 - the `/chat` task poll and its `tasks/cancel` on a failed or timed-out forward;
 - the moderated prompt feed;

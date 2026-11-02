@@ -47,7 +47,8 @@ type Server struct {
 	limiter    *spend.Limiter
 	envCostCap float64
 	budgetCap  float64
-	tier       string
+	prices     config.Spend
+	binding    *binding
 
 	feed           *feed.Feed
 	consoleOrigins map[string]bool
@@ -71,7 +72,7 @@ type Server struct {
 // New builds a Server from a validated configuration, metering into store. It fails when the spend
 // state in store cannot be read.
 func New(cfg config.Config, log *slog.Logger, store *spend.Store) (*Server, error) {
-	meter, err := spend.NewMeter(spend.Prices{In: cfg.Spend.CostPer1KIn, Out: cfg.Spend.CostPer1KOut}, cfg.Spend.CostCapUSD, store)
+	meter, err := spend.NewMeter(cfg.Spend.CostCapUSD, store)
 	if err != nil {
 		return nil, err
 	}
@@ -80,6 +81,7 @@ func New(cfg config.Config, log *slog.Logger, store *spend.Store) (*Server, erro
 	for _, o := range cfg.CORS.ConsoleOrigins {
 		origins[o] = true
 	}
+	cluster := controls.NewReader(cfg.Controls.APIURL, cfg.Controls.TokenPath, cfg.Controls.CAPath)
 	s := &Server{
 		agentURL:     cfg.Agent.URL,
 		agentTimeout: cfg.Agent.Timeout.Duration,
@@ -97,11 +99,12 @@ func New(cfg config.Config, log *slog.Logger, store *spend.Store) (*Server, erro
 		limiter:    spend.NewLimiter(cfg.Spend.RateLimitRPM, cfg.Spend.RateLimitSessionRPM),
 		envCostCap: cfg.Spend.CostCapUSD,
 		budgetCap:  cfg.Spend.BudgetCapUSD,
-		tier:       cfg.Spend.ModelTier,
+		prices:     cfg.Spend,
+		binding:    newBinding(cluster.ModelConfig, cfg.Spend.ModelTier, log),
 
 		feed:           feed.New(cfg.Feed.Enabled, feed.NewModerator(blocklist, cfg.Feed.Profanity)),
 		consoleOrigins: origins,
-		controls:       controls.NewReader(cfg.Controls.APIURL, cfg.Controls.TokenPath, cfg.Controls.CAPath),
+		controls:       cluster,
 		publicHost:     cfg.Controls.PublicHost,
 
 		tracer:      otel.Tracer(instrumentation),
@@ -132,7 +135,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			send(w, http.StatusOK, map[string]string{"status": "ok"})
 		case uri == "/cost":
 			s.cors(w, r)
-			s.cost(w)
+			s.cost(w, r)
 		case uri == "/prompts":
 			s.cors(w, r)
 			send(w, http.StatusOK, map[string]any{"enabled": s.feed.Enabled(), "prompts": s.feed.Prompts()})
@@ -186,12 +189,13 @@ func (s *Server) originAllowed(r *http.Request, origin string) bool {
 	return s.consoleOrigins[origin]
 }
 
-// cost reports the cluster's spend and the ceiling that would bite first.
-func (s *Server) cost(w http.ResponseWriter) {
+// cost reports the cluster's spend, the tier requests are priced at now, and the ceiling that would bite
+// first.
+func (s *Server) cost(w http.ResponseWriter, r *http.Request) {
 	g := s.guardState()
 	t := s.meter.Totals()
 	send(w, http.StatusOK, map[string]any{
-		"tier":          s.tier,
+		"tier":          s.binding.tier(r.Context()),
 		"requests":      t.Requests,
 		"input_tokens":  t.InputTokens,
 		"output_tokens": t.OutputTokens,
@@ -298,7 +302,7 @@ func (s *Server) forwardA2A(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if _, _, err := s.meterReply(body, ""); err != nil {
+	if _, _, _, err := s.meterReply(ctx, body, ""); err != nil {
 		s.storeError(ctx, err)
 		send(w, http.StatusBadGateway, map[string]string{"error": "spend not recorded: " + err.Error()})
 		return
@@ -314,22 +318,25 @@ func (s *Server) forwardA2A(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, body)
 }
 
-// meterReply adds a reply's token usage to the cost tally. A reply without usage is not counted. An
-// error is a tally the store did not commit, and the reply must not be returned.
-func (s *Server) meterReply(body []byte, session string) (spend.Usage, bool, error) {
+// meterReply adds a reply's token usage to the cost tally, priced at the tier the agent is bound to, and
+// returns it with what it cost. A reply without usage is not counted. An error is a tally the store did
+// not commit, and the reply must not be returned.
+func (s *Server) meterReply(ctx context.Context, body []byte, session string) (spend.Usage, float64, bool, error) {
 	var v any
 	if json.Unmarshal(body, &v) != nil {
-		return spend.Usage{}, false, nil
+		return spend.Usage{}, 0, false, nil
 	}
-	return s.meterValue(v, session)
+	return s.meterValue(ctx, v, session)
 }
 
-func (s *Server) meterValue(v any, session string) (spend.Usage, bool, error) {
+func (s *Server) meterValue(ctx context.Context, v any, session string) (spend.Usage, float64, bool, error) {
 	u, ok := spend.UsageOf(v)
 	if !ok {
-		return u, false, nil
+		return u, 0, false, nil
 	}
-	return u, true, s.meter.Record(u, session)
+	p := s.prices.PricesAt(s.binding.tier(ctx))
+	spent, err := s.meter.Record(u, spend.Prices{In: p.In, Out: p.Out}, session)
+	return u, spent, true, err
 }
 
 // storeError logs a write the spend store did not commit.

@@ -77,11 +77,13 @@ type Spend struct {
 	RateLimitRPM int `yaml:"rate_limit_rpm"`
 	// RateLimitSessionRPM bounds one /chat conversation per sliding minute, checked first.
 	RateLimitSessionRPM int `yaml:"rate_limit_session_rpm"`
-	// ModelTier picks the price row; an unknown tier prices as haiku.
+	// ModelTier is the tier the cluster starts on, which prices a request until the workshop-agent's
+	// bound model has been read and whenever that names no tier (PricesAt). An unknown tier prices as haiku.
 	ModelTier string `yaml:"model_tier"`
 	// ModelName is the model id reported to telemetry; it defaults from the tier.
 	ModelName string `yaml:"model_name"`
-	// CostPer1KIn and CostPer1KOut are USD per 1,000 tokens; they default from the tier.
+	// CostPer1KIn and CostPer1KOut are USD per 1,000 tokens at ModelTier; they default from it. One that
+	// is set is fixed, whatever tier a request is priced at.
 	CostPer1KIn  float64 `yaml:"cost_per_1k_in"`
 	CostPer1KOut float64 `yaml:"cost_per_1k_out"`
 	// StorePath is the file the cost tally, each session's spend and the runtime cost cap are kept in,
@@ -437,26 +439,46 @@ func applySpendEnv(s *Spend, getenv func(string) (string, bool)) error {
 	return nil
 }
 
-// resolve lowercases the tier and fills the prices and model name it implies, where none was set.
-func (s *Spend) resolve() {
-	s.ModelTier = strings.ToLower(s.ModelTier)
-	p, ok := TierPrices[s.ModelTier]
+// PricesAt is what a request costs per 1,000 tokens when the agent is bound to tier: that tier's row,
+// haiku's for an unknown tier, with each explicitly set price in place of the row's.
+func (s Spend) PricesAt(tier string) TierPrice {
+	p, ok := TierPrices[tier]
 	if !ok {
 		p = TierPrices["haiku"]
 	}
-	if !s.inSet {
-		s.CostPer1KIn = p.In
+	if s.inSet {
+		p.In = s.CostPer1KIn
 	}
-	if !s.outSet {
-		s.CostPer1KOut = p.Out
+	if s.outSet {
+		p.Out = s.CostPer1KOut
 	}
+	return p
+}
+
+// modelConfigPrefix starts the name of each workshop ModelConfig that binds a tier: bedrock-<tier>.
+const modelConfigPrefix = "bedrock-"
+
+// TierOf is the price tier a kagent ModelConfig name binds, bedrock-<tier> for each row of TierPrices.
+// ok is false for any other name, such as gateway-local-qwen3.
+func TierOf(modelConfig string) (string, bool) {
+	tier, found := strings.CutPrefix(modelConfig, modelConfigPrefix)
+	if _, priced := TierPrices[tier]; !found || !priced {
+		return "", false
+	}
+	return tier, true
+}
+
+// resolve lowercases the tier and fills the prices and model name it implies, where none was set.
+func (s *Spend) resolve() {
+	s.ModelTier = strings.ToLower(s.ModelTier)
+	p := s.PricesAt(s.ModelTier)
+	s.CostPer1KIn, s.CostPer1KOut = p.In, p.Out
 	if s.ModelName == "" {
 		s.ModelName = tierModelIDs[s.ModelTier]
 		if s.ModelName == "" {
 			s.ModelName = s.ModelTier
 		}
 	}
-	s.inSet, s.outSet = false, false
 }
 
 // SplitList splits a comma-separated list, trimming each term and dropping empty ones. Case is kept.

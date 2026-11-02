@@ -26,6 +26,7 @@ DEFAULT_CMD = (
 )
 STARTUP_TIMEOUT = 15.0
 GUARD_TOKEN = "conformance-token"
+SA_TOKEN = "conformance-sa-token"
 
 # Only these are inherited from the caller. Everything the proxy reads is set explicitly per test, so a
 # variable in the developer's shell (an OTEL_* export, a stray COST_CAP_USD) cannot change a verdict.
@@ -193,6 +194,25 @@ def start_proxy(
     yield start
     for p in running:
         p.stop()
+
+
+@pytest.fixture
+def kube_api(tmp_path):
+    """A fake Kubernetes API serving `objects` by path, 404 for anything else, and a token file."""
+    objects: dict[str, dict] = {}
+
+    def respond(req: Recorded) -> Reply:
+        if req.path in objects:
+            return Reply(body=objects[req.path])
+        return Reply(status=404, body={"kind": "Status", "reason": "NotFound"})
+
+    up = FakeUpstream(respond)
+    up.objects = objects
+    token = tmp_path / "sa-token"
+    token.write_text(SA_TOKEN + "\n")
+    up.env = {"K8S_API_URL": up.url, "K8S_TOKEN_PATH": str(token)}
+    yield up
+    up.close()
 
 
 @pytest.fixture

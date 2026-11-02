@@ -94,8 +94,14 @@ every session's spend and the runtime cost cap; it refuses a held store and a mi
 recorded 2026-11-01. The workshop's wrapper script belongs to the Go cutover,
 Unleash_an_Agent_Watch_It_Burn#738.
 
+### Agent-task #37: price each request at the model the workshop-agent is bound to
+Asked by Unleash_an_Agent_Watch_It_Burn#130's design note (build piece 1). Both builds read the Agent's
+`spec.declarative.modelConfig` at most every 5 s and price at its `bedrock-<tier>`; `MODEL_TIER` is the
+start-up default and the price for a ModelConfig with no tier. Decision recorded 2026-11-02; conformance
+in `test_spend.py`. The workshop side (submodule bump, `verify/model_pin_check.py`) is a follow-up there.
+
 ## Branch & Tests
-- Branch: agent/33-15515 (#33)
+- Branch: agent/37-15713 (#37)
 - Working tree: clean
 - Last CI: green on 3407cef (staging and main)
 

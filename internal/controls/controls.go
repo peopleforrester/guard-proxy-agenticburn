@@ -1,5 +1,5 @@
-// ABOUTME: The cluster-object controls behind the /controls badges, read live from the Kubernetes API
-// ABOUTME: with the pod's own service account token, get-only on named objects, cached for 5 seconds.
+// ABOUTME: The cluster-object controls behind the /controls badges and the agent's model binding, read live
+// ABOUTME: from the Kubernetes API with the pod's service account token, get-only on named objects.
 // SPDX-License-Identifier: Apache-2.0
 package controls
 
@@ -90,7 +90,7 @@ func (r *Reader) Read() Infra {
 	// A DaemonSet with no ready pod detects nothing.
 	out.Falco = count(at(get("/apis/apps/v1/namespaces/security/daemonsets/falco"), "status", "numberReady")) > 0
 	gateway := gatewayNarrowed(get("/api/v1/namespaces/agent/configmaps/agentgateway-c7-config"))
-	allowlist := allowlistNarrowed(get("/apis/kagent.dev/v1alpha2/namespaces/agent/agents/workshop-agent"))
+	allowlist := allowlistNarrowed(get(agentCR))
 	switch {
 	case isTrue(gateway) || isTrue(allowlist):
 		out.ToolAllowlist = ptr(true)
@@ -103,6 +103,20 @@ func (r *Reader) Read() Infra {
 	r.at, r.cached = now, &out
 	r.mu.Unlock()
 	return out
+}
+
+// agentCR is the workshop-agent Agent, which guard-proxy-reader grants get on by name.
+const agentCR = "/apis/kagent.dev/v1alpha2/namespaces/agent/agents/workshop-agent"
+
+// ModelConfig is the ModelConfig the workshop-agent is bound to, its spec.declarative.modelConfig, read
+// now and uncached. It is "" for an Agent that names none. ok is false when the Agent could not be read.
+func (r *Reader) ModelConfig() (name string, ok bool) {
+	ag := r.get(r.client(), agentCR)
+	if ag == nil {
+		return "", false
+	}
+	name, _ = at(ag, "spec", "declarative", "modelConfig").(string)
+	return name, true
 }
 
 // client trusts the service account CA when the pod has one, and the system roots otherwise.

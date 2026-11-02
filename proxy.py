@@ -579,7 +579,9 @@ TIER_PRICES_PER_1K = {
     "sonnet": {"in": 0.003, "out": 0.015},
     "opus":   {"in": 0.005, "out": 0.025},
 }
-# Which tier this cluster runs (set per cluster to match the kagent ModelConfig). Defaults to haiku.
+# Which tier this cluster starts on (set per cluster to match the kagent ModelConfig). Defaults to haiku.
+# Requests are priced at the tier the workshop-agent is bound to (bound_tier below); this prices them
+# until the Agent has been read, and whenever it names a ModelConfig with no tier.
 MODEL_TIER = os.environ.get("MODEL_TIER", "haiku").lower()
 # Full Bedrock model ID per tier — used as gen_ai.request.model when MODEL_NAME is not explicitly set.
 # IDs verified ACTIVE 2026-06-26; update when kagent ModelConfigs are bumped.
@@ -591,17 +593,79 @@ _TIER_TO_MODEL_ID = {
 }
 # MODEL_NAME: explicit override via env var, then tier→model-ID mapping, then tier name as fallback.
 MODEL_NAME = os.environ.get("MODEL_NAME") or _TIER_TO_MODEL_ID.get(MODEL_TIER, MODEL_TIER)
-_tier_price = TIER_PRICES_PER_1K.get(MODEL_TIER, TIER_PRICES_PER_1K["haiku"])
-# Optional explicit per-1K overrides; if unset, the tier table above is authoritative.
-COST_PER_1K_IN = float(os.environ.get("COST_PER_1K_IN", str(_tier_price["in"])))
-COST_PER_1K_OUT = float(os.environ.get("COST_PER_1K_OUT", str(_tier_price["out"])))
+# Optional explicit per-1K overrides. Each one set fixes that price whatever the agent is bound to; an
+# unset one comes from the tier table above.
+_COST_PER_1K_IN = os.environ.get("COST_PER_1K_IN")
+_COST_PER_1K_IN = float(_COST_PER_1K_IN) if _COST_PER_1K_IN is not None else None
+_COST_PER_1K_OUT = os.environ.get("COST_PER_1K_OUT")
+_COST_PER_1K_OUT = float(_COST_PER_1K_OUT) if _COST_PER_1K_OUT is not None else None
+
+# The model the workshop-agent is bound to (guard-proxy-agenticburn#37). The workshop swaps it live by
+# patching the Agent's spec.declarative.modelConfig to bedrock-haiku, bedrock-sonnet or bedrock-opus, which
+# Argo CD leaves out of its diff, and MODEL_TIER above is read once at start: priced at MODEL_TIER, a swap
+# from Nova Pro to Opus counts Opus tokens at a sixth of their input price. So each request is priced at the
+# tier the Agent names now, read with the same get-only token as the badges (guard-proxy-reader grants
+# get on workshop-agent) and cached as briefly. A ModelConfig bedrock-<tier> is that tier's row in the
+# price table; any other name (gateway-local-qwen3, say) prices at MODEL_TIER. A read that fails says
+# nothing about the binding, so it keeps the tier the last read found.
+_AGENT_PATH = "/apis/kagent.dev/v1alpha2/namespaces/agent/agents/workshop-agent"
+_MODEL_CONFIG_PREFIX = "bedrock-"
+_BINDING_TTL = 5.0         # seconds, as the badges' cache; a swap restarts the agent pod, which is slower
+_binding = {"at": None, "read": False, "model_config": None, "tier": MODEL_TIER}
+_binding_lock = threading.Lock()
+
+
+def _tier_of(model_config):
+    """The price tier a ModelConfig name binds, or None when it names no row of the price table."""
+    if isinstance(model_config, str) and model_config.startswith(_MODEL_CONFIG_PREFIX):
+        tier = model_config[len(_MODEL_CONFIG_PREFIX):]
+        if tier in TIER_PRICES_PER_1K:
+            return tier
+    return None
+
+
+def bound_tier():
+    """The tier a request is priced at now: the workshop-agent's bound model, read at most every 5 s."""
+    now = time.monotonic()
+    with _binding_lock:
+        if _binding["at"] is not None and now - _binding["at"] < _BINDING_TTL:
+            return _binding["tier"]
+    ag = _k8s_get(_AGENT_PATH)
+    with _binding_lock:
+        _binding["at"] = now
+        if ag is None:
+            return _binding["tier"]
+        try:
+            model_config = ag["spec"]["declarative"].get("modelConfig")
+        except (KeyError, TypeError, AttributeError):
+            model_config = None
+        tier = _tier_of(model_config)
+        changed = not _binding["read"] or model_config != _binding["model_config"]
+        _binding["read"], _binding["model_config"] = True, model_config
+        _binding["tier"] = tier or MODEL_TIER
+        priced = _binding["tier"]
+    if changed and tier:
+        log.info("pricing at %s: workshop-agent is bound to %s", tier, model_config,
+                 extra={"event": "price_tier"})
+    elif changed:
+        log.warning("workshop-agent is bound to %r, which names no price tier; pricing at MODEL_TIER %s",
+                    model_config, MODEL_TIER, extra={"event": "price_tier_unknown"})
+    return priced
+
+
+def prices_per_1k(tier):
+    """(USD per 1K input tokens, USD per 1K output tokens) at tier; an unknown tier prices as haiku."""
+    row = TIER_PRICES_PER_1K.get(tier, TIER_PRICES_PER_1K["haiku"])
+    return (row["in"] if _COST_PER_1K_IN is None else _COST_PER_1K_IN,
+            row["out"] if _COST_PER_1K_OUT is None else _COST_PER_1K_OUT)
+
+
 _cost_lock = threading.Lock()
 # Per-session spend for the Challenge 4 cap, keyed by the browser session id the storefront sends.
 # Bounded in practice: a workshop cluster sees tens of sessions and an entry is one float. The
 # cluster-wide _cost below is untouched; it is what /cost reports and what the $25 backstop uses.
 _session_cost = {}
-_cost = {"tier": MODEL_TIER, "requests": 0, "input_tokens": 0, "output_tokens": 0,
-         "total_tokens": 0, "usd": 0.0}
+_cost = {"requests": 0, "input_tokens": 0, "output_tokens": 0, "total_tokens": 0, "usd": 0.0}
 
 # Export the running spend as `gen_ai.client.cost` via OTLP, the SAME pipeline as the spans and the
 # standard token metric. Tokens are the standard `gen_ai.client.token.usage` (emitted by the kagent ADK
@@ -763,7 +827,9 @@ def moderate(text):
 
 
 def record_usage(resp, session=""):
-    """Pull kagent token usage from an A2A response and add it to the running cost tally."""
+    """Pull kagent token usage from an A2A response and add it to the running cost tally.
+
+    Priced at the tier the agent is bound to now. Returns the USD it added, 0.0 for a reply without usage."""
     result = resp.get("result", {}) if isinstance(resp, dict) else {}
 
     # Live kagent 0.9.9 emits the token usage at result.metadata.kagent_usage_metadata (confirmed on a
@@ -778,10 +844,11 @@ def record_usage(resp, session=""):
     if not meta:
         meta = _usage(result.get("status", {}).get("message", {}).get("metadata"))
     if not isinstance(meta, dict):
-        return
+        return 0.0
     pin = int(meta.get("promptTokenCount", 0) or 0)
     pout = int(meta.get("candidatesTokenCount", 0) or 0)
-    spent = (pin / 1000.0) * COST_PER_1K_IN + (pout / 1000.0) * COST_PER_1K_OUT
+    price_in, price_out = prices_per_1k(bound_tier())
+    spent = (pin / 1000.0) * price_in + (pout / 1000.0) * price_out
     with _cost_lock:
         _cost["requests"] += 1
         _cost["input_tokens"] += pin
@@ -790,6 +857,7 @@ def record_usage(resp, session=""):
         _cost["usd"] += spent
         if session:
             _session_cost[session] = _session_cost.get(session, 0.0) + spent
+    return spent
 
 
 def _post_guard(path, payload, deadline=None):
@@ -1023,6 +1091,7 @@ class Handler(BaseHTTPRequestHandler):
             # the runtime one, so a cap lowered with /toggle?cost_cap= is the target the counter shows.
             with _cost_lock:
                 payload = dict(_cost)
+            payload["tier"] = bound_tier()
             caps = [c for c in (_cost_cap["usd"],
                                 BUDGET_CAP_USD if GUARDS.get("budget") else 0) if c and c > 0]
             payload["cap_usd"] = min(caps) if caps else 0
@@ -1502,13 +1571,15 @@ class Handler(BaseHTTPRequestHandler):
                 if _CAPTURE_CONTENT:
                     chat_span.set_attribute("gen_ai.input.messages", _genai_messages(prompt))
             # Every model call is billed, so each attempt is metered as it returns, not only the reply
-            # the turn ends on (guard-proxy-agenticburn#3). spent sums the turn for the storefront.
-            spent = [0, 0]
+            # the turn ends on (guard-proxy-agenticburn#3). spent sums the turn for the storefront, each
+            # attempt at the price it was metered at.
+            spent = [0, 0, 0.0]
 
             def _attempt(optional=False):
                 r = _forward(_effective_ctx(session), optional)
                 if r is not None:
-                    record_usage(r, session)  # feed the live cost counter (same path as A2A)
+                    # feed the live cost counter (same path as A2A)
+                    spent[2] += record_usage(r, session)
                     tin, tout = chat_usage_tokens(r)
                     spent[0] += tin
                     spent[1] += tout
@@ -1541,7 +1612,7 @@ class Handler(BaseHTTPRequestHandler):
                 if retry is not None and not _is_thinking_only(chat_reply_text(retry)):
                     resp = retry
                     _thinking_only = False
-            pin, pout = spent
+            pin, pout, cost_usd = spent
             reply = chat_reply_text(resp)
             # LAST RESORT, after the retry above already failed. Measured after adding the retry: the
             # empty-reply rate fell from 1-in-6 to 1-in-10, because sometimes BOTH attempts stop after the
@@ -1572,8 +1643,8 @@ class Handler(BaseHTTPRequestHandler):
                     reply, guarded = scrubbed, True
             if guarded:
                 self._stamp("witb.guard.decision", "output_redacted")
-            # Per-call cost so the storefront can show a live dollar counter without hardcoding rates client-side.
-            cost_usd = (pin / 1000.0) * COST_PER_1K_IN + (pout / 1000.0) * COST_PER_1K_OUT
+            # Per-call cost (cost_usd, summed above) so the storefront can show a live dollar counter
+            # without hardcoding rates client-side.
             self._send(200, {"reply": reply or "...", "guarded": guarded,
                              "input_tokens": pin, "output_tokens": pout, "cost_usd": cost_usd})
         # Set output on the outer HTTP span after reply is known (reply is in scope after the with block).

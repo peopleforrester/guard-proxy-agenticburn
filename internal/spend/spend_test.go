@@ -63,31 +63,32 @@ func TestUsageCountsCoerceLikeInt(t *testing.T) {
 }
 
 // newMeter is a meter on a fresh store in the test's temporary directory.
-func newMeter(t *testing.T, p Prices, envCap float64) *Meter {
+func newMeter(t *testing.T, envCap float64) *Meter {
 	t.Helper()
 	st, err := OpenStore(filepath.Join(t.TempDir(), "spend.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	m, err := NewMeter(p, envCap, st)
+	m, err := NewMeter(envCap, st)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return m
 }
 
-func record(t *testing.T, m *Meter, u Usage, session string) {
+func record(t *testing.T, m *Meter, p Prices, u Usage, session string) {
 	t.Helper()
-	if err := m.Record(u, session); err != nil {
+	if _, err := m.Record(u, p, session); err != nil {
 		t.Fatal(err)
 	}
 }
 
 func TestMeterTalliesClusterAndSession(t *testing.T) {
-	m := newMeter(t, Prices{In: 0.001, Out: 0.005}, 0)
-	record(t, m, Usage{In: 1000, Out: 1000, Total: 2000}, "a")
-	record(t, m, Usage{In: 1000, Out: 0, Total: 1000}, "")
+	p := Prices{In: 0.001, Out: 0.005}
+	m := newMeter(t, 0)
+	record(t, m, p, Usage{In: 1000, Out: 1000, Total: 2000}, "a")
+	record(t, m, p, Usage{In: 1000, Out: 0, Total: 1000}, "")
 	tot := m.Totals()
 	if tot.Requests != 2 || tot.InputTokens != 2000 || tot.OutputTokens != 1000 || tot.TotalTokens != 3000 {
 		t.Errorf("Totals = %+v", tot)
@@ -100,12 +101,35 @@ func TestMeterTalliesClusterAndSession(t *testing.T) {
 	}
 }
 
+func TestEachCallIsPricedAtItsOwnPrices(t *testing.T) {
+	// The agent swapped from Nova Pro to Opus between two calls (guard-proxy-agenticburn#37).
+	m := newMeter(t, 0)
+	nova, err := m.Record(Usage{In: 1000, Out: 1000}, Prices{In: 0.0008, Out: 0.0032}, "a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	opus, err := m.Record(Usage{In: 1000, Out: 1000}, Prices{In: 0.005, Out: 0.025}, "a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if math.Abs(nova-0.004) > 1e-12 || math.Abs(opus-0.03) > 1e-12 {
+		t.Errorf("Record spent %v then %v, want 0.004 then 0.03", nova, opus)
+	}
+	if got := m.Totals().USD; math.Abs(got-0.034) > 1e-12 {
+		t.Errorf("USD = %v, want 0.034", got)
+	}
+	if got := m.SessionUSD("a"); math.Abs(got-0.034) > 1e-12 {
+		t.Errorf("SessionUSD(a) = %v, want 0.034", got)
+	}
+}
+
 func TestCapPrecedence(t *testing.T) {
-	m := newMeter(t, Prices{In: 1, Out: 0}, 2)
+	p := Prices{In: 1, Out: 0}
+	m := newMeter(t, 2)
 	if got := m.Capped("a", true, 1); got != None {
 		t.Errorf("fresh: %v", got)
 	}
-	record(t, m, Usage{In: 1000}, "a") // $1 for a, $1 cluster
+	record(t, m, p, Usage{In: 1000}, "a") // $1 for a, $1 cluster
 	if got := m.Capped("a", true, 1); got != Budget {
 		t.Errorf("budget reached: %v", got)
 	}
@@ -119,7 +143,7 @@ func TestCapPrecedence(t *testing.T) {
 	if got := m.Capped("", true, 1); got != Budget {
 		t.Errorf("no session: %v", got)
 	}
-	record(t, m, Usage{In: 1000}, "b") // $2 cluster: the cost cap, at exactly the cap
+	record(t, m, p, Usage{In: 1000}, "b") // $2 cluster: the cost cap, at exactly the cap
 	if got := m.Capped("a", true, 1); got != CostCap {
 		t.Errorf("both tripped: %v", got)
 	}
@@ -132,7 +156,7 @@ func TestCapPrecedence(t *testing.T) {
 }
 
 func TestCapUSD(t *testing.T) {
-	m := newMeter(t, Prices{}, 25)
+	m := newMeter(t, 25)
 	if got := m.CapUSD(false, 0.05); got != 25 {
 		t.Errorf("CapUSD = %v", got)
 	}

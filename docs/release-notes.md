@@ -3,6 +3,24 @@
 What each guard-proxy build a consumer can pin changes, newest first, naming its commit. The workshop
 repo repins its `gitops/ai-layer/guard-proxy` submodule from these entries.
 
+## 2026-11-02: each request is priced at the model the workshop-agent is bound to
+
+Both builds (guard-proxy-agenticburn#37, asked by Unleash_an_Agent_Watch_It_Burn#130). Repin the
+workshop's `gitops/ai-layer/guard-proxy` submodule to this entry's commit (or a later one) to pick it up.
+It needs no new RBAC: `guard-proxy-reader` already grants get on the `workshop-agent` Agent.
+
+- A request is priced at the tier of the Agent's `spec.declarative.modelConfig`, read at most every 5
+  seconds: `bedrock-<tier>` for nova, haiku, sonnet and opus. A live swap to `bedrock-opus` is priced at
+  Opus rates within 5 seconds, with no `kubectl set env MODEL_TIER` and no pod restart of guard-proxy.
+- `MODEL_TIER` is the start-up default: it prices requests until the Agent has been read and whenever the
+  Agent names another ModelConfig (logged once as the warning `price_tier_unknown`). A failed read keeps
+  the last tier read. Each change of binding is logged once as `price_tier`.
+- `/cost`'s `tier` is the tier in effect, not `MODEL_TIER`. `COST_PER_1K_IN` and `COST_PER_1K_OUT` still
+  fix their price whatever the binding.
+- Not changed: `gen_ai.request.model` on the spans and on `gen_ai.client.cost` still follows `MODEL_TIER`
+  or `MODEL_NAME`.
+- Not yet checked on a live cluster: a swap from `bedrock-nova` to `bedrock-haiku` priced at Haiku rates.
+
 ## 2026-11-01: `guard-proxy reset-spend` clears the Go build's spend store between deliveries
 
 Go build only; `proxy.py` keeps its tally in memory and is unchanged (guard-proxy-agenticburn#33). The

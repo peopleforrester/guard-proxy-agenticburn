@@ -30,7 +30,7 @@ func brokenStoreProxy(t *testing.T, agentURL string) (*Server, *bytes.Buffer) {
 	}
 	var logs bytes.Buffer
 	s, err := New(config.Config{Agent: config.Agent{URL: agentURL, Timeout: config.Duration{Duration: 2 * time.Second}},
-		Spend: config.Spend{CostPer1KIn: 1, CostPer1KOut: 1}}, logging.New(&logs), st)
+		Spend: config.Spend{ModelTier: "opus"}}, logging.New(&logs), st)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,7 +74,7 @@ func TestChatReplyIsWithheldWhenItsSpendIsNotStored(t *testing.T) {
 		t.Errorf("body = %s", w.Body)
 	}
 	// The spend still holds in this process, though it was not stored.
-	if got := s.meter.SessionUSD("a"); got != 0.015 {
+	if got, want := s.meter.SessionUSD("a"), (spend.Prices{In: 0.005, Out: 0.025}).Cost(10, 5); got != want {
 		t.Errorf("SessionUSD = %v", got)
 	}
 }

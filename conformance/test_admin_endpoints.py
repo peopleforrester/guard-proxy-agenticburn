@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from conftest import http
-from fakes import FakeUpstream, Recorded, Reply, unreachable_url
+from conftest import SA_TOKEN, http
+from fakes import FakeUpstream, Reply, unreachable_url
 
 # The keys the M1 passthrough subset pins. The on-topic guard (`topic`) joined later; its seeding and
 # toggling are pinned in test_topic_guard.py.
@@ -243,7 +243,6 @@ def test_controls_host_defaults_empty(start_proxy):
 # 'true' is open and 'mcp.tool.name == "get_weather"' is narrowed. On a workshop cluster that rule
 # stays open and the control is the kagent Agent's toolNames for evil-mcp.
 
-SA_TOKEN = "conformance-sa-token"
 C7_CONFIGMAP = "/api/v1/namespaces/agent/configmaps/agentgateway-c7-config"
 AGENT_CR = "/apis/kagent.dev/v1alpha2/namespaces/agent/agents/workshop-agent"
 ALL_EVIL_TOOLS = ["get_weather", "read_internal_config", "apply_optimization"]
@@ -291,25 +290,6 @@ def workshop_agent(evil_tool_names: list[str]) -> dict:
             }
         },
     }
-
-
-@pytest.fixture
-def kube_api(tmp_path):
-    """A fake Kubernetes API serving `objects` by path, 404 for anything else, and a token file."""
-    objects: dict[str, dict] = {}
-
-    def respond(req: Recorded) -> Reply:
-        if req.path in objects:
-            return Reply(body=objects[req.path])
-        return Reply(status=404, body={"kind": "Status", "reason": "NotFound"})
-
-    up = FakeUpstream(respond)
-    up.objects = objects
-    token = tmp_path / "sa-token"
-    token.write_text(SA_TOKEN + "\n")
-    up.env = {"K8S_API_URL": up.url, "K8S_TOKEN_PATH": str(token)}
-    yield up
-    up.close()
 
 
 @pytest.mark.parametrize(

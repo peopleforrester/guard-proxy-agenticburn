@@ -128,8 +128,23 @@ MUTANTS: list[tuple[str, str, str]] = [
     ),
     (
         "output price wrong",
-        "(pout / 1000.0) * COST_PER_1K_OUT\n    with _cost_lock:",
-        "(pout / 1000.0) * COST_PER_1K_IN\n    with _cost_lock:",
+        "(pout / 1000.0) * price_out\n    with _cost_lock:",
+        "(pout / 1000.0) * price_in\n    with _cost_lock:",
+    ),
+    (
+        "pricing ignores the bound model",
+        "    price_in, price_out = prices_per_1k(bound_tier())",
+        "    price_in, price_out = prices_per_1k(MODEL_TIER)",
+    ),
+    (
+        "an unreadable agent resets the tier",
+        '        if ag is None:\n            return _binding["tier"]',
+        '        if ag is None:\n            _binding["tier"] = MODEL_TIER\n            return MODEL_TIER',
+    ),
+    (
+        "the binding is read on every request",
+        '_binding["at"] is not None and now - _binding["at"] < _BINDING_TTL',
+        "False",
     ),
     ("probe recorded in feed", '    return PROBE_MARKER in (text or "")', "    return False"),
     (

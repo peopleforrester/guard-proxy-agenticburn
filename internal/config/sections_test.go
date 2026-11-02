@@ -49,6 +49,43 @@ func TestSpendExplicitPricesWinOverTheTier(t *testing.T) {
 	}
 }
 
+func TestSpendPricesAtTheBoundTier(t *testing.T) {
+	s := mustLoad(t, "", withBase(map[string]string{"MODEL_TIER": "nova"})).Spend
+	for tier, want := range map[string]TierPrice{
+		"nova": {0.0008, 0.0032}, "haiku": {0.001, 0.005}, "sonnet": {0.003, 0.015}, "opus": {0.005, 0.025},
+		"mystery": {0.001, 0.005}, // an unknown tier prices as haiku, as MODEL_TIER does
+	} {
+		if got := s.PricesAt(tier); got != want {
+			t.Errorf("PricesAt(%q) = %+v, want %+v", tier, got, want)
+		}
+	}
+}
+
+func TestSpendExplicitPricesWinOverTheBoundTier(t *testing.T) {
+	// Each explicit price is fixed on its own; the other still follows the tier.
+	s := mustLoad(t, "", withBase(map[string]string{"MODEL_TIER": "nova", "COST_PER_1K_IN": "1"})).Spend
+	if got := s.PricesAt("opus"); got != (TierPrice{1, 0.025}) {
+		t.Errorf("PricesAt(opus) = %+v", got)
+	}
+	path := writeFile(t, "agent: {url: http://a}\nllm_guard: {url: http://g}\nspend: {cost_per_1k_out: 2}\n")
+	s = mustLoad(t, path, nil).Spend
+	if got := s.PricesAt("sonnet"); got != (TierPrice{0.003, 2}) {
+		t.Errorf("PricesAt(sonnet) = %+v", got)
+	}
+}
+
+func TestTierOfAModelConfig(t *testing.T) {
+	for name, want := range map[string]string{
+		"bedrock-nova": "nova", "bedrock-haiku": "haiku", "bedrock-sonnet": "sonnet", "bedrock-opus": "opus",
+		"gateway-local-qwen3": "", "bedrock-mystery": "", "BEDROCK-OPUS": "", "bedrock-": "", "": "",
+	} {
+		got, ok := TierOf(name)
+		if got != want || ok != (want != "") {
+			t.Errorf("TierOf(%q) = %q, %v; want %q", name, got, ok, want)
+		}
+	}
+}
+
 func TestSpendEmptyValuesMeanTheDefault(t *testing.T) {
 	// The reference reads "" as 0 for the caps and limits, and as 3 cents for the budget cap.
 	s := mustLoad(t, "", withBase(map[string]string{

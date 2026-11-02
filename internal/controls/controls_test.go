@@ -198,3 +198,34 @@ func TestCacheExpires(t *testing.T) {
 		t.Errorf("%d calls; want 14", len(f.calls))
 	}
 }
+
+func TestModelConfigReadsTheAgentsBinding(t *testing.T) {
+	for body, want := range map[string]string{
+		`{"spec":{"declarative":{"modelConfig":"bedrock-opus","tools":[]}}}`: "bedrock-opus",
+		`{"spec":{"declarative":{"tools":[]}}}`:                              "",
+		`{"spec":{"declarative":{"modelConfig":7}}}`:                         "",
+		`[]`: "",
+	} {
+		f, url := newAPI(t, map[string]string{agentPath: body})
+		got, ok := reader(t, url).ModelConfig()
+		if got != want || !ok {
+			t.Errorf("%s: ModelConfig = %q, %v; want %q, true", body, got, ok, want)
+		}
+		f.mu.Lock()
+		if len(f.calls) != 1 || f.calls[0].Method != http.MethodGet || f.calls[0].URL.Path != agentPath ||
+			f.calls[0].Header.Get("Authorization") != "Bearer sa-token" {
+			t.Errorf("%s: want one GET of the Agent with the token, got %d calls", body, len(f.calls))
+		}
+		f.mu.Unlock()
+	}
+}
+
+func TestModelConfigIsUnreadWithoutTheAgent(t *testing.T) {
+	_, url := newAPI(t, nil)
+	if got, ok := reader(t, url).ModelConfig(); ok || got != "" {
+		t.Errorf("ModelConfig = %q, %v; want unread", got, ok)
+	}
+	if got, ok := NewReader(url, filepath.Join(t.TempDir(), "none"), "").ModelConfig(); ok || got != "" {
+		t.Errorf("without a token: ModelConfig = %q, %v; want unread", got, ok)
+	}
+}

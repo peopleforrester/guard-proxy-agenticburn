@@ -191,10 +191,12 @@ func (s *Server) chatTurn(ctx context.Context, w http.ResponseWriter, r *http.Re
 	defer chatSpan.End()
 
 	// Every model call is billed, so each attempt is metered as it returns, not only the reply the turn
-	// ends on (guard-proxy-agenticburn#3). spent sums the turn for the storefront.
+	// ends on (guard-proxy-agenticburn#3). spent and spentUSD sum the turn for the storefront, each attempt
+	// at the price it was metered at.
 	// A reply whose spend the store did not commit is not returned, even from the optional retry, so
 	// answered stops the turn after that retry too.
 	var spent spend.Usage
+	var spentUSD float64
 	answered := false
 	attempt := func(optional bool) (any, bool) {
 		resp, running, err := s.forwardChat(ctx, prompt, witch, s.contextID(session))
@@ -208,7 +210,7 @@ func (s *Server) chatTurn(ctx context.Context, w http.ResponseWriter, r *http.Re
 			}
 			return nil, false
 		}
-		u, ok, err := s.meterValue(resp, session)
+		u, usd, ok, err := s.meterValue(ctx, resp, session)
 		if err != nil {
 			s.storeError(ctx, err)
 			send(w, http.StatusBadGateway, chatReply{Reply: kitchenDown})
@@ -218,6 +220,7 @@ func (s *Server) chatTurn(ctx context.Context, w http.ResponseWriter, r *http.Re
 		if ok {
 			spent.In += u.In
 			spent.Out += u.Out
+			spentUSD += usd
 		}
 		return resp, true
 	}
@@ -283,8 +286,7 @@ func (s *Server) chatTurn(ctx context.Context, w http.ResponseWriter, r *http.Re
 	if sent == "" {
 		sent = "..."
 	}
-	cost := s.meter.Prices().Cost(spent.In, spent.Out)
-	send(w, http.StatusOK, chatReply{Reply: sent, Guarded: isGuarded, InputTokens: spent.In, OutputTokens: spent.Out, CostUSD: &cost})
+	send(w, http.StatusOK, chatReply{Reply: sent, Guarded: isGuarded, InputTokens: spent.In, OutputTokens: spent.Out, CostUSD: &spentUSD})
 	chatSpan.End()
 	root.SetAttributes(s.outputMessages(reply)...)
 	return nil

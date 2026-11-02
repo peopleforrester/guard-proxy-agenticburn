@@ -1,10 +1,12 @@
-# ABOUTME: Conformance for spend control: token metering into /cost, tier pricing, the per-minute rate
+# ABOUTME: Conformance for spend control: token metering into /cost, pricing at the bound tier, the rate
 # ABOUTME: limit, the cluster-wide cost cap, the per-session budget cap (C4), and their ordering.
 from __future__ import annotations
 
+import time
+
 import pytest
 
-from conftest import a2a_request
+from conftest import SA_TOKEN, a2a_request
 from fakes import Reply, a2a_result
 
 # Haiku list price: $0.001/1K in, $0.005/1K out. The default agent reply is 100 in / 50 out.
@@ -84,6 +86,144 @@ def test_explicit_price_overrides_tier(start_proxy, agent):
     agent.respond = _reply_costing(1000, 1000)
     p = start_proxy(MODEL_TIER="opus", COST_PER_1K_IN="1", COST_PER_1K_OUT="2")
     assert p.chat("hi").json()["cost_usd"] == pytest.approx(3.0)
+
+
+# --- Pricing at the model the workshop-agent is bound to (guard-proxy-agenticburn#37) ---------------
+# The workshop swaps the model live by patching the Agent's spec.declarative.modelConfig to
+# bedrock-<tier>, which Argo CD leaves out of its diff. MODEL_TIER is read once at start, so each request
+# is priced at the tier the Agent names, read through the API with the badges' service account token.
+# The read is cached as briefly as the badges' (5 s), so a swap is priced within that window.
+
+AGENT_CR = "/apis/kagent.dev/v1alpha2/namespaces/agent/agents/workshop-agent"
+BINDING_TTL = 5.0
+# USD for the 1,000 in and 1,000 out tokens _reply_costing answers with by default, per tier.
+TIER_USD = {
+    "nova": 0.0008 + 0.0032,
+    "haiku": 0.001 + 0.005,
+    "sonnet": 0.003 + 0.015,
+    "opus": 0.005 + 0.025,
+}
+
+
+def bound_agent(model_config: str | None) -> dict:
+    """The workshop-agent Agent, bound to `model_config`, or with no modelConfig at all for None."""
+    declarative: dict = {"tools": []}
+    if model_config is not None:
+        declarative["modelConfig"] = model_config
+    return {"kind": "Agent", "spec": {"declarative": declarative}}
+
+
+@pytest.mark.parametrize("tier", ["nova", "haiku", "sonnet", "opus"])
+def test_requests_are_priced_at_the_bound_model_not_model_tier(start_proxy, agent, kube_api, tier):
+    agent.respond = _reply_costing(1000, 1000)
+    kube_api.objects[AGENT_CR] = bound_agent(f"bedrock-{tier}")
+    start_tier = "opus" if tier != "opus" else "nova"
+    p = start_proxy(**kube_api.env, MODEL_TIER=start_tier)
+    assert p.chat("hi").json()["cost_usd"] == pytest.approx(TIER_USD[tier])
+    p.a2a("hi")
+    body = p.get("/cost").json()
+    assert body["usd"] == pytest.approx(2 * TIER_USD[tier])
+    assert body["tier"] == tier
+
+
+def test_cost_reports_the_bound_tier_before_any_request(start_proxy, kube_api):
+    kube_api.objects[AGENT_CR] = bound_agent("bedrock-opus")
+    assert start_proxy(**kube_api.env, MODEL_TIER="nova").get("/cost").json()["tier"] == "opus"
+
+
+def test_a_live_swap_is_priced_at_the_new_model(start_proxy, agent, kube_api):
+    """The swap Unleash_an_Agent_Watch_It_Burn#130 teaches: Nova Pro to Opus on a running cluster."""
+    agent.respond = _reply_costing(1000, 1000)
+    kube_api.objects[AGENT_CR] = bound_agent("bedrock-nova")
+    p = start_proxy(**kube_api.env, MODEL_TIER="nova")
+    assert p.chat("hi").json()["cost_usd"] == pytest.approx(TIER_USD["nova"])
+    kube_api.objects[AGENT_CR] = bound_agent("bedrock-opus")
+    time.sleep(BINDING_TTL + 0.5)
+    assert p.chat("hi").json()["cost_usd"] == pytest.approx(TIER_USD["opus"])
+    body = p.get("/cost").json()
+    # Spend already metered keeps the price it was metered at.
+    assert body["usd"] == pytest.approx(TIER_USD["nova"] + TIER_USD["opus"])
+    assert body["tier"] == "opus"
+    assert p.events().count("price_tier") == 2
+
+
+def test_an_unreadable_agent_keeps_the_last_bound_tier(start_proxy, agent, kube_api):
+    """A failed read says nothing about the binding, so it does not put a swapped cluster back on
+    MODEL_TIER."""
+    agent.respond = _reply_costing(1000, 1000)
+    kube_api.objects[AGENT_CR] = bound_agent("bedrock-opus")
+    p = start_proxy(**kube_api.env, MODEL_TIER="nova")
+    p.chat("hi")
+    del kube_api.objects[AGENT_CR]
+    time.sleep(BINDING_TTL + 0.5)
+    assert p.chat("hi").json()["cost_usd"] == pytest.approx(TIER_USD["opus"])
+    assert len(kube_api.calls(AGENT_CR)) == 2
+    assert p.get("/cost").json()["tier"] == "opus"
+
+
+def test_without_a_cluster_requests_are_priced_at_model_tier(start_proxy, agent, tmp_path):
+    agent.respond = _reply_costing(1000, 1000)
+    p = start_proxy(MODEL_TIER="sonnet", K8S_TOKEN_PATH=str(tmp_path / "no-token"))
+    assert p.chat("hi").json()["cost_usd"] == pytest.approx(TIER_USD["sonnet"])
+    assert p.get("/cost").json()["tier"] == "sonnet"
+    assert "price_tier" not in p.events()
+
+
+@pytest.mark.parametrize(
+    "model_config",
+    [
+        "gateway-local-qwen3",  # a ModelConfig with no row in the price table
+        "bedrock-mystery",
+        "BEDROCK-OPUS",  # Kubernetes names are lowercase, so this is no ModelConfig of ours
+        None,  # the Agent names no ModelConfig
+    ],
+)
+def test_a_model_config_with_no_tier_is_priced_at_model_tier(
+    start_proxy, agent, kube_api, model_config
+):
+    agent.respond = _reply_costing(1000, 1000)
+    kube_api.objects[AGENT_CR] = bound_agent(model_config)
+    p = start_proxy(**kube_api.env, MODEL_TIER="sonnet")
+    assert p.chat("hi").json()["cost_usd"] == pytest.approx(TIER_USD["sonnet"])
+    p.chat("hi")
+    assert p.get("/cost").json()["tier"] == "sonnet"
+    # Said once, at the read that found it, not on every request.
+    assert p.events().count("price_tier_unknown") == 1
+    assert "price_tier" not in p.events()
+
+
+def test_the_binding_is_read_once_per_cache_window(start_proxy, agent, kube_api):
+    """One GET of the Agent by name, with the service account token, serves every request and /cost
+    poll in the window, so a busy room does not load the API server."""
+    kube_api.objects[AGENT_CR] = bound_agent("bedrock-haiku")
+    p = start_proxy(**kube_api.env, MODEL_TIER="nova")
+    p.chat("hi")
+    p.a2a("hi")
+    p.chat("hi", session="s1")
+    p.get("/cost")
+    [call] = kube_api.calls(AGENT_CR)
+    assert call.method == "GET"
+    assert call.headers["Authorization"] == f"Bearer {SA_TOKEN}"
+    assert p.events().count("price_tier") == 1
+
+
+def test_an_explicit_price_still_wins_over_the_bound_tier(start_proxy, agent, kube_api):
+    """COST_PER_1K_IN and COST_PER_1K_OUT each fix their own price; the other follows the bound tier."""
+    agent.respond = _reply_costing(1000, 1000)
+    kube_api.objects[AGENT_CR] = bound_agent("bedrock-opus")
+    p = start_proxy(**kube_api.env, MODEL_TIER="nova", COST_PER_1K_IN="1")
+    assert p.chat("hi").json()["cost_usd"] == pytest.approx(1 + 0.025)
+
+
+def test_a_retried_turn_reports_what_each_attempt_cost(start_proxy, agent, kube_api):
+    agent.respond = _queue(
+        Reply(body=a2a_result("<thinking>hmm</thinking>", prompt_tokens=1000, output_tokens=0)),
+        Reply(body=a2a_result("Done.", prompt_tokens=1000, output_tokens=0)),
+    )
+    kube_api.objects[AGENT_CR] = bound_agent("bedrock-sonnet")
+    p = start_proxy(**kube_api.env, MODEL_TIER="nova")
+    assert p.chat("hi", session="s1").json()["cost_usd"] == pytest.approx(2 * 0.003)
+    assert p.get("/cost").json()["usd"] == pytest.approx(2 * 0.003)
 
 
 def test_blocked_requests_cost_nothing(start_proxy, agent):
