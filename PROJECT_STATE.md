@@ -106,8 +106,15 @@ Follow-up of #37. Both builds report `gen_ai.request.model` as the bound tier's 
 Decision recorded 2026-11-02; conformance in `test_telemetry.py`. The workshop's `max:` cost queries must
 move to `sum:` with the submodule repin, a follow-up on Unleash_an_Agent_Watch_It_Burn.
 
+### Agent-task #40: two conformance tests failed under heavy host load
+The cause was a port race in the harness, not a timeout: it released a `bind(0)` port before the
+implementation bound it, and on a busy host another process took it. `{port}` is now 0, and the harness
+reads the port from the implementation's `listening on 127.0.0.1:<port>` log line. `unreachable_url()`
+holds its port, and `STARTUP_TIMEOUT` is 60 s. Decision recorded 2026-11-02; harness tests in
+`test_harness.py`.
+
 ## Branch & Tests
-- Branch: agent/38-15774 (#38)
+- Branch: agent/40-15914 (#40)
 - Working tree: clean
 - Last CI: green on 3407cef (staging and main)
 
@@ -131,3 +138,4 @@ _(append-only. Each phase transition adds one line, oldest first.)_
 - 2026-11-01 1.3 M5 approved by Michael; 2.1 starting T1
 - 2026-11-01 3.3 M5 promoted to main at 3407cef; #36 closed; status on Unleash#412
 - 2026-11-02 #38 implemented and verified locally (2.3) on agent/38-15774: proxy.py and Go suites 395/395, mutation check 56/56 caught
+- 2026-11-02 #40 implemented and verified locally (2.3) on agent/40-15914: proxy.py and Go suites 398/398, mutation check 56/56 caught, 80 concurrent stress runs without a port collision
