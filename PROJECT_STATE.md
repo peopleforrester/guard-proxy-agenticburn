@@ -113,8 +113,12 @@ reads the port from the implementation's `listening on 127.0.0.1:<port>` log lin
 holds its port, and `STARTUP_TIMEOUT` is 60 s. Decision recorded 2026-11-02; harness tests in
 `test_harness.py`.
 
+### Agent-task #42: the Go entry-point tests had the same port race
+Follow-up of #40. `cmd/guard-proxy/main_test.go` now runs the binary with `--listen 127.0.0.1:0` and
+reads the bound address from its `listening on` log line; `freeAddr` is gone.
+
 ## Branch & Tests
-- Branch: agent/40-15914 (#40)
+- Branch: agent/42-15973 (#42)
 - Working tree: clean
 - Last CI: green on 3407cef (staging and main)
 
@@ -139,3 +143,4 @@ _(append-only. Each phase transition adds one line, oldest first.)_
 - 2026-11-01 3.3 M5 promoted to main at 3407cef; #36 closed; status on Unleash#412
 - 2026-11-02 #38 implemented and verified locally (2.3) on agent/38-15774: proxy.py and Go suites 395/395, mutation check 56/56 caught
 - 2026-11-02 #40 implemented and verified locally (2.3) on agent/40-15914: proxy.py and Go suites 398/398, mutation check 56/56 caught, 80 concurrent stress runs without a port collision
+- 2026-11-02 #42 implemented and verified locally (2.3) on agent/42-15973: go test ./... and go test -race green, proxy.py and Go suites 398/398
