@@ -10,7 +10,7 @@ from urllib.parse import urlparse
 import pytest
 
 from conftest import AGENT_CR, BINDING_TTL, bound_agent
-from fakes import Reply, a2a_result
+from fakes import Reply, a2a_result, unreachable_url
 
 pytestmark = pytest.mark.spans
 
@@ -123,6 +123,27 @@ def test_chat_forward_records_the_status_that_ended_it(traced, agent):
     assert p.chat("one burrito").status == 502
     fwd = _by_name(collector, {"agent.forward"})["agent.forward"]
     assert fwd["attributes"]["http.response.status_code"] == 500
+
+
+def test_chat_forward_failure_marks_the_client_span(traced, agent):
+    # A failed /chat forward is a failed span, as on the A2A forward: ERROR status and an error.type.
+    agent.respond = lambda req: Reply(status=500, body={})
+    p, collector = traced()
+    assert p.chat("one burrito").status == 502
+    fwd = _by_name(collector, {"agent.forward"})["agent.forward"]
+    assert fwd["status"] == "ERROR"
+    assert fwd["attributes"]["http.response.status_code"] == 500
+    assert fwd["attributes"]["error.type"]
+
+
+def test_chat_forward_transport_failure_marks_the_client_span(traced):
+    # A refused connection has no status code, but the span still fails and names the error.
+    p, collector = traced(AGENT_URL=unreachable_url())
+    assert p.chat("one burrito").status == 502
+    fwd = _by_name(collector, {"agent.forward"})["agent.forward"]
+    assert fwd["status"] == "ERROR"
+    assert "http.response.status_code" not in fwd["attributes"]
+    assert fwd["attributes"]["error.type"]
 
 
 def test_chat_joins_the_upstream_trace_and_passes_it_on(traced, agent):

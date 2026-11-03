@@ -1578,6 +1578,10 @@ class Handler(BaseHTTPRequestHandler):
                             task_id = None
                     return resp
                 except Exception as exc:
+                    if client_span is not None:
+                        # As on the A2A forward; _record_status has already set any HTTP status.
+                        client_span.set_attribute("error.type", type(exc).__name__)
+                        client_span.set_status(Status(StatusCode.ERROR, str(exc)))
                     log.error("chat forward failed: %s", exc, extra={"event": "forward_error"})
                     if not optional:
                         self._send(502, {"reply": "BurritoBot's kitchen isn't answering. Try again in a moment.",
