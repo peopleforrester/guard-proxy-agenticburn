@@ -227,6 +227,12 @@ each what that model has spent, so the series add up to `/cost`'s `usd`; query i
 build keeps the split in its spend store, and refuses a store written before it with spend on it (clear
 it with `guard-proxy reset-spend`).
 
+The `/chat` `chat` span carries the turn's `gen_ai.usage.input_tokens` and `gen_ai.usage.output_tokens`
+(#49), summed over its forwards, self-heal retries included: the totals the storefront is sent, and what
+Datadog's Agent Observability reads an llm span's tokens from. The `/chat` root and the A2A `sanitize`
+span carry none, because the collector turns those into Agent Observability's `invoke_agent` span, where
+the counts would sit beside kagent's own.
+
 Several overlap (`BUDGET_CAP_USD` and `COST_CAP_USD`, `INPUT_GUARD` and `INPUT_CLASSIFIER`). Some of
 that is history and some is a live toggle the workshop flips. Rationalizing them is part of the
 rewrite.

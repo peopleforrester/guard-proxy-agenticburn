@@ -20,6 +20,10 @@ OPUS = "us.anthropic.claude-opus-4-8"
 UPSTREAM_TRACE = "0af7651916cd43dd8448eb211c80319c"
 UPSTREAM_SPAN = "b7ad6b7169203331"
 CAPTURE = {"OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT": "SPAN_ONLY"}
+DANGLING = (
+    "ValidationException: messages.3: `tool_use` ids were found without `tool_result` "
+    "blocks immediately after"
+)
 
 
 def _by_name(collector, names: set[str]) -> dict[str, dict]:
@@ -78,7 +82,14 @@ def test_chat_span_tree(traced, agent):
         "gen_ai.operation.name": "chat",
         "gen_ai.request.model": MODEL,
     }
-    assert chat["attributes"] == {"gen_ai.operation.name": "chat", "gen_ai.request.model": MODEL}
+    # The token counts are on the chat span alone: the collector turns the root into Agent Observability's
+    # invoke_agent span, where they would count the turn a second time next to kagent's own model spans.
+    assert chat["attributes"] == {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.request.model": MODEL,
+        "gen_ai.usage.input_tokens": 100,
+        "gen_ai.usage.output_tokens": 50,
+    }
     # url.full and http.response.status_code are required by the workshop registry's egress contract
     # (span.witb.guard_proxy.egress).
     assert fwd["attributes"] == {
@@ -88,6 +99,46 @@ def test_chat_span_tree(traced, agent):
         "http.response.status_code": 200,
     }
     assert root["resource"]["service.name"] == "guard-proxy"
+
+
+@pytest.mark.parametrize(
+    "first,second",
+    [
+        (DANGLING, "Fresh start."),  # the context rotation
+        ("<thinking>hmm</thinking>", "Done."),  # the reasoning-only retry
+    ],
+    ids=["context_rotation", "thinking_only_retry"],
+)
+def test_chat_span_counts_every_forward_of_the_turn(traced, agent, first, second):
+    # A self-heal retry is a second billed model call, so the chat span sums the tokens of both forwards,
+    # the same totals the storefront is sent.
+    queue = [
+        Reply(body=a2a_result(first, prompt_tokens=1000, output_tokens=200)),
+        Reply(body=a2a_result(second, prompt_tokens=3000, output_tokens=400)),
+    ]
+    agent.respond = lambda req: queue.pop(0)
+    p, collector = traced()
+    turn = p.chat("hi", session="s1").json()
+    assert len(agent.calls()) == 2
+    assert (turn["input_tokens"], turn["output_tokens"]) == (4000, 600)
+    spans = _by_name(collector, {"POST /chat", "chat"})
+    chat = spans["chat"]["attributes"]
+    assert (chat["gen_ai.usage.input_tokens"], chat["gen_ai.usage.output_tokens"]) == (4000, 600)
+    def two_forwards(got):
+        found = [s for s in got if s["name"] == "agent.forward"]
+        return found if len(found) == 2 else None
+
+    forwards = collector.wait_for(two_forwards, "two agent.forward spans")
+    for other in [spans["POST /chat"], *forwards]:
+        assert not {"gen_ai.usage.input_tokens", "gen_ai.usage.output_tokens"} & set(other["attributes"])
+
+
+def test_chat_span_counts_zero_when_the_agent_reports_no_usage(traced, agent):
+    agent.respond = lambda req: Reply(body=a2a_result(prompt_tokens=None, output_tokens=None))
+    p, collector = traced()
+    assert p.chat("one burrito").status == 200
+    chat = _by_name(collector, {"chat"})["chat"]["attributes"]
+    assert (chat["gen_ai.usage.input_tokens"], chat["gen_ai.usage.output_tokens"]) == (0, 0)
 
 
 def _polled(final: Reply):

@@ -252,6 +252,11 @@ func (s *Server) chatTurn(ctx context.Context, w http.ResponseWriter, r *http.Re
 			return nil
 		}
 	}
+	// The turn's tokens, every forward's summed, go on the chat span only: the collector turns the root into
+	// Agent Observability's invoke_agent span, where they would be a second count next to kagent's own model
+	// spans (guard-proxy-agenticburn#49).
+	chatSpan.SetAttributes(semconv.GenAiUsageInputTokensKey.Int64(spent.In),
+		semconv.GenAiUsageOutputTokensKey.Int64(spent.Out))
 	reply := replyText(resp)
 	// The last resort, when both attempts stopped after the scratchpad: hand back its contents, which is
 	// the only thing the model produced, and drop bare tags so the student never sees markup.

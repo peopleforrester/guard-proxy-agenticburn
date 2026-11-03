@@ -1658,6 +1658,12 @@ class Handler(BaseHTTPRequestHandler):
                     resp = retry
                     _thinking_only = False
             pin, pout, cost_usd = spent
+            # The turn's tokens, every forward's summed, go on this span only: the collector turns the root
+            # and sanitize into Agent Observability's invoke_agent span, where they would be a second count
+            # next to kagent's own model spans (guard-proxy-agenticburn#49).
+            if chat_span is not None:
+                chat_span.set_attribute("gen_ai.usage.input_tokens", pin)
+                chat_span.set_attribute("gen_ai.usage.output_tokens", pout)
             reply = chat_reply_text(resp)
             # LAST RESORT, after the retry above already failed. Measured after adding the retry: the
             # empty-reply rate fell from 1-in-6 to 1-in-10, because sometimes BOTH attempts stop after the

@@ -3,6 +3,20 @@
 What each guard-proxy build a consumer can pin changes, newest first, naming its commit. The workshop
 repo repins its `gitops/ai-layer/guard-proxy` submodule from these entries.
 
+## 2026-11-03: the /chat `chat` span carries the turn's token counts
+
+Both builds (guard-proxy-agenticburn#49, asked by Unleash_an_Agent_Watch_It_Burn#784). Repin the
+workshop's `gitops/ai-layer/guard-proxy` submodule to this entry's commit (or a later one) to pick it up.
+
+- The `/chat` `chat` span sets `gen_ai.usage.input_tokens` and `gen_ai.usage.output_tokens`: the turn's
+  `promptTokenCount` and `candidatesTokenCount` summed over every forward, self-heal retries included,
+  equal to the reply's `input_tokens` and `output_tokens`. A turn whose agent reports no usage sets 0.
+- The `POST /chat` root, the A2A `sanitize` span and the `agent.forward` spans carry no counts.
+- Not set: `gen_ai.usage.cost.amount` and `gen_ai.usage.cost.currency`, which the workshop's registry
+  does not declare. `gen_ai.client.cost` is unchanged.
+- Go build: `internal/telemetry/semconv` is regenerated from the workshop's `staging` (9908d33), the first
+  registry that declares the two counts on `span.witb.guard_proxy.chat`.
+
 ## 2026-11-02: spans and the cost gauge name the model the workshop-agent is bound to
 
 Both builds (guard-proxy-agenticburn#38). Repin the workshop's `gitops/ai-layer/guard-proxy` submodule to

@@ -448,3 +448,24 @@ ends on a non-2xx status has seen no response after it. A forward that succeeds 
 the status of the response the reply came in. A forward that a non-2xx ended records that status, and the
 Go build's `error.type` names it, as on the A2A forward. A timeout or a transport error after a 2xx leaves
 that 2xx in place, because it is still the last response the agent gave.
+
+## 2026-11-03: the /chat chat span carries the turn's token counts, and no cost attribute
+
+guard-proxy-agenticburn#49, from Unleash_an_Agent_Watch_It_Burn#784: Datadog's Agent Observability reads
+an llm span's tokens from `gen_ai.usage.input_tokens` and `gen_ai.usage.output_tokens`. Both builds set
+them on the `chat` span from the sum they already send the storefront, every forward of the turn counted,
+self-heal retries included. They go on that span alone: the collector's Agent Observability copy turns
+the `POST /chat` root and `sanitize` into the `invoke_agent` root and drops `chat`, so counts on the root
+would sit beside kagent's `generate_content` counts. A turn whose agent reports no usage sets 0, as the
+reply's `input_tokens` does, rather than leaving the attributes out. A turn whose forward fails ends
+before the attributes are set, as the reply does in both builds.
+
+The issue made `gen_ai.usage.cost.amount` and `gen_ai.usage.cost.currency` optional. Neither is set: the
+workshop's registry does not declare them, the Go build takes every attribute name from that registry,
+and the workshop holds proxy.py's span keys to it too. They can follow once the registry declares them.
+
+`attributes_gen.go` is regenerated with weaver 0.24.2 from the workshop's `origin/staging` (9908d33), the
+first registry with the two counts on `span.witb.guard_proxy.chat`; its `main` (5bfd2f1) has not caught
+up, so `scripts/gen-semconv.sh` still needs `origin/staging` passed. The regeneration also adds three
+upstream enum members from the registry's semconv v1.41.1 dependency (`retrieval` and `invoke_workflow`
+for `gen_ai.operation.name`, `QUERY` for `http.request.method`); nothing uses them.
