@@ -309,7 +309,8 @@ def test_rate_limit_chat_is_200_guarded(start_proxy, agent):
     p = start_proxy(RATE_LIMIT_RPM="1")
     p.chat("1")
     assert p.chat("2").json() == {
-        "reply": "Slow down, hungry traveler. (1/min cap on this cluster.)",
+        "reply": "Slow down, hungry traveler. (1/min cap on this cluster.) Wait a few seconds and send that "
+        "again.",
         "guarded": True,
         "input_tokens": 0,
         "output_tokens": 0,
@@ -326,7 +327,8 @@ def test_session_rate_limit_refuses_that_session_only(start_proxy, agent):
     assert p.chat("1", session="a").json()["guarded"] is False
     assert p.chat("2", session="a").json()["guarded"] is False
     assert p.chat("3", session="a").json() == {
-        "reply": "Slow down, hungry traveler. (2/min per conversation.)",
+        "reply": "Slow down, hungry traveler. (2/min per conversation.) Wait a few seconds and send that "
+        "again.",
         "guarded": True,
         "input_tokens": 0,
         "output_tokens": 0,

@@ -157,12 +157,12 @@ func (s *Server) chatTurn(ctx context.Context, w http.ResponseWriter, r *http.Re
 	// The conversation's own window first, so one phone's refusals take no slot from the room.
 	if s.limiter.Session(session) {
 		decision(ctx, semconv.WitbGuardDecisionRateLimit)
-		send(w, http.StatusOK, guarded(fmt.Sprintf("Slow down, hungry traveler. (%d/min per conversation.)", s.limiter.SessionRPM())))
+		send(w, http.StatusOK, guarded(fmt.Sprintf("Slow down, hungry traveler. (%d/min per conversation.) Wait a few seconds and send that again.", s.limiter.SessionRPM())))
 		return nil
 	}
 	if s.limiter.Cluster() {
 		decision(ctx, semconv.WitbGuardDecisionRateLimit)
-		send(w, http.StatusOK, guarded(fmt.Sprintf("Slow down, hungry traveler. (%d/min cap on this cluster.)", s.limiter.ClusterRPM())))
+		send(w, http.StatusOK, guarded(fmt.Sprintf("Slow down, hungry traveler. (%d/min cap on this cluster.) Wait a few seconds and send that again.", s.limiter.ClusterRPM())))
 		return nil
 	}
 	switch s.meter.Capped(session, g.Budget, s.budgetCap) {

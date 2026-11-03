@@ -1470,12 +1470,14 @@ class Handler(BaseHTTPRequestHandler):
                 return
         if session_rate_limited(session):
             self._stamp("witb.guard.decision", "rate_limit")
-            self._send(200, {"reply": f"Slow down, hungry traveler. ({RATE_LIMIT_SESSION_RPM}/min per conversation.)",
+            self._send(200, {"reply": f"Slow down, hungry traveler. ({RATE_LIMIT_SESSION_RPM}/min per conversation.) "
+                                      "Wait a few seconds and send that again.",
                              "guarded": True, "input_tokens": 0, "output_tokens": 0})
             return
         if rate_limited():
             self._stamp("witb.guard.decision", "rate_limit")
-            self._send(200, {"reply": f"Slow down, hungry traveler. ({RATE_LIMIT_RPM}/min cap on this cluster.)",
+            self._send(200, {"reply": f"Slow down, hungry traveler. ({RATE_LIMIT_RPM}/min cap on this cluster.) "
+                                      "Wait a few seconds and send that again.",
                              "guarded": True, "input_tokens": 0, "output_tokens": 0})
             return
         capped = cost_capped(session)
