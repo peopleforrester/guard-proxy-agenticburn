@@ -1,5 +1,8 @@
 Test command: `uv run --locked ruff check conformance && uv run --locked pytest`
-E2E command: `! gofmt -l . | grep . && go vet ./... && go test ./... && go build -o bin/guard-proxy ./cmd/guard-proxy && GUARD_PROXY_CMD="$PWD/bin/guard-proxy --listen 127.0.0.1:{port}" uv run --locked pytest`
+E2E command: `! gofmt -l . | grep . && go vet ./... && go test ./... && go build -o bin/guard-proxy ./cmd/guard-proxy && GUARD_PROXY_CMD="$PWD/bin/guard-proxy --listen 127.0.0.1:{port}" uv run --locked pytest && uv run --locked ruff check e2e && uv run --locked pytest e2e`
+
+`e2e/` holds tests that need git and the network, such as the check that #43's /chat replies are on
+origin's main. They sit outside `testpaths`, so the Test command and CI never collect them.
 
 Mutation check: `uv run --locked python conformance/mutation_check.py`. It runs the whole suite once
 per mutant, four at a time (`MUTATION_JOBS`), and prints `[n/total] caught|ESCAPED name (~Ns left)` as

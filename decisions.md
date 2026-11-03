@@ -426,3 +426,15 @@ missed the 15 s `STARTUP_TIMEOUT` with no output, at a moment when the host had 
 60 % iowait. A healthy start takes 0.2 to 0.5 s (160 starts, eight at a time), so that limit now sits at
 60 s: it bounds only a child that never comes up, and its error says whether the child exited or the
 time ran out.
+
+## 2026-11-03: a test checks that #43's /chat rate-limit replies are on origin's main
+
+guard-proxy-agenticburn#44 asked for a test that fails when #43's criterion "The change is on main" stops
+holding. `e2e/test_issue_43_on_main.py` fetches origin's `main`, extracts it with `git archive`, and runs
+this checkout's two reply assertions in `conformance/test_spend.py` against main's `proxy.py` (through
+`launch_python.py`'s source-directory argument) and against a Go binary built from main's tree. It checks
+behaviour rather than ancestry of commit 82b7daf, so it holds when promotion rebases or squashes and fails
+when a later commit on main reverts the replies. It needs git, go and the network, so it sits in `e2e/`,
+outside `testpaths`: CI runs on every branch push, and a branch's CI must pass before it can reach main,
+so a check of main in CI would block its own promotion. The E2E command runs `pytest e2e` and fails until
+the change is promoted.
