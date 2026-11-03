@@ -75,10 +75,8 @@ Where it differs from `proxy.py` on purpose:
   `OTEL_TRACES_EXPORTER` or `OTEL_METRICS_EXPORTER` other than `otlp` or `none`, stops startup.
 - The caller's `traceparent` is read case-insensitively. `proxy.py` joins it only when the header name
   arrives lowercase, as agentgateway sends it.
-- A `/chat` `agent.forward` span whose forward failed is marked as an error with `error.type`, as the
-  A2A one is in both. `proxy.py` leaves the `/chat` one unmarked.
-- `error.type` on a failed forward is the HTTP status code, `timeout`, or `_OTHER`, per the HTTP
-  conventions. `proxy.py` records the Python exception's class name.
+- `error.type` on a failed forward, `/chat` or A2A, is the HTTP status code, `timeout`, or `_OTHER`,
+  per the HTTP conventions. `proxy.py` records the Python exception's class name.
 - Whole-word matching in the profanity list and the topic phrases uses RE2's ASCII `\b`, where Python's
   is Unicode-aware. A term next to a non-ASCII letter ("fuckñ") is masked in Go and not in `proxy.py`.
 - The cost tally, each session's spend and the `/toggle` cost cap are kept in a bbolt file at
