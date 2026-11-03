@@ -179,7 +179,7 @@ func (s *Server) registerCostGauge() error {
 	if err != nil {
 		return err
 	}
-	provider := semconv.GenAiProviderNameKey.String(semconv.GenAiProviderNameAWSBedrock)
+	provider := semconv.GenAiProviderNameKey.String(semconv.GenAiProviderNameAwsBedrock)
 	_, err = m.RegisterCallback(func(ctx context.Context, o metric.Observer) error {
 		byModel := s.meter.ByModel()
 		bound := s.boundModel(ctx)

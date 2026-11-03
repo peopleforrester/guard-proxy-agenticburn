@@ -426,3 +426,13 @@ missed the 15 s `STARTUP_TIMEOUT` with no output, at a moment when the host had 
 60 % iowait. A healthy start takes 0.2 to 0.5 s (160 starts, eight at a time), so that limit now sits at
 60 s: it bounds only a child that never comes up, and its error says whether the child exited or the
 time ran out.
+
+## 2026-11-03: every attribute name is generated, from the workshop's staging registry
+
+guard-proxy-agenticburn#45: Unleash_an_Agent_Watch_It_Burn#782 declared `gen_ai.request.model`,
+`error.type` and `gen_ai.provider.name` in `weaver/registry`, with a `metric.witb.guard_proxy.cost` group
+for the `gen_ai.client.cost` gauge, so the codegen filter now also selects `metric.witb.` groups and
+`semconv/extra.go` is gone. `attributes_gen.go` was generated from the workshop's `origin/staging`
+(12b31cd), because #782 had not reached its `main` yet. `scripts/gen-semconv.sh` still defaults to
+`origin/main`: until #782 reaches that `main`, a run without a ref drops the three keys and `go build`
+fails on their callers, so pass `origin/staging`.

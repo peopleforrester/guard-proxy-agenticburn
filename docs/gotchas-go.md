@@ -53,8 +53,9 @@ checked. Read this before adding a dependency or changing how the proxy talks to
   v1.47.0. The attribute names come from `weaver/registry/guard-proxy-spans.yaml` in the workshop
   repository, generated into `internal/telemetry/semconv/attributes_gen.go` by
   `scripts/gen-semconv.sh` (weaver 0.24.2, template in `weaver/templates/registry/go/`). The header
-  records the workshop commit it came from. Three names `proxy.py` sets are not in that registry yet
-  (`gen_ai.request.model`, `gen_ai.provider.name`, `error.type`) and live in `semconv/extra.go`.
+  records the workshop commit it came from. The filter selects the `span.witb.`, `metric.witb.` and
+  `registry.witb.` groups, so the cost gauge's `gen_ai.provider.name` and its `aws.bedrock` member come
+  from the registry too.
 - **The global propagator is a no-op until one is set.** Python's API defaults to tracecontext and
   baggage; Go's does not, so without `otel.SetTextMapPropagator` a caller's `traceparent` would neither
   join the server span nor reach the agent. `telemetry.Setup` sets it even when export is off.

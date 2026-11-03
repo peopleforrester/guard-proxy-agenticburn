@@ -122,8 +122,14 @@ Both replies, in proxy.py and `internal/server/chat.go`, now end "Wait a few sec
 again." and keep their parentheses ("/min per conversation.)", "/min cap on this cluster.)") for
 Unleash_an_Agent_Watch_It_Burn's load replay. The cost-cap and budget replies are unchanged.
 
+### Agent-task #45: every attribute name comes from the workshop registry
+Unleash_an_Agent_Watch_It_Burn#782 declared `gen_ai.request.model`, `error.type` and
+`gen_ai.provider.name` and a `metric.witb.guard_proxy.cost` group. The codegen filter also selects
+`metric.witb.` groups, `attributes_gen.go` is regenerated from the workshop's staging (12b31cd, #782
+not yet on its main), and `semconv/extra.go` is gone. Decision recorded 2026-11-03.
+
 ## Branch & Tests
-- Branch: agent/43-16529 (#43)
+- Branch: agent/45-16768 (#45)
 - Working tree: clean
 - Last CI: green on 3407cef (staging and main)
 
@@ -150,3 +156,4 @@ _(append-only. Each phase transition adds one line, oldest first.)_
 - 2026-11-02 #40 implemented and verified locally (2.3) on agent/40-15914: proxy.py and Go suites 398/398, mutation check 56/56 caught, 80 concurrent stress runs without a port collision
 - 2026-11-02 #42 implemented and verified locally (2.3) on agent/42-15973: go test ./... and go test -race green, proxy.py and Go suites 398/398
 - 2026-11-03 #43 implemented and verified locally (2.3) on agent/43-16529: go test ./... green, proxy.py and Go suites 398/398
+- 2026-11-03 #45 implemented and verified locally (2.3) on agent/45-16768: go test ./... green, proxy.py and Go suites 398/398
