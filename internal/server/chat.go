@@ -312,7 +312,7 @@ const (
 // id of the task the agent may still be working on, or "" when there is none to cancel.
 func (s *Server) forwardChat(ctx context.Context, prompt, witch, contextID string) (resp any, running string, err error) {
 	// One agent.forward span for the send and every poll; each request carries its W3C context.
-	ctx, span := s.clientSpan(ctx)
+	ctx, span := s.clientSpan(ctx, semconv.UrlFullKey.String(s.agentURL+"/"))
 	defer func() {
 		if err != nil {
 			failSpan(span, 0, err)

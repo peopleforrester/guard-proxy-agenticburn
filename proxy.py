@@ -1547,6 +1547,7 @@ class Handler(BaseHTTPRequestHandler):
                 if client_span is not None:
                     client_span.set_attribute("peer.service", _PEER_SERVICE)
                     client_span.set_attribute("http.request.method", "POST")
+                    client_span.set_attribute("url.full", AGENT_URL + "/")
                     inject(fwd_headers)
                 task_id = None
                 try:

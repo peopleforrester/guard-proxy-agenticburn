@@ -79,7 +79,12 @@ def test_chat_span_tree(traced, agent):
         "gen_ai.request.model": MODEL,
     }
     assert chat["attributes"] == {"gen_ai.operation.name": "chat", "gen_ai.request.model": MODEL}
-    assert fwd["attributes"] == {"peer.service": "burritobot-gateway", "http.request.method": "POST"}
+    # url.full is required by the workshop registry's egress contract (span.witb.guard_proxy.egress).
+    assert fwd["attributes"] == {
+        "peer.service": "burritobot-gateway",
+        "http.request.method": "POST",
+        "url.full": agent.url + "/",
+    }
     assert root["resource"]["service.name"] == "guard-proxy"
 
 
