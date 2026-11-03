@@ -117,8 +117,13 @@ holds its port, and `STARTUP_TIMEOUT` is 60 s. Decision recorded 2026-11-02; har
 Follow-up of #40. `cmd/guard-proxy/main_test.go` now runs the binary with `--listen 127.0.0.1:0` and
 reads the bound address from its `listening on` log line; `freeAddr` is gone.
 
+### Agent-task #43: the /chat rate-limit replies say to wait and send again
+Both replies, in proxy.py and `internal/server/chat.go`, now end "Wait a few seconds and send that
+again." and keep their parentheses ("/min per conversation.)", "/min cap on this cluster.)") for
+Unleash_an_Agent_Watch_It_Burn's load replay. The cost-cap and budget replies are unchanged.
+
 ## Branch & Tests
-- Branch: agent/42-15973 (#42)
+- Branch: agent/43-16529 (#43)
 - Working tree: clean
 - Last CI: green on 3407cef (staging and main)
 
@@ -144,3 +149,4 @@ _(append-only. Each phase transition adds one line, oldest first.)_
 - 2026-11-02 #38 implemented and verified locally (2.3) on agent/38-15774: proxy.py and Go suites 395/395, mutation check 56/56 caught
 - 2026-11-02 #40 implemented and verified locally (2.3) on agent/40-15914: proxy.py and Go suites 398/398, mutation check 56/56 caught, 80 concurrent stress runs without a port collision
 - 2026-11-02 #42 implemented and verified locally (2.3) on agent/42-15973: go test ./... and go test -race green, proxy.py and Go suites 398/398
+- 2026-11-03 #43 implemented and verified locally (2.3) on agent/43-16529: go test ./... green, proxy.py and Go suites 398/398
