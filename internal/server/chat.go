@@ -313,14 +313,29 @@ const (
 func (s *Server) forwardChat(ctx context.Context, prompt, witch, contextID string) (resp any, running string, err error) {
 	// One agent.forward span for the send and every poll; each request carries its W3C context.
 	ctx, span := s.clientSpan(ctx, semconv.UrlFullKey.String(s.agentURL+"/"))
+	// status is the last status the agent answered. A non-2xx answer ends the forward, so a forward that
+	// succeeds records its final 2xx, and one a non-2xx ended records that status.
+	status := 0
 	defer func() {
 		if err != nil {
-			failSpan(span, 0, err)
+			failed := 0 // a timeout, a transport error or a bad body after a 2xx has no failing status
+			if status < 200 || status > 299 {
+				failed = status
+			}
+			failSpan(span, failed, err)
 		}
 		span.End()
 	}()
 	ctx, cancel := context.WithTimeout(ctx, s.agentTimeout)
 	defer cancel()
+	call := func(rpc map[string]any) (any, error) {
+		v, code, err := s.agentRPC(ctx, rpc)
+		if code != 0 {
+			status = code
+			span.SetAttributes(semconv.HttpResponseStatusCodeKey.Int(code))
+		}
+		return v, err
+	}
 	parts := []map[string]string{{"kind": "text", "text": prompt}}
 	if witch != "" {
 		// The name is context, not prompt: no guard scans it and parts[0] stays the prompt as typed. kagent
@@ -336,7 +351,7 @@ func (s *Server) forwardChat(ctx context.Context, prompt, witch, contextID strin
 	if contextID != "" {
 		msg["contextId"] = contextID
 	}
-	resp, err = s.agentRPC(ctx, map[string]any{"jsonrpc": "2.0", "id": "chat", "method": "message/send",
+	resp, err = call(map[string]any{"jsonrpc": "2.0", "id": "chat", "method": "message/send",
 		"params": map[string]any{"message": msg, "configuration": map[string]any{"blocking": false}}})
 	if err != nil {
 		return nil, "", err
@@ -350,7 +365,7 @@ func (s *Server) forwardChat(ctx context.Context, prompt, witch, contextID strin
 			return nil, running, fmt.Errorf("task %s still running when the forward's deadline passed: %w", running, ctx.Err())
 		case <-time.After(wait):
 		}
-		resp, err = s.agentRPC(ctx, map[string]any{"jsonrpc": "2.0", "id": "chat", "method": "tasks/get",
+		resp, err = call(map[string]any{"jsonrpc": "2.0", "id": "chat", "method": "tasks/get",
 			"params": map[string]any{"id": running}})
 		if err != nil {
 			return nil, running, err
@@ -401,7 +416,7 @@ func runningTaskID(resp any) (string, error) {
 func (s *Server) cancelTask(ctx context.Context, taskID, reason string) {
 	ctx, cancel := context.WithTimeout(ctx, s.agentTimeout)
 	defer cancel()
-	resp, err := s.agentRPC(ctx, map[string]any{"jsonrpc": "2.0", "id": "cancel", "method": "tasks/cancel",
+	resp, _, err := s.agentRPC(ctx, map[string]any{"jsonrpc": "2.0", "id": "cancel", "method": "tasks/cancel",
 		"params": map[string]any{"id": taskID}})
 	if err != nil {
 		s.log.ErrorContext(ctx, fmt.Sprintf("could not cancel the agent's task %s: %v", taskID, err), "event", "task_cancel_failed")
@@ -429,36 +444,36 @@ func truncate(v any, n int) string {
 	return string(b)
 }
 
-// agentRPC posts one JSON-RPC request to the agent root and returns the decoded reply. Only a JSON
-// Content-Type travels with it.
-func (s *Server) agentRPC(ctx context.Context, rpc map[string]any) (any, error) {
+// agentRPC posts one JSON-RPC request to the agent root and returns the decoded reply and the HTTP
+// status, 0 when no response came. Only a JSON Content-Type travels with it.
+func (s *Server) agentRPC(ctx context.Context, rpc map[string]any) (any, int, error) {
 	body, err := json.Marshal(rpc)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.agentURL+"/", bytes.NewReader(body))
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	otel.GetTextMapPropagator().Inject(ctx, propagation.HeaderCarrier(req.Header))
 	res, err := s.client.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer res.Body.Close()
 	out, err := io.ReadAll(res.Body)
 	if err != nil {
-		return nil, err
+		return nil, res.StatusCode, err
 	}
 	if res.StatusCode < 200 || res.StatusCode > 299 {
-		return nil, fmt.Errorf("HTTP %d from agent", res.StatusCode)
+		return nil, res.StatusCode, fmt.Errorf("HTTP %d from agent", res.StatusCode)
 	}
 	var v any
 	if err := json.Unmarshal(out, &v); err != nil {
-		return nil, fmt.Errorf("agent reply is not JSON: %w", err)
+		return nil, res.StatusCode, fmt.Errorf("agent reply is not JSON: %w", err)
 	}
-	return v, nil
+	return v, res.StatusCode, nil
 }
 
 // contextID is the A2A contextId for a session, with its self-heal generation suffix.

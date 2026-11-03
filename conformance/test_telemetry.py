@@ -79,13 +79,50 @@ def test_chat_span_tree(traced, agent):
         "gen_ai.request.model": MODEL,
     }
     assert chat["attributes"] == {"gen_ai.operation.name": "chat", "gen_ai.request.model": MODEL}
-    # url.full is required by the workshop registry's egress contract (span.witb.guard_proxy.egress).
+    # url.full and http.response.status_code are required by the workshop registry's egress contract
+    # (span.witb.guard_proxy.egress).
     assert fwd["attributes"] == {
         "peer.service": "burritobot-gateway",
         "http.request.method": "POST",
         "url.full": agent.url + "/",
+        "http.response.status_code": 200,
     }
     assert root["resource"]["service.name"] == "guard-proxy"
+
+
+def _polled(final: Reply):
+    """An agent that accepts the turn as a running task and answers the first tasks/get with final."""
+
+    def respond(req):
+        if req.json().get("method") == "message/send":
+            return Reply(body={"jsonrpc": "2.0", "id": "chat", "result": {
+                "kind": "task", "id": "task-7", "contextId": "ctx-1", "status": {"state": "submitted"}}})
+        return final
+
+    return respond
+
+
+def test_chat_forward_records_the_last_response_status(traced, agent):
+    # One span covers the send and every poll; it records the status of the last response, the one the
+    # reply came in. A 202 tells it apart from the send's 200.
+    done = a2a_result("Here is your burrito.")
+    done["result"]["id"] = "task-7"
+    agent.respond = _polled(Reply(status=202, body=done))
+    p, collector = traced()
+    assert p.chat("one burrito").status == 200
+    fwd = _by_name(collector, {"agent.forward"})["agent.forward"]
+    assert [c.json()["method"] for c in agent.calls()] == ["message/send", "tasks/get"]
+    assert fwd["attributes"]["http.response.status_code"] == 202
+    assert fwd["status"] == "UNSET"
+
+
+def test_chat_forward_records_the_status_that_ended_it(traced, agent):
+    # A non-2xx answer ends the forward, so the last response is also the first non-2xx one.
+    agent.respond = _polled(Reply(status=500, body={}))
+    p, collector = traced()
+    assert p.chat("one burrito").status == 502
+    fwd = _by_name(collector, {"agent.forward"})["agent.forward"]
+    assert fwd["attributes"]["http.response.status_code"] == 500
 
 
 def test_chat_joins_the_upstream_trace_and_passes_it_on(traced, agent):

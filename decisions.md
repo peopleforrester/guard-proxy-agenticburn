@@ -436,3 +436,15 @@ for the `gen_ai.client.cost` gauge, so the codegen filter now also selects `metr
 (12b31cd), because #782 had not reached its `main` yet. `scripts/gen-semconv.sh` still defaults to
 `origin/main`: until #782 reaches that `main`, a run without a ref drops the three keys and `go build`
 fails on their callers, so pass `origin/staging`.
+
+## 2026-11-03: the /chat agent.forward span records the last status the agent answered
+
+guard-proxy-agenticburn#47: the workshop registry's egress contract (`span.witb.guard_proxy.egress`)
+requires `http.response.status_code` on a successful `agent.forward` span. The /chat forward is one span
+over a non-blocking `message/send` and every `tasks/get` poll, so it sees several responses. Both builds
+record each status as it arrives, so the span keeps the last one. The issue offered that or the first
+non-2xx status, but the two never differ: any non-2xx answer ends the forward at once, so a forward that
+ends on a non-2xx status has seen no response after it. A forward that succeeds records its final 2xx,
+the status of the response the reply came in. A forward that a non-2xx ended records that status, and the
+Go build's `error.type` names it, as on the A2A forward. A timeout or a transport error after a 2xx leaves
+that 2xx in place, because it is still the last response the agent gave.

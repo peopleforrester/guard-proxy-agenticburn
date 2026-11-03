@@ -16,6 +16,7 @@ import os
 import re
 import threading
 import time
+import urllib.error
 import urllib.request
 from contextlib import nullcontext
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -1538,8 +1539,19 @@ class Handler(BaseHTTPRequestHandler):
                     raise TimeoutError(f"the {TIMEOUT:g}s forward deadline (PROXY_TIMEOUT) passed")
                 req = urllib.request.Request(AGENT_URL + "/", data=json.dumps(body).encode(),
                                              headers=fwd_headers, method="POST")
-                with urllib.request.urlopen(req, timeout=left) as r:
-                    return json.loads(r.read())
+                try:
+                    with urllib.request.urlopen(req, timeout=left) as r:
+                        _record_status(r.status)
+                        return json.loads(r.read())
+                except urllib.error.HTTPError as exc:
+                    _record_status(exc.code)
+                    raise
+
+            def _record_status(code):
+                # The span covers the send and every poll, so each answer overwrites the last: a forward
+                # that succeeds records its final 2xx, and one a non-2xx ended records that status.
+                if client_span is not None:
+                    client_span.set_attribute("http.response.status_code", code)
 
             client_cm = (_tracer.start_as_current_span("agent.forward", kind=SpanKind.CLIENT)
                          if _OTEL_AVAILABLE else nullcontext())
