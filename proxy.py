@@ -1705,6 +1705,7 @@ class Handler(BaseHTTPRequestHandler):
                 elif scrubbed != reply:
                     reply, guarded = scrubbed, True
             if guarded:
+                log.info("output guardrail modified response content", extra={"event": "output_scrub"})
                 self._stamp("witb.guard.decision", "output_redacted")
             # Per-call cost (cost_usd, summed above) so the storefront can show a live dollar counter
             # without hardcoding rates client-side.

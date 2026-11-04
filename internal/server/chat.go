@@ -296,6 +296,7 @@ func (s *Server) chatTurn(ctx context.Context, w http.ResponseWriter, r *http.Re
 	if isGuarded {
 		// ctx is the chat span's by now, and the decision belongs on the root.
 		root.SetAttributes(semconv.WitbGuardDecisionKey.String(semconv.WitbGuardDecisionOutputRedacted))
+		s.log.InfoContext(ctx, "output guardrail modified response content", "event", "output_scrub")
 	}
 	sent := reply
 	if sent == "" {

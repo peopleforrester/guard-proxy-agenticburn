@@ -296,6 +296,11 @@ MUTANTS: list[tuple[str, str, str]] = [
         "    if not isinstance(result, dict):\n        error = ",
         "    if False:\n        error = ",
     ),
+    (
+        "a /chat output redaction not logged",
+        '                log.info("output guardrail modified response content", extra={"event": "output_scrub"})\n',
+        "",
+    ),
 ]
 
 

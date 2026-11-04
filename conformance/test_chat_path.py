@@ -214,16 +214,22 @@ def test_output_guard_redaction_marks_guarded(start_proxy, agent, guard):
         "prompt": "",
         "output": "the code is OPHELIA",
     }
+    # The room view and the leaderboard count /chat redactions from this log line, as on the A2A path.
+    assert p.events().count("output_scrub") == 1
 
 
 def test_output_guard_clean_reply_is_not_guarded(start_proxy, agent):
-    assert start_proxy(OUTPUT_GUARD="on").chat("hi").json()["guarded"] is False
+    p = start_proxy(OUTPUT_GUARD="on")
+    assert p.chat("hi").json()["guarded"] is False
+    assert "output_scrub" not in p.events()
 
 
 def test_output_guard_down_fails_closed(start_proxy, agent):
-    body = start_proxy(OUTPUT_GUARD="on", LLM_GUARD_URL=unreachable_url()).chat("hi").json()
+    p = start_proxy(OUTPUT_GUARD="on", LLM_GUARD_URL=unreachable_url())
+    body = p.chat("hi").json()
     assert body["reply"] == "[blocked by the output guardrail]"
     assert body["guarded"] is True
+    assert p.events().count("output_scrub") == 1
 
 
 def test_output_guard_down_fails_open_when_configured(start_proxy, agent):
@@ -231,6 +237,7 @@ def test_output_guard_down_fails_open_when_configured(start_proxy, agent):
     body = p.chat("hi").json()
     assert body["reply"] == "Here is your burrito."
     assert body["guarded"] is False
+    assert "output_scrub" not in p.events()
 
 
 def test_output_guard_skipped_for_empty_reply(start_proxy, agent, guard):
