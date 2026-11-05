@@ -36,6 +36,16 @@ def _by_name(collector, names: set[str]) -> dict[str, dict]:
     return collector.wait_for(found, f"spans {sorted(names)}")
 
 
+def _two_chats(collector) -> list[dict]:
+    """Wait until both turns' chat spans have arrived, and return them in arrival order."""
+
+    def found(spans):
+        chats = [s for s in spans if s["name"] == "chat"]
+        return chats if len(chats) == 2 else None
+
+    return collector.wait_for(found, "two chat spans")
+
+
 def _header(rec, name: str) -> str | None:
     return next((v for k, v in rec.headers.items() if k.lower() == name), None)
 
@@ -530,11 +540,7 @@ def test_a_live_swap_moves_the_spans_and_the_new_spend_to_the_new_model(traced, 
     assert opus_usd > nova_usd
 
     # Spans and metrics export on separate schedules, so the second chat span can land after the gauge.
-    def two_chats(spans):
-        found = [s for s in spans if s["name"] == "chat"]
-        return found if len(found) == 2 else None
-
-    chats = collector.wait_for(two_chats, "two chat spans")
+    chats = _two_chats(collector)
     assert [s["attributes"]["gen_ai.request.model"] for s in chats] == [NOVA, OPUS]
     sanitize = _by_name(collector, {"sanitize"})["sanitize"]
     assert sanitize["attributes"]["gen_ai.request.model"] == OPUS
@@ -557,8 +563,8 @@ def test_an_explicit_model_name_wins_over_the_bound_model(traced, agent, kube_ap
     kube_api.objects[AGENT_CR] = bound_agent("bedrock-opus")
     time.sleep(BINDING_TTL + 0.5)
     second = p.chat("two burritos").json()["cost_usd"]
-    chats = [s for s in collector.spans() if s["name"] == "chat"]
-    assert {s["attributes"]["gen_ai.request.model"] for s in chats} == {"burrito-model"}
+    chats = _two_chats(collector)
+    assert [s["attributes"]["gen_ai.request.model"] for s in chats] == ["burrito-model", "burrito-model"]
     # Still priced at the bound model; only the name reported is fixed.
     assert second > first
     _gauge_matching(collector, {"burrito-model": first + second})
