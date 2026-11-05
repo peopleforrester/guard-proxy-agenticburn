@@ -128,8 +128,15 @@ Unleash_an_Agent_Watch_It_Burn#782 declared `gen_ai.request.model`, `error.type`
 `metric.witb.` groups, `attributes_gen.go` is regenerated from the workshop's staging (12b31cd, #782
 not yet on its main), and `semconv/extra.go` is gone. Decision recorded 2026-11-03.
 
+### Agent-task #53: a /chat turn whose forward fails is an error on the root and chat spans
+Found on attackme from Unleash_an_Agent_Watch_It_Burn#750. Both builds set ERROR on the `POST /chat` root
+and the `chat` span when a failed forward answers 502; a failed optional reasoning-only retry (HTTP 200)
+leaves them Unset. Decision recorded 2026-11-05; conformance in `test_telemetry.py`. The live check, that
+a timed-out turn's root reads error in Datadog APM and Agent Observability, waits on the workshop
+repinning guard-proxy.
+
 ## Branch & Tests
-- Branch: agent/45-16768 (#45)
+- Branch: agent/53-17214 (#53)
 - Working tree: clean
 - Last CI: green on 3407cef (staging and main)
 
@@ -161,3 +168,4 @@ _(append-only. Each phase transition adds one line, oldest first.)_
 - 2026-11-03 #47 implemented and verified locally (2.3) on agent/47-16780: go vet and go test ./... green, proxy.py and Go suites 400/400
 - 2026-11-03 #48 implemented and verified locally (2.3) on agent/48-16788: go vet and go test ./... green, proxy.py and Go suites 402/402
 - 2026-11-03 #49 implemented and verified locally (2.3) on agent/49-16792: go vet and go test ./... green, proxy.py and Go suites 405/405
+- 2026-11-05 #53 implemented and verified locally (2.3) on agent/53-17214: go vet and go test ./... green, proxy.py and Go suites 412/412, mutation check 59/59 caught
