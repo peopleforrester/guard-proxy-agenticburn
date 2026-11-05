@@ -236,6 +236,13 @@ on `agent.forward` (#53), so a Datadog error rate or the Agent Observability lis
 as failed. A failed reasoning-only retry, where the turn still answers 200 with the first reply, leaves
 the root and `chat` span Unset; only that retry's `agent.forward` span is an error.
 
+Every POST answered with a 5xx is an error on its `POST <path>` server span (#54), as OTel's HTTP
+conventions have it: a failed A2A forward, a `/chat` turn whose guard stage ran out of `TURN_TIMEOUT`,
+and, in the Go build, a reply withheld because the spend store did not commit its spend. The span's
+status description names what failed. A 4xx or a guarded 200 leaves it Unset. GET requests, the
+discovery passthrough and the admin endpoints included, have no server span in either build, so their
+5xx answers are in the logs only.
+
 Several overlap (`BUDGET_CAP_USD` and `COST_CAP_USD`, `INPUT_GUARD` and `INPUT_CLASSIFIER`). Some of
 that is history and some is a live toggle the workshop flips. Rationalizing them is part of the
 rewrite.

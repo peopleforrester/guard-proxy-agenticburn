@@ -302,6 +302,7 @@ func (s *Server) forwardA2A(w http.ResponseWriter, r *http.Request) {
 	}
 	if _, _, _, err := s.meterReply(ctx, body, ""); err != nil {
 		s.storeError(ctx, err)
+		failed(w, err.Error())
 		send(w, http.StatusBadGateway, map[string]string{"error": "spend not recorded: " + err.Error()})
 		return
 	}
@@ -309,6 +310,7 @@ func (s *Server) forwardA2A(w http.ResponseWriter, r *http.Request) {
 		if body, err = s.scrubReply(ctx, body); err != nil {
 			// The scrubbed reply cannot be produced, and the unscrubbed one must not leave.
 			s.log.ErrorContext(ctx, "output guard failed: "+err.Error(), "event", "guard_error")
+			failed(w, err.Error())
 			send(w, http.StatusBadGateway, map[string]string{"error": "output guard failed: " + err.Error()})
 			return
 		}
@@ -390,6 +392,7 @@ func (s *Server) sanitize(ctx context.Context, w http.ResponseWriter, r *http.Re
 		failSpan(fwd, httpStatus, err)
 		fwd.End()
 		s.log.ErrorContext(ctx, "agent forward failed: "+err.Error(), "event", "forward_error")
+		failed(w, err.Error())
 		send(w, http.StatusBadGateway, map[string]string{"error": "agent forward failed: " + err.Error()})
 		return nil, false
 	}

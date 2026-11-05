@@ -26,10 +26,12 @@ import (
 // instrumentation is the tracer and meter scope name.
 const instrumentation = "guard-proxy"
 
-// statusWriter records the status a handler answered, for the server span.
+// statusWriter records the status a handler answered, and what a 5xx answer failed with, for the server
+// span.
 type statusWriter struct {
 	http.ResponseWriter
-	code int
+	code   int
+	reason string
 }
 
 func (w *statusWriter) WriteHeader(code int) {
@@ -39,7 +41,9 @@ func (w *statusWriter) WriteHeader(code int) {
 
 // serverSpan starts the POST <path> SERVER span, joined to the caller's W3C context, so the guard hop
 // sits in the agentgateway to agent waterfall. The path is the raw request target, query included, as
-// the reference records it. end records the status the handler answered and ends the span.
+// the reference records it. end records the status the handler answered and ends the span. A 5xx answer
+// makes the span an error, as OTel's HTTP conventions have a server span that answered 5xx
+// (guard-proxy-agenticburn#54), with the reason failed recorded as its description.
 func (s *Server) serverSpan(w http.ResponseWriter, r *http.Request, uri string) (*statusWriter, *http.Request, func()) {
 	ctx := otel.GetTextMapPropagator().Extract(r.Context(), propagation.HeaderCarrier(r.Header))
 	ctx, span := s.tracer.Start(ctx, "POST "+uri, trace.WithSpanKind(trace.SpanKindServer),
@@ -47,7 +51,18 @@ func (s *Server) serverSpan(w http.ResponseWriter, r *http.Request, uri string) 
 	sw := &statusWriter{ResponseWriter: w, code: http.StatusOK}
 	return sw, r.WithContext(ctx), func() {
 		span.SetAttributes(semconv.HttpResponseStatusCodeKey.Int(sw.code))
+		if sw.code >= 500 {
+			span.SetStatus(codes.Error, sw.reason)
+		}
 		span.End()
+	}
+}
+
+// failed records reason as what a 5xx answer on w failed with, the server span's status description. A
+// response outside a server span (a GET) has no span to describe.
+func failed(w http.ResponseWriter, reason string) {
+	if sw, ok := w.(*statusWriter); ok {
+		sw.reason = reason
 	}
 }
 

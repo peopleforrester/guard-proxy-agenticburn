@@ -62,8 +62,9 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request) {
 		defer cancel()
 	}
 	if err := s.chatTurn(ctx, w, r); errors.Is(err, errTurnExpired) {
-		s.log.ErrorContext(ctx, fmt.Sprintf("chat turn ran out of time: the %gs turn deadline (TURN_TIMEOUT) passed",
-			s.turnTimeout.Seconds()), "event", "turn_timeout")
+		reason := fmt.Sprintf("the %gs turn deadline (TURN_TIMEOUT) passed", s.turnTimeout.Seconds())
+		s.log.ErrorContext(ctx, "chat turn ran out of time: "+reason, "event", "turn_timeout")
+		failed(w, reason)
 		send(w, http.StatusBadGateway, chatReply{Reply: kitchenDown})
 	}
 }
@@ -207,12 +208,11 @@ func (s *Server) chatTurn(ctx context.Context, w http.ResponseWriter, r *http.Re
 		if err != nil {
 			s.log.ErrorContext(ctx, "chat forward failed: "+err.Error(), "event", "forward_error")
 			if !optional {
-				// The turn fails with the forward, so the root and the chat span are errors too: Datadog's
-				// error rate and Agent Observability read the root, and the HTTP conventions make a server
-				// span that answered 5xx an error (guard-proxy-agenticburn#53). A failed optional retry
-				// answers 200 and leaves them Unset.
-				root.SetStatus(codes.Error, err.Error())
+				// The turn fails with the forward, so the chat span is an error too, and the 502 makes the
+				// root one: Datadog's error rate and Agent Observability read the root
+				// (guard-proxy-agenticburn#53). A failed optional retry answers 200 and leaves them Unset.
 				chatSpan.SetStatus(codes.Error, err.Error())
+				failed(w, err.Error())
 				send(w, http.StatusBadGateway, chatReply{Reply: kitchenDown})
 			}
 			if running != "" {
@@ -223,6 +223,7 @@ func (s *Server) chatTurn(ctx context.Context, w http.ResponseWriter, r *http.Re
 		u, usd, ok, err := s.meterValue(ctx, resp, session)
 		if err != nil {
 			s.storeError(ctx, err)
+			failed(w, err.Error())
 			send(w, http.StatusBadGateway, chatReply{Reply: kitchenDown})
 			answered = true
 			return nil, false

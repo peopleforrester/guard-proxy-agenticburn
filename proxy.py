@@ -1072,12 +1072,17 @@ def chat_usage_tokens(resp):
 
 
 class Handler(BaseHTTPRequestHandler):
-    def _send(self, code, body_obj):
+    def _send(self, code, body_obj, error=None):
         # Record the response code on the in-flight HTTP SERVER span (set in do_POST), if any. _send is
         # the single response path for POST, so this captures the status at every exit (403/429/502/200).
+        # A 5xx answer makes the span an error, as OTel's HTTP conventions have a server span that
+        # answered 5xx (guard-proxy-agenticburn#54); error, when the exit knows what failed, is the
+        # status description.
         _sp = getattr(self, "_server_span", None)
         if _sp is not None:
             _sp.set_attribute("http.response.status_code", code)
+            if code >= 500:
+                _sp.set_status(Status(StatusCode.ERROR, error))
         body = json.dumps(body_obj).encode()
         self.send_response(code)
         self.send_header("Content-Type", "application/json")
@@ -1357,7 +1362,7 @@ class Handler(BaseHTTPRequestHandler):
                         client_span.set_attribute("error.type", type(exc).__name__)
                         client_span.set_status(Status(StatusCode.ERROR, str(exc)))
                     log.error("agent forward failed: %s", exc, extra={"event": "forward_error"})
-                    self._send(502, {"error": f"agent forward failed: {exc}"})
+                    self._send(502, {"error": f"agent forward failed: {exc}"}, error=str(exc))
                     return
             # Output attribute: the agent's RAW (pre-scrub) reply, so Datadog LLM Observability shows
             # the OUTPUT panel for this gen_ai span. Set while the sanitize span is still open.
@@ -1404,7 +1409,7 @@ class Handler(BaseHTTPRequestHandler):
         except TurnExpired as exc:
             log.error("chat turn ran out of time: %s", exc, extra={"event": "turn_timeout"})
             self._send(502, {"reply": "BurritoBot's kitchen isn't answering. Try again in a moment.",
-                             "guarded": False, "input_tokens": 0, "output_tokens": 0})
+                             "guarded": False, "input_tokens": 0, "output_tokens": 0}, error=str(exc))
 
     def _chat_turn(self, deadline):
         """BurritoBot storefront contract (B1): POST {prompt, session, witch} -> {reply, guarded,
@@ -1586,16 +1591,15 @@ class Handler(BaseHTTPRequestHandler):
                         client_span.set_status(Status(StatusCode.ERROR, str(exc)))
                     log.error("chat forward failed: %s", exc, extra={"event": "forward_error"})
                     if not optional:
-                        # The turn fails with the forward, so the root and the chat span are errors too:
-                        # Datadog's error rate and Agent Observability read the root, and the HTTP
-                        # conventions make a server span that answered 5xx an error
-                        # (guard-proxy-agenticburn#53). A failed optional retry answers 200 and leaves
-                        # them Unset.
-                        for _turn_span in (self._server_span, chat_span):
-                            if _turn_span is not None:
-                                _turn_span.set_status(Status(StatusCode.ERROR, str(exc)))
+                        # The turn fails with the forward, so the chat span is an error too, and _send's
+                        # 502 makes the root one: Datadog's error rate and Agent Observability read the
+                        # root (guard-proxy-agenticburn#53). A failed optional retry answers 200 and
+                        # leaves them Unset.
+                        if chat_span is not None:
+                            chat_span.set_status(Status(StatusCode.ERROR, str(exc)))
                         self._send(502, {"reply": "BurritoBot's kitchen isn't answering. Try again in a moment.",
-                                         "guarded": False, "input_tokens": 0, "output_tokens": 0})
+                                         "guarded": False, "input_tokens": 0, "output_tokens": 0},
+                                   error=str(exc))
                     if task_id:
                         threading.Thread(target=_cancel_task, args=(task_id, str(exc)), daemon=True).start()
                     return None

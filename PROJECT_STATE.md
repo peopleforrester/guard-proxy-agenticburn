@@ -135,8 +135,16 @@ leaves them Unset. Decision recorded 2026-11-05; conformance in `test_telemetry.
 a timed-out turn's root reads error in Datadog APM and Agent Observability, waits on the workshop
 repinning guard-proxy.
 
+### Agent-task #54: every 5xx answer on a POST is an error on its server span
+Follow-up of #53. proxy.py's `_send` and the Go build's `serverSpan` end function set ERROR on the
+`POST <path>` server span for any code of 500 or above, described with what failed: the A2A forward, a
+`/chat` guard stage cut off by `TURN_TIMEOUT`, the Go build's unstored spend, and #53's failed forward.
+Decision recorded 2026-11-05; conformance in `test_telemetry.py`, Go in `store_test.go`. GETs have no
+server span in either build, so the GET passthrough's 502 and the Go `/toggle` 500 are unmarked; filed
+as a follow-up.
+
 ## Branch & Tests
-- Branch: agent/53-17214 (#53)
+- Branch: agent/54-17280 (#54)
 - Working tree: clean
 - Last CI: green on 3407cef (staging and main)
 

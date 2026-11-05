@@ -10,7 +10,7 @@ from urllib.parse import urlparse
 import pytest
 
 from conftest import AGENT_CR, BINDING_TTL, bound_agent
-from fakes import Reply, a2a_result, unreachable_url
+from fakes import Reply, a2a_result, unreachable_url, verdict
 
 pytestmark = pytest.mark.spans
 
@@ -224,6 +224,31 @@ def test_a_failed_chat_forward_marks_the_root_and_chat_spans(traced, agent, fail
     assert spans["POST /chat"]["attributes"]["http.response.status_code"] == 502
     assert spans["POST /chat"]["status"] == "ERROR"
     assert spans["chat"]["status"] == "ERROR"
+    # The root names what failed, as the chat span does, not only the 502 (guard-proxy-agenticburn#54).
+    assert spans["POST /chat"]["status_message"]
+    assert spans["POST /chat"]["status_message"] == spans["chat"]["status_message"]
+
+
+def test_a_chat_turn_whose_guard_stage_ran_out_of_time_marks_the_root(traced, agent, guard):
+    # guard-proxy-agenticburn#54: a classifier the turn deadline cut off ends the turn with a 502 before any
+    # chat span or forward exists. The root is then the only span that can say the turn failed.
+    guard.respond = lambda req: Reply(body=verdict(True), delay=4)
+    p, collector = traced(INPUT_CLASSIFIER="on", TURN_TIMEOUT="1", PROXY_TIMEOUT="5")
+    assert p.chat("hi").status == 502
+    root = _by_name(collector, {"POST /chat"})["POST /chat"]
+    assert root["attributes"]["http.response.status_code"] == 502
+    assert root["status"] == "ERROR"
+    assert "TURN_TIMEOUT" in root["status_message"]
+    assert not agent.calls()
+
+
+def test_a_guarded_chat_turn_leaves_the_root_unset(traced, agent):
+    # Only a 5xx answer is a failed turn: a refusal the input guard answered is the proxy doing its job.
+    p, collector = traced(INPUT_BLOCKLIST="on")
+    r = p.chat("nuke it")
+    assert r.status == 200 and r.json()["guarded"]
+    root = _by_name(collector, {"POST /chat"})["POST /chat"]
+    assert root["status"] == "UNSET"
 
 
 def test_a_failed_self_heal_retry_marks_the_root_and_chat_spans(traced, agent):
@@ -403,11 +428,36 @@ def test_a2a_forward_failure_marks_the_client_span(traced, agent):
     assert spans["POST /"]["attributes"]["http.response.status_code"] == 502
 
 
+@pytest.mark.parametrize("failure", ["http_500", "unreachable"])
+def test_a2a_forward_failure_marks_the_root(traced, agent, failure):
+    # guard-proxy-agenticburn#54: the passthrough answered 502, so its server span is an error under the HTTP
+    # conventions, not only agent.forward, and it names what failed.
+    env = {}
+    if failure == "http_500":
+        agent.respond = lambda req: Reply(status=500, body={})
+    else:
+        env["AGENT_URL"] = unreachable_url()
+    p, collector = traced(**env)
+    assert p.a2a("hi").status == 502
+    root = _by_name(collector, {"POST /"})["POST /"]
+    assert root["attributes"]["http.response.status_code"] == 502
+    assert root["status"] == "ERROR"
+    assert root["status_message"]
+
+
+def test_a2a_answered_request_leaves_the_root_unset(traced, agent):
+    p, collector = traced()
+    assert p.a2a("two burritos").status == 200
+    assert _by_name(collector, {"POST /"})["POST /"]["status"] == "UNSET"
+
+
 def test_a2a_blocked_request_has_no_forward_span(traced, agent):
     p, collector = traced(INPUT_BLOCKLIST="on")
     assert p.a2a("nuke it").status == 403
     spans = _by_name(collector, {"POST /", "sanitize"})
     assert spans["POST /"]["attributes"]["http.response.status_code"] == 403
+    # A 4xx answer leaves a server span Unset under the HTTP conventions (guard-proxy-agenticburn#54).
+    assert spans["POST /"]["status"] == "UNSET"
     assert "agent.forward" not in {s["name"] for s in collector.spans()}
 
 

@@ -1,5 +1,5 @@
-// ABOUTME: Tests that spend the store did not commit fails closed: the reply is withheld on both paths,
-// ABOUTME: a thinking-only retry cannot slip it through, and a runtime cost cap the store refused is not applied.
+// ABOUTME: Tests that spend the store did not commit fails closed: the reply is withheld on both paths, its
+// ABOUTME: server span is an error, a thinking-only retry cannot slip it through, and a refused cost cap is not applied.
 // SPDX-License-Identifier: Apache-2.0
 package server
 
@@ -11,6 +11,10 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"go.opentelemetry.io/otel/codes"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 
 	"github.com/peopleforrester/guard-proxy-agenticburn/internal/config"
 	"github.com/peopleforrester/guard-proxy-agenticburn/internal/logging"
@@ -109,5 +113,42 @@ func TestToggleCostCapTheStoreRefusedChangesNothing(t *testing.T) {
 	}
 	if !strings.Contains(logs.String(), `"event":"spend_store_error"`) {
 		t.Errorf("no spend_store_error logged: %s", logs)
+	}
+}
+
+// recordSpans sends s's spans to a recorder instead of the global provider.
+func recordSpans(s *Server) *tracetest.SpanRecorder {
+	rec := tracetest.NewSpanRecorder()
+	s.tracer = sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(rec)).Tracer(instrumentation)
+	return rec
+}
+
+func TestAnUnstoredSpendMarksTheServerSpan(t *testing.T) {
+	// guard-proxy-agenticburn#54: a reply withheld because its spend was not stored answers 502, so the
+	// POST server span is an error that names the store's failure, on both paths.
+	for _, path := range []string{"/", "/chat"} {
+		a := newAgent(t, replyJSON(meteredReply))
+		s, _ := brokenStoreProxy(t, a.URL)
+		rec := recordSpans(s)
+		body := `{"jsonrpc": "2.0", "id": "x", "method": "message/send", "params": {}}`
+		if path == "/chat" {
+			body = `{"prompt": "hi", "session": "a"}`
+		}
+		if w := do(s, http.MethodPost, path, body, nil); w.Code != http.StatusBadGateway {
+			t.Fatalf("%s: status = %d, want 502", path, w.Code)
+		}
+		var root sdktrace.ReadOnlySpan
+		for _, sp := range rec.Ended() {
+			if sp.Name() == "POST "+path {
+				root = sp
+			}
+		}
+		if root == nil {
+			t.Fatalf("%s: no POST %s span among %d", path, path, len(rec.Ended()))
+		}
+		st := root.Status()
+		if st.Code != codes.Error || !strings.Contains(st.Description, "spend store: ") {
+			t.Errorf("%s: status = %v %q, want Error naming the store", path, st.Code, st.Description)
+		}
 	}
 }

@@ -167,14 +167,34 @@ MUTANTS: list[tuple[str, str, str]] = [
         "False",
     ),
     (
-        "a failed /chat forward leaves the root span unset",
-        "for _turn_span in (self._server_span, chat_span):",
-        "for _turn_span in (chat_span,):",
+        "a 5xx answer leaves the server span unset",
+        "            if code >= 500:\n                _sp.set_status(Status(StatusCode.ERROR, error))\n",
+        "",
+    ),
+    (
+        "a 4xx answer marks the server span an error",
+        "            if code >= 500:\n                _sp.set_status(",
+        "            if code >= 400:\n                _sp.set_status(",
     ),
     (
         "a failed /chat forward leaves the chat span unset",
-        "for _turn_span in (self._server_span, chat_span):",
-        "for _turn_span in (self._server_span,):",
+        "                            chat_span.set_status(Status(StatusCode.ERROR, str(exc)))\n",
+        "                            pass\n",
+    ),
+    (
+        "a failed /chat forward's root names nothing",
+        '"output_tokens": 0},\n                                   error=str(exc))',
+        '"output_tokens": 0})',
+    ),
+    (
+        "a failed A2A forward's root names nothing",
+        '{"error": f"agent forward failed: {exc}"}, error=str(exc))',
+        '{"error": f"agent forward failed: {exc}"})',
+    ),
+    (
+        "an expired /chat turn's root names nothing",
+        '"input_tokens": 0, "output_tokens": 0}, error=str(exc))',
+        '"input_tokens": 0, "output_tokens": 0})',
     ),
     (
         "a failed optional retry marks the turn an error",

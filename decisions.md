@@ -489,3 +489,24 @@ on the root would count an answered turn in the error rate. The failed retry sta
 
 Other 5xx exits (the A2A passthrough's forward, the Go build's spend-store failure, a guard stage the
 turn's deadline cut off) are outside this issue and are unchanged.
+
+## 2026-11-05: every 5xx answer on a POST is an error on its server span
+
+guard-proxy-agenticburn#54 followed #53: the A2A passthrough's failed forward, a `/chat` guard stage the
+turn's deadline cut off, and the Go build's unstored spend all answered 502 with the `POST <path>` server
+span Unset. The status is now set where the response code is recorded, proxy.py's `_send` and the Go
+build's `serverSpan` end function, for any code of 500 or above, so no later 5xx exit can miss it. A 4xx
+stays Unset, as the HTTP conventions leave a server span that answered 4xx.
+
+The description is what failed, not empty: an exit that knows the error passes it (`_send(..., error=)`,
+`failed(w, reason)` in Go). Setting the status a second time without one would have wiped the forward's
+error #53 put on the `/chat` root, so the root now takes it from `_send` instead, and #53's own
+`set_status` on the root is gone. The fake collector records the description (`status_message`) so the
+conformance suite pins it.
+
+Two exits the issue listed have no server span to mark: the GET passthrough's failed agent call and the
+Go build's `/toggle?cost_cap=` the store refused (500). Neither build opens a span for a GET, and adding
+one would put every console poll of `/cost`, `/controls`, `/guards` and `/prompts` in the trace stream.
+That is a separate decision, filed as a follow-up. The Go build's output guard failure on the A2A path
+(502) is marked by the same end function, but no input reaches it: `scrubReply` fails only when encoding
+a map it just decoded fails, so no test drives it.

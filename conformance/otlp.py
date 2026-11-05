@@ -54,7 +54,7 @@ class Collector:
         return self._up.calls(path)
 
     def spans(self) -> list[dict[str, Any]]:
-        """Every span received so far, as name, kind, ids, attributes and status."""
+        """Every span received so far, as name, kind, ids, attributes, status and its description."""
         out = []
         for rec in self._requests("/v1/traces"):
             req = ExportTraceServiceRequest()
@@ -74,6 +74,7 @@ class Collector:
                                 "status": Status.StatusCode.Name(s.status.code).removeprefix(
                                     "STATUS_CODE_"
                                 ),
+                                "status_message": s.status.message,
                                 "resource": resource,
                             }
                         )
