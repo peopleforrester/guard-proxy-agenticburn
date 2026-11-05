@@ -469,3 +469,23 @@ first registry with the two counts on `span.witb.guard_proxy.chat`; its `main` (
 up, so `scripts/gen-semconv.sh` still needs `origin/staging` passed. The regeneration also adds three
 upstream enum members from the registry's semconv v1.41.1 dependency (`retrieval` and `invoke_workflow`
 for `gen_ai.operation.name`, `QUERY` for `http.request.method`); nothing uses them.
+
+## 2026-11-05: a /chat turn whose forward fails is an error on the root and chat spans
+
+guard-proxy-agenticburn#53, found on attackme while checking Unleash_an_Agent_Watch_It_Burn#750: a turn
+that ran past `PROXY_TIMEOUT` answered 502, but only its `agent.forward` span was an error. The
+`POST /chat` root and the `chat` span stayed Unset, so Datadog listed the turn as ok, and so did Agent
+Observability, whose `invoke_agent` root the collector builds from the `POST /chat` root. Both builds now
+set ERROR, with the forward's error as the description, on the root and on the `chat` span whenever a
+failed forward answers the turn with 502: the first forward, or the dangling tool_use self-heal retry,
+for a transport error, a non-2xx answer, `PROXY_TIMEOUT` or the turn's deadline. OTel's HTTP conventions
+make a server span that answered 5xx an error.
+
+The issue left the failed optional retry as a judgement call: the reasoning-only retry fails, and the turn
+still answers 200 with the first reply (guard-proxy-agenticburn#1). There the root and the `chat` span
+stay Unset. The HTTP conventions leave a 2xx server span Unset, the caller got an answer, and an error
+on the root would count an answered turn in the error rate. The failed retry stays visible as its own
+`agent.forward` span with ERROR and `error.type`.
+
+Other 5xx exits (the A2A passthrough's forward, the Go build's spend-store failure, a guard stage the
+turn's deadline cut off) are outside this issue and are unchanged.

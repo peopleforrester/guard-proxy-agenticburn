@@ -1586,6 +1586,14 @@ class Handler(BaseHTTPRequestHandler):
                         client_span.set_status(Status(StatusCode.ERROR, str(exc)))
                     log.error("chat forward failed: %s", exc, extra={"event": "forward_error"})
                     if not optional:
+                        # The turn fails with the forward, so the root and the chat span are errors too:
+                        # Datadog's error rate and Agent Observability read the root, and the HTTP
+                        # conventions make a server span that answered 5xx an error
+                        # (guard-proxy-agenticburn#53). A failed optional retry answers 200 and leaves
+                        # them Unset.
+                        for _turn_span in (self._server_span, chat_span):
+                            if _turn_span is not None:
+                                _turn_span.set_status(Status(StatusCode.ERROR, str(exc)))
                         self._send(502, {"reply": "BurritoBot's kitchen isn't answering. Try again in a moment.",
                                          "guarded": False, "input_tokens": 0, "output_tokens": 0})
                     if task_id:

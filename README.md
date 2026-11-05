@@ -231,6 +231,11 @@ Datadog's Agent Observability reads an llm span's tokens from. The `/chat` root 
 span carry none, because the collector turns those into Agent Observability's `invoke_agent` span, where
 the counts would sit beside kagent's own.
 
+A `/chat` turn whose forward fails and answers 502 is an error on the root and the `chat` span as well as
+on `agent.forward` (#53), so a Datadog error rate or the Agent Observability list counts a timed-out turn
+as failed. A failed reasoning-only retry, where the turn still answers 200 with the first reply, leaves
+the root and `chat` span Unset; only that retry's `agent.forward` span is an error.
+
 Several overlap (`BUDGET_CAP_USD` and `COST_CAP_USD`, `INPUT_GUARD` and `INPUT_CLASSIFIER`). Some of
 that is history and some is a live toggle the workshop flips. Rationalizing them is part of the
 rewrite.

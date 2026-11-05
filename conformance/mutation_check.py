@@ -166,6 +166,23 @@ MUTANTS: list[tuple[str, str, str]] = [
         '_binding["at"] is not None and now - _binding["at"] < _BINDING_TTL',
         "False",
     ),
+    (
+        "a failed /chat forward leaves the root span unset",
+        "for _turn_span in (self._server_span, chat_span):",
+        "for _turn_span in (chat_span,):",
+    ),
+    (
+        "a failed /chat forward leaves the chat span unset",
+        "for _turn_span in (self._server_span, chat_span):",
+        "for _turn_span in (self._server_span,):",
+    ),
+    (
+        "a failed optional retry marks the turn an error",
+        "                    if not optional:\n                        # The turn fails with the forward",
+        "                    for _turn_span in ((self._server_span, chat_span) if optional else ()):\n"
+        "                        _turn_span.set_status(Status(StatusCode.ERROR, str(exc)))\n"
+        "                    if not optional:\n                        # The turn fails with the forward",
+    ),
     ("probe recorded in feed", '    return PROBE_MARKER in (text or "")', "    return False"),
     (
         "feed shows personal data",

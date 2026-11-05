@@ -17,6 +17,7 @@ import (
 	"unicode/utf8"
 
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/trace"
 
@@ -206,6 +207,12 @@ func (s *Server) chatTurn(ctx context.Context, w http.ResponseWriter, r *http.Re
 		if err != nil {
 			s.log.ErrorContext(ctx, "chat forward failed: "+err.Error(), "event", "forward_error")
 			if !optional {
+				// The turn fails with the forward, so the root and the chat span are errors too: Datadog's
+				// error rate and Agent Observability read the root, and the HTTP conventions make a server
+				// span that answered 5xx an error (guard-proxy-agenticburn#53). A failed optional retry
+				// answers 200 and leaves them Unset.
+				root.SetStatus(codes.Error, err.Error())
+				chatSpan.SetStatus(codes.Error, err.Error())
 				send(w, http.StatusBadGateway, chatReply{Reply: kitchenDown})
 			}
 			if running != "" {

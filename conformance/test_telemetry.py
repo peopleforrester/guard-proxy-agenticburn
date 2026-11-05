@@ -197,6 +197,88 @@ def test_chat_forward_transport_failure_marks_the_client_span(traced):
     assert fwd["attributes"]["error.type"]
 
 
+def _never_done(req):
+    """An agent that accepts the turn as a running task and never finishes it."""
+    state = "submitted" if req.json().get("method") == "message/send" else "working"
+    return Reply(body={"jsonrpc": "2.0", "id": "chat", "result": {
+        "kind": "task", "id": "task-7", "contextId": "ctx-1", "status": {"state": state}}})
+
+
+@pytest.mark.parametrize("failure", ["http_500", "unreachable", "proxy_timeout"])
+def test_a_failed_chat_forward_marks_the_root_and_chat_spans(traced, agent, failure):
+    # guard-proxy-agenticburn#53: a turn answered 502 because its forward failed is a failed turn on the
+    # root, the span Datadog's error rate and Agent Observability key on, and on the chat span, not only
+    # on agent.forward. The HTTP conventions make a server span that answered 5xx an error.
+    env = {}
+    if failure == "http_500":
+        agent.respond = lambda req: Reply(status=500, body={})
+    elif failure == "unreachable":
+        env["AGENT_URL"] = unreachable_url()
+    else:
+        agent.respond = _never_done
+        env["PROXY_TIMEOUT"] = "1"
+    p, collector = traced(**env)
+    assert p.chat("one burrito").status == 502
+    spans = _by_name(collector, {"POST /chat", "chat", "agent.forward"})
+    assert spans["agent.forward"]["status"] == "ERROR"
+    assert spans["POST /chat"]["attributes"]["http.response.status_code"] == 502
+    assert spans["POST /chat"]["status"] == "ERROR"
+    assert spans["chat"]["status"] == "ERROR"
+
+
+def test_a_failed_self_heal_retry_marks_the_root_and_chat_spans(traced, agent):
+    # The dangling tool_use retry is not optional: its failure answers 502, as the first forward's does.
+    calls = {"n": 0}
+
+    def respond(req):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return Reply(body=a2a_result(DANGLING))
+        return Reply(status=500, body={})
+
+    agent.respond = respond
+    p, collector = traced()
+    assert p.chat("hi", session="s1").status == 502
+    spans = _by_name(collector, {"POST /chat", "chat"})
+    assert spans["POST /chat"]["status"] == "ERROR"
+    assert spans["chat"]["status"] == "ERROR"
+
+
+def test_a_failed_optional_retry_leaves_the_root_and_chat_spans_unset(traced, agent):
+    # The reasoning-only retry is optional: when it fails the turn still answers 200 with the first reply
+    # (guard-proxy-agenticburn#1). The caller got an answer, so the root and the chat span stay Unset, as
+    # the HTTP conventions leave a 2xx server span; the failed forward is its own agent.forward error.
+    calls = {"n": 0}
+
+    def respond(req):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return Reply(body=a2a_result("<thinking>menu first</thinking>"))
+        return Reply(status=500, body={})
+
+    agent.respond = respond
+    p, collector = traced()
+    assert p.chat("hi").status == 200
+    spans = _by_name(collector, {"POST /chat", "chat"})
+
+    def two_forwards(got):
+        found = [s for s in got if s["name"] == "agent.forward"]
+        return found if len(found) == 2 else None
+
+    forwards = collector.wait_for(two_forwards, "two agent.forward spans")
+    assert sorted(f["status"] for f in forwards) == ["ERROR", "UNSET"]
+    assert spans["POST /chat"]["status"] == "UNSET"
+    assert spans["chat"]["status"] == "UNSET"
+
+
+def test_a_successful_chat_turn_leaves_the_root_and_chat_spans_unset(traced, agent):
+    p, collector = traced()
+    assert p.chat("one burrito").status == 200
+    spans = _by_name(collector, {"POST /chat", "chat"})
+    assert spans["POST /chat"]["status"] == "UNSET"
+    assert spans["chat"]["status"] == "UNSET"
+
+
 def test_chat_joins_the_upstream_trace_and_passes_it_on(traced, agent):
     p, collector = traced()
     assert _post_with_traceparent(p, "/chat", {"prompt": "one burrito"}) == 200
