@@ -43,10 +43,12 @@ def test_one_long_forward_is_cut_at_the_turn_deadline(start_proxy, agent):
 
 
 def test_without_turn_timeout_each_call_gets_proxy_timeout(start_proxy, agent, guard):
-    # The same two calls that overrun a 1.5 s turn below both finish when no turn deadline is set.
+    # The same two calls that overrun a 1.5 s turn below both finish when no turn deadline is set. Each
+    # call has 0.9 s of PROXY_TIMEOUT to spare for a loaded host, while the two together overrun it, so a
+    # PROXY_TIMEOUT applied to the whole turn would cut the forward short.
     guard.respond = _slow_guard
     agent.respond = lambda req: Reply(body=a2a_result("Two burritos."), delay=SLOW)
-    r = start_proxy(INPUT_CLASSIFIER="on", PROXY_TIMEOUT="1.5").chat("hi")
+    r = start_proxy(INPUT_CLASSIFIER="on", PROXY_TIMEOUT="1.9").chat("hi")
     assert r.status == 200
     assert r.json()["reply"] == "Two burritos."
 
