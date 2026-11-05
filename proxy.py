@@ -1185,9 +1185,11 @@ class Handler(BaseHTTPRequestHandler):
             self._send(502, {"error": f"agent GET failed: {exc}"})
 
     def do_POST(self):
-        # HTTP SERVER span (PRD #22 M1): joins the upstream trace from agentgateway via extracted W3C
-        # context, so the guard-proxy hop appears in the waterfall. http.response.status_code is set by
-        # _send at every exit. No-op when the OTel SDK is absent (import guard).
+        # HTTP SERVER span (PRD #22 M1), the trace root: it starts the trace unless the caller sent a W3C
+        # context, which it then joins. agentgateway sits downstream of this proxy, not upstream:
+        # agent.forward's client span is the parent of agentgateway's span for the hop.
+        # http.response.status_code is set by _send at every exit. No-op when the OTel SDK is absent
+        # (import guard).
         self._server_span = None
         server_cm = (
             _tracer.start_as_current_span(
@@ -1590,8 +1592,10 @@ class Handler(BaseHTTPRequestHandler):
                         threading.Thread(target=_cancel_task, args=(task_id, str(exc)), daemon=True).start()
                     return None
 
-        # Annotate the outer HTTP span (the APM trace root created by OTel auto-instrumentation)
-        # with gen_ai attributes so Datadog LLM Obs trace list preview shows content. The chat child
+        # Annotate the outer HTTP span, this proxy's own SERVER span opened in do_POST, with gen_ai
+        # attributes so Datadog LLM Obs trace list preview shows content. That span is the trace root:
+        # the proxy is a stdlib http.server handler, which OTel auto-instrumentation does not touch, so
+        # there is no other root above it (measured, Unleash_an_Agent_Watch_It_Burn#382). The chat child
         # span below carries the same attributes for span-level drill-down.
         # gen_ai.request.model is the model the agent is bound to as the turn reaches it
         # (guard-proxy-agenticburn#38); each attempt is still priced and gauged at its own.
