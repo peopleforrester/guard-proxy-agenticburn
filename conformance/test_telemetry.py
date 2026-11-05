@@ -478,7 +478,13 @@ def test_a_live_swap_moves_the_spans_and_the_new_spend_to_the_new_model(traced, 
     # The series add up to the cluster's spend, which is what /cost and the console's counter show.
     assert sum(got.values()) == pytest.approx(total)
     assert opus_usd > nova_usd
-    chats = [s for s in collector.spans() if s["name"] == "chat"]
+
+    # Spans and metrics export on separate schedules, so the second chat span can land after the gauge.
+    def two_chats(spans):
+        found = [s for s in spans if s["name"] == "chat"]
+        return found if len(found) == 2 else None
+
+    chats = collector.wait_for(two_chats, "two chat spans")
     assert [s["attributes"]["gen_ai.request.model"] for s in chats] == [NOVA, OPUS]
     sanitize = _by_name(collector, {"sanitize"})["sanitize"]
     assert sanitize["attributes"]["gen_ai.request.model"] == OPUS
