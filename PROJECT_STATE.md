@@ -188,3 +188,5 @@ _(append-only. Each phase transition adds one line, oldest first.)_
 - 2026-11-05 #55 implemented and verified locally (2.3) on agent/55-17325: test-only fix, go vet and go test ./... green, proxy.py and Go suites 411/411; old test fails and fixed test passes with span export slowed to 1500 ms
 - 2026-11-05 #54 implemented and verified locally (2.3) on agent/54-17280: go vet and go test ./... green, proxy.py and Go suites 416/416, mutation check 63/63 caught
 - 2026-11-05 #56 implemented and verified locally (2.3) on agent/56-17341: test-only fix, go vet and go test ./... green, proxy.py and Go suites 411/411; with span export slowed to 1500 ms the old test passes on one chat span and the fixed test waits for and checks both
+- 2026-10-31 #29 live check passed on watch-it-burn-private (runtime go, one replica, run cancelled); recorded in decisions.md
+- 2026-11-05 #29 deployed proxy's own task_cancel seen live after a 120 s /chat forward; Bedrock and tool spans end at the cancel

@@ -167,8 +167,24 @@ kagent v0.10.1 with `runtime: go` (`go/adk/pkg/a2a`) on a2a-go v0.3.15 (`interna
   `-32603` with that message. The proxy logs `task_cancel_failed` and the run goes on. The fix only
   works on `runtime: go`. The v1alpha2 Agent schema defaults `spec.declarative.runtime` to `go` (but
   `EffectiveDeclarativeRuntime` falls back to Python when it is unset), and the workshop's Agent sets
-  none, so the stored value is likely `go`. Unleash_an_Agent_Watch_It_Burn#697 left that to be read
-  from a live cluster.
+  none. Read live on 2026-10-31 (next bullet): the stored value is `go`.
+- **Seen to stop a real turn.** Checked twice on `watch-it-burn-private` (us-west-2) for
+  guard-proxy-agenticburn#29, with `workshop-agent` at `spec.declarative.runtime` `go` and one ready
+  replica both times. On 2026-10-31, before the fix was deployed, a script inside the guard-proxy pod
+  sent `tasks/cancel` through agentgateway's `:3000` route: the task read `canceled` afterwards, and
+  workshop-mcp and the agent both logged the running `run_shell` cancelled with no tool call after it.
+  On 2026-11-05, with the deployed `proxy.py` at `0f0c809`, a `POST /chat` whose prompt asked for
+  thirty `sleep 5` and `check_inventory` pairs answered the 502 at 120.1 s, and the proxy logged
+  `forward_error` ("the 120s forward deadline (PROXY_TIMEOUT) passed") and then `task_cancel` naming the
+  task with state `canceled`, 33 ms later. `tasks/get` through `:3000` read `canceled` with the status
+  timestamp of that same second. The agent logged the `run_shell` in flight failing with `context
+  canceled` and nothing after; workshop-mcp logged `Request 44 cancelled` and only its once-a-minute
+  ListTools after. The trace in Tempo (collector secondary; Datadog is primary) holds 20
+  `generate_content` Bedrock calls, the last ending at 13:09:09Z, then 40 `execute_tool` spans of
+  which the last, the cancelled `run_shell`, ends in error at 13:09:12.683Z with the `invoke_agent`
+  span; no span of that trace or session starts later, in Tempo or Datadog. So the route passes
+  `tasks/get` and `tasks/cancel`, and the proxy's cancel stops the run, its tool calls and its model
+  calls. Each pair took about 6 s, so 20 of the 30 ran before the deadline.
 - **Not a budget control.** The Go port's entry above rejects cancelling a turn mid-flight as a way to
   bound spend, and this does not change that: the cancel stops work on a turn the proxy has already given
   up on, and the model call in flight when it lands is still billed.

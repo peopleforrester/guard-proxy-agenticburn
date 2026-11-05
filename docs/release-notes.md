@@ -104,5 +104,7 @@ up (guard-proxy-agenticburn#27, asked by Unleash_an_Agent_Watch_It_Burn#742).
 - A turn answers up to about a second after the agent finishes, from the poll interval (0.25 s,
   doubling to 1 s). Each running turn adds about one `tasks/get` a second through agentgateway's
   `:3000` route.
-- Not yet checked on a live cluster: that `tasks/get` and `tasks/cancel` reach `workshop-agent`
-  through agentgateway, and that the cancelled run's tool calls stop in the trace.
+- Checked on the workshop cluster with this build deployed (guard-proxy-agenticburn#29): a `/chat` turn
+  that ran past `PROXY_TIMEOUT` answered its 502, the proxy logged `task_cancel` with state `canceled`,
+  `tasks/get` through agentgateway's `:3000` route read `canceled`, and the trace shows the Bedrock
+  calls and tool calls of `workshop-agent` (`runtime: go`, one replica) end at the cancel.
