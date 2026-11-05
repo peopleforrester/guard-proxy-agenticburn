@@ -1176,7 +1176,8 @@ class Handler(BaseHTTPRequestHandler):
                     _cost_cap["usd"] = cap
                 self._send(200, {**GUARDS, "cost_cap_usd": _cost_cap["usd"]})
             return
-        # Pass through agent-card / .well-known discovery unchanged.
+        # Pass through agent-card / .well-known discovery unchanged. A GET has no server span
+        # (guard-proxy-agenticburn#57), so a failed one is an ERROR log line, the forward_error /chat logs.
         try:
             req = urllib.request.Request(AGENT_URL + self.path, method="GET")
             with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
@@ -1187,6 +1188,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.end_headers()
                 self.wfile.write(body)
         except Exception as exc:
+            log.error("agent GET failed: %s", exc, extra={"event": "forward_error"})
             self._send(502, {"error": f"agent GET failed: {exc}"})
 
     def do_POST(self):

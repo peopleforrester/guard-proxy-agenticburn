@@ -510,3 +510,34 @@ one would put every console poll of `/cost`, `/controls`, `/guards` and `/prompt
 That is a separate decision, filed as a follow-up. The Go build's output guard failure on the A2A path
 (502) is marked by the same end function, but no input reaches it: `scrubReply` fails only when encoding
 a map it just decoded fails, so no test drives it.
+
+## 2026-11-05: GET requests stay unspanned; a 5xx on a GET is an ERROR log line
+
+guard-proxy-agenticburn#57, the follow-up the entry above filed: should a GET get a server span, so the GET
+discovery passthrough's 502 and the Go build's `/toggle?cost_cap=` 500 read as errors? Neither build opens
+one, and that stays. The issue offered two options, a span on the passthrough and `/toggle` only, or none
+and the logs; the second is taken, for three reasons read from the workshop that deploys this proxy
+(Unleash_an_Agent_Watch_It_Burn, `gitops/otel-collector/values.yaml`):
+
+- **The passthrough's span would never reach Datadog.** Its traffic is the agent-card fetch, and the
+  collector's `filter/drop_noise` drops `GET /.well-known/agent-card.json` by name from every service
+  (Unleash_an_Agent_Watch_It_Burn#264), an error status included. Opening the span would add code and
+  tests for nothing on the deployed path.
+- **A GET span is a root of its own.** No GET belongs to a student's interaction. The collector exists to
+  keep the trace stream to the interaction: parentless spans with no `gen_ai.*` attribute were the "No
+  content" rows that buried a student's turn (measured 2026-09-06 and 09-07), and the badge poll's 404
+  client spans are dropped because they raised guard-proxy's error rate for behaving correctly. A span per
+  console poll of `/cost`, `/controls`, `/guards` and `/prompts`, or per `/toggle`, is that again.
+- **A span only for `/toggle` buys little.** Its 500 is a bbolt write the store refused, which already
+  logs `spend_store_error` at ERROR (`store_test.go`), and the caller gets the 500 with the store's reason.
+
+What the logs lacked was the passthrough. A failed agent GET logged nothing at INFO or above in either
+build: proxy.py only wrote its debug access line, and the Go build nothing. Both now log it at ERROR as
+`forward_error`, the event the `/chat` and A2A forwards already log when the agent call fails, so a
+Datadog monitor on that event covers every exit to the agent. The message is the client's
+`agent GET failed: ...`. Conformance: `test_logging.py` pins the log line for an agent that answers
+non-2xx and one that is unreachable, `test_telemetry.py` pins that no GET, a failed one included, emits
+a span, and the mutation check holds the log line.
+
+Revisit if a GET ever joins an interaction (a caller sending W3C context on a discovery fetch the trace
+should show), or if the console moves to a push channel and the poll objection goes away.

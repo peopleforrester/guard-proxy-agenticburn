@@ -143,8 +143,15 @@ Decision recorded 2026-11-05; conformance in `test_telemetry.py`, Go in `store_t
 server span in either build, so the GET passthrough's 502 and the Go `/toggle` 500 are unmarked; filed
 as a follow-up.
 
+### Agent-task #57: GET requests stay unspanned; a 5xx on a GET is an ERROR log line
+Follow-up of #54, decided from the workshop's collector config: the agent-card GET span is dropped by
+name there, and a span per console poll is the parentless noise the collector exists to remove. Neither
+build spans a GET; a failed GET passthrough now logs `forward_error` at ERROR in both builds (it logged
+nothing at INFO or above before). The Go `/toggle` 500 already logs `spend_store_error`. Decision
+recorded 2026-11-05; conformance in `test_logging.py` and `test_telemetry.py`, one new mutant.
+
 ## Branch & Tests
-- Branch: agent/54-17280 (#54)
+- Branch: agent/57-17346 (#57)
 - Working tree: clean
 - Last CI: green on 3407cef (staging and main)
 

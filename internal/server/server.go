@@ -264,10 +264,12 @@ func firstNonBlank(vals []string) (string, bool) {
 	return "", false
 }
 
-// getPassthrough forwards agent-card and other discovery GETs, without the client's headers.
+// getPassthrough forwards agent-card and other discovery GETs, without the client's headers. A GET has
+// no server span (guard-proxy-agenticburn#57), so a failed one is logged as the forward_error /chat logs.
 func (s *Server) getPassthrough(w http.ResponseWriter, r *http.Request) {
 	body, status, err := s.agent(r.Context(), r.URL.RequestURI(), http.MethodGet, nil)
 	if err != nil {
+		s.log.ErrorContext(r.Context(), "agent GET failed: "+err.Error(), "event", "forward_error")
 		s.cors(w, r)
 		send(w, http.StatusBadGateway, map[string]string{"error": "agent GET failed: " + err.Error()})
 		return

@@ -321,6 +321,11 @@ MUTANTS: list[tuple[str, str, str]] = [
         '                log.info("output guardrail modified response content", extra={"event": "output_scrub"})\n',
         "",
     ),
+    (
+        "a failed GET passthrough not logged",
+        '            log.error("agent GET failed: %s", exc, extra={"event": "forward_error"})\n',
+        "",
+    ),
 ]
 
 

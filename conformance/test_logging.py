@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 
-from fakes import unreachable_url
+from fakes import Reply, unreachable_url
 
 
 def _records(p):
@@ -37,6 +37,19 @@ def test_forward_errors_log_at_error_level(start_proxy):
     errs = [r for r in _records(p) if r.get("event") == "forward_error"]
     assert len(errs) == 2
     assert {r["level"] for r in errs} == {"ERROR"}
+
+
+def test_a_failed_get_passthrough_logs_a_forward_error(start_proxy, agent):
+    # A GET has no span (guard-proxy-agenticburn#57), so its 502 is an ERROR log line or nothing at all.
+    agent.respond = lambda req: Reply(status=404, body={"error": "nope"})
+    answered = start_proxy()
+    assert answered.get("/missing").status == 502
+    unreachable = start_proxy(AGENT_URL=unreachable_url())
+    assert unreachable.get("/.well-known/agent-card.json").status == 502
+    for p in (answered, unreachable):
+        (rec,) = [r for r in _records(p) if r.get("event") == "forward_error"]
+        assert rec["level"] == "ERROR"
+        assert rec["message"].startswith("agent GET failed: ")
 
 
 def test_a_clean_request_logs_no_guard_events(start_proxy, agent):

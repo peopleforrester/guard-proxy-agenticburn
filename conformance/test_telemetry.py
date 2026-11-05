@@ -471,6 +471,25 @@ def test_a2a_blocked_request_has_no_forward_span(traced, agent):
     assert "agent.forward" not in {s["name"] for s in collector.spans()}
 
 
+# --- GET requests ---------------------------------------------------------------------------------
+
+
+def test_get_requests_open_no_span(traced, agent):
+    # guard-proxy-agenticburn#57: a GET stays unspanned, a failed one included. The console polls would be a
+    # stream of roots, and the workshop collector drops the agent-card fetch by name anyway; a 5xx on a GET is
+    # an ERROR log line instead (test_logging.py).
+    agent.respond = lambda req: Reply(status=500, body={})
+    p, collector = traced()
+    for path in ("/cost", "/prompts", "/guards", "/controls", "/toggle?budget=on"):
+        assert p.get(path).status == 200
+    assert p.get("/.well-known/agent-card.json").status == 502
+    # The POST after them is the marker: its span ends last, so any GET span would have arrived with or before it.
+    agent.respond = lambda req: Reply(body=a2a_result("ok"))
+    assert p.a2a("hi").status == 200
+    _by_name(collector, {"POST /"})
+    assert {s["name"] for s in collector.spans()} == {"POST /", "sanitize", "agent.forward"}
+
+
 # --- The cost gauge and log correlation -----------------------------------------------------------
 
 
