@@ -281,6 +281,12 @@ MUTANTS: list[tuple[str, str, str]] = [
         "        return None if FAIL_CLOSED else text",
     ),
     (
+        "the dangling tool_use retry gets a turn of its own",
+        '_ctx_gen[session], extra={"event": "ctx_rotate"})\n',
+        '_ctx_gen[session], extra={"event": "ctx_rotate"})\n'
+        "                deadline = time.monotonic() + TURN_TIMEOUT\n",
+    ),
+    (
         "cors echoes any origin",
         "        if _origin and _origin_allowed(self):",
         "        if _origin:",

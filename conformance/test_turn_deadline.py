@@ -119,13 +119,17 @@ def test_turn_spent_before_the_output_scrub_never_leaks_the_reply(start_proxy, a
 
 
 def test_dangling_tool_use_retry_shares_the_turn(start_proxy, agent):
-    agent.respond = lambda req: Reply(body=a2a_result(DANGLING), delay=SLOW)
+    """The retry answers well, but SLOW after it is sent, which is past the turn's end however slow the
+    host: only a retry with a deadline of its own gets that answer back, so the outcome, not a wall-clock
+    bound, tells the two apart (guard-proxy-agenticburn#68)."""
+    replies = iter([a2a_result(DANGLING), a2a_result("Two burritos.")])
+    agent.respond = lambda req: Reply(body=next(replies), delay=SLOW)
     p = start_proxy(**TURN)
-    r, took = _timed_chat(p, session="s1")
-    assert r.status == 502
+    r = p.chat("hi", session="s1")
+    assert r.status == 502, "the retry got a deadline of its own instead of what was left of the turn"
     assert r.json() == KITCHEN_DOWN
-    assert took < 2.5
     assert len(agent.calls()) == 2
+    assert "forward_error" in p.events()
 
 
 def test_thinking_only_retry_out_of_time_keeps_the_first_reply(start_proxy, agent):
