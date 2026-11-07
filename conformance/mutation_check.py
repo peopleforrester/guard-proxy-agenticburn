@@ -332,6 +332,24 @@ MUTANTS: list[tuple[str, str, str]] = [
         '_WITCH_NAME_RE = re.compile(r"[A-Z][a-z]+ the [A-Z][a-z]+")',
     ),
     (
+        "the chat forward sends no X-Witch-Name",
+        '                fwd_headers["X-Witch-Name"] = witch\n',
+        "                pass\n",
+    ),
+    (
+        "the chat forward sends X-Witch-Name with no name",
+        '            if witch:\n                # The send and every poll carry the name as a header too',
+        '            if True:\n                # The send and every poll carry the name as a header too',
+    ),
+    (
+        "tasks/cancel sends X-Witch-Name",
+        '                                     headers={"Content-Type": "application/json"}, method="POST")\n'
+        "        with urllib.request.urlopen(req, timeout=TIMEOUT) as r:",
+        '                                     headers={"Content-Type": "application/json",\n'
+        '                                              "X-Witch-Name": "Mortimer the Witch"}, method="POST")\n'
+        "        with urllib.request.urlopen(req, timeout=TIMEOUT) as r:",
+    ),
+    (
         "a refused cancel logged as done",
         "    if not isinstance(result, dict):\n        error = ",
         "    if False:\n        error = ",

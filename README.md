@@ -195,6 +195,10 @@ the A2A message gets a second text part after the prompt, `The person chatting w
 as <name>.`, so the agent knows who it is talking to. No guard scans the name and it never goes into the
 prompt's text, on the agent's message or on the prompt feed. Without one, or with a name of any other
 shape (logged as `witch_name_refused`), the message is exactly the prompt.
+The same name rides as an `X-Witch-Name` header on the message/send and on every tasks/get poll (#64), so
+kagent can copy it onto the agent's MCP calls and workshop-mcp credits a deploy to the visitor from the
+request rather than from the model. Without a name there is no header, and `tasks/cancel` and the A2A
+passthrough never send one.
 
 `GET /prompts` answers `{"enabled": bool, "prompts": [str], "witches": [str]}`. `prompts` is the last 50
 moderated prompts, oldest first, as bare strings. `witches` is as long as `prompts`, and `witches[i]` is the

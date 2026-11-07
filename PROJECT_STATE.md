@@ -157,8 +157,14 @@ answer `{"enabled", "prompts", "witches"}`: `prompts` unchanged, `witches[i]` th
 run 17641 tested on c5f71f3. Decision recorded 2026-11-07. The workshop then repins
 `gitops/ai-layer/guard-proxy` and its `checksum/proxy-py`.
 
+### Agent-task #64: /chat sends the witch name as an X-Witch-Name header
+Asked by Unleash_an_Agent_Watch_It_Burn#995 so deploys are credited from the request. Both builds send
+`X-Witch-Name` on a /chat turn's message/send and every tasks/get poll when the name passed the shape check;
+none on tasks/cancel or the A2A passthrough. Decision recorded 2026-11-07; conformance in
+`test_chat_witch_header.py`. The workshop then repins `gitops/ai-layer/guard-proxy` and runs the live check.
+
 ## Branch & Tests
-- Branch: agent/59-18086 (#59)
+- Branch: agent/64-18112 (#64)
 - Working tree: clean
 - Last CI: green on 3407cef (staging and main)
 

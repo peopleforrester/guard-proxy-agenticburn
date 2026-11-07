@@ -3,6 +3,18 @@
 What each guard-proxy build a consumer can pin changes, newest first, naming its commit. The workshop
 repo repins its `gitops/ai-layer/guard-proxy` submodule from these entries.
 
+## 2026-11-07: /chat sends the witch name as an X-Witch-Name header
+
+Both builds (guard-proxy-agenticburn#64, asked by Unleash_an_Agent_Watch_It_Burn#995). Repin the workshop's
+`gitops/ai-layer/guard-proxy` submodule and its `checksum/proxy-py` to this entry's commit (or a later one)
+to pick it up.
+
+- A `/chat` turn whose `witch` passed the `<First> the <Creature>` shape check sends `X-Witch-Name: <name>`
+  on its message/send and on every tasks/get poll to the agent root, the name exactly as the second text
+  part carries it. The second text part stays.
+- A turn with no name, a blank one or a misshaped one sends no header. `tasks/cancel` and the A2A
+  passthrough never send one, and a client's own `X-Witch-Name` on the passthrough is not forwarded.
+
 ## 2026-11-07: /chat adds the kitchen note after a session's recon question
 
 Both builds (guard-proxy-agenticburn#63, asked by Unleash_an_Agent_Watch_It_Burn#968). Repin the
