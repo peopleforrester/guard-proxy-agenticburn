@@ -1598,6 +1598,11 @@ class Handler(BaseHTTPRequestHandler):
             a2a = {"jsonrpc": "2.0", "id": "chat", "method": "message/send",
                    "params": {"message": m, "configuration": {"blocking": False}}}
             fwd_headers = {"Content-Type": "application/json"}
+            if witch:
+                # The send and every poll carry the name as a header too: kagent copies it onto the agent's
+                # MCP calls, so workshop-mcp credits a deploy to the visitor from the request rather than from
+                # the model (Unleash_an_Agent_Watch_It_Burn#995). tasks/cancel and /a2a carry none.
+                fwd_headers["X-Witch-Name"] = witch
             # PROXY_TIMEOUT bounds the whole forward, the send and every poll, as it bounded the one
             # blocking call before; the turn's deadline cuts it shorter.
             fwd_deadline = time.monotonic() + TIMEOUT

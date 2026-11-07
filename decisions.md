@@ -638,3 +638,22 @@ does not need to move for this; the 2.5s bound in the workshop's test is filed t
 
 Conformance: `test_a_slow_cancel_does_not_hold_the_502` in `test_task_cancel.py`, against both builds,
 and the mutant "the chat 502 waits on tasks/cancel" holds it.
+
+## 2026-11-07: /chat sends the witch name as an X-Witch-Name header
+
+The workshop's deployments page credits each deploy to the chat visitor's witch name from the request, not
+from the model's `requested_by` argument (Unleash_an_Agent_Watch_It_Burn#995). workshop-mcp's `deploy_app`
+reads an `X-Witch-Name` header, and kagent copies that header from the A2A request onto its MCP calls, so
+both builds now send it on the /chat forward (guard-proxy-agenticburn#64).
+
+- **The send and every poll, not the cancel.** The header goes on each POST a turn makes to the agent root
+  while it waits, message/send and each tasks/get, as the issue asks. `tasks/cancel` and the A2A
+  passthrough carry none; the passthrough still forwards only a JSON Content-Type, so a client cannot set
+  the header itself.
+- **Only a name that passed the shape check**, exactly as the second text part carries it, trimmed. The
+  shape check is what keeps a client-supplied header value free of anything but `<First> the <Creature>`.
+- **The second text part stays**: HC-666 names its Deployment from the name the model reads.
+
+Conformance in `test_chat_witch_header.py`; three mutants in `mutation_check.py`. The live check is the
+workshop's: repin `gitops/ai-layer/guard-proxy`, extend `verify/test_chat_witch_name.py`, then a chat deploy
+on https://attackme.burritobot.co shows on deployments.burritobot.co under the sender's witch name.

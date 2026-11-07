@@ -345,7 +345,10 @@ func (s *Server) forwardChat(ctx context.Context, prompt, witch string, kitchenN
 	ctx, cancel := context.WithTimeout(ctx, s.agentTimeout)
 	defer cancel()
 	call := func(rpc map[string]any) (any, error) {
-		v, code, err := s.agentRPC(ctx, rpc)
+		// The send and every poll carry the name as a header too: kagent copies it onto the agent's MCP
+		// calls, so workshop-mcp credits a deploy to the visitor from the request rather than from the model
+		// (Unleash_an_Agent_Watch_It_Burn#995).
+		v, code, err := s.agentRPC(ctx, rpc, witch)
 		if code != 0 {
 			status = code
 			span.SetAttributes(semconv.HttpResponseStatusCodeKey.Int(code))
@@ -450,7 +453,7 @@ func (s *Server) cancelTask(ctx context.Context, taskID, reason string) {
 	ctx, cancel := context.WithTimeout(ctx, s.agentTimeout)
 	defer cancel()
 	resp, _, err := s.agentRPC(ctx, map[string]any{"jsonrpc": "2.0", "id": "cancel", "method": "tasks/cancel",
-		"params": map[string]any{"id": taskID}})
+		"params": map[string]any{"id": taskID}}, "")
 	if err != nil {
 		s.log.ErrorContext(ctx, fmt.Sprintf("could not cancel the agent's task %s: %v", taskID, err), "event", "task_cancel_failed")
 		return
@@ -478,8 +481,9 @@ func truncate(v any, n int) string {
 }
 
 // agentRPC posts one JSON-RPC request to the agent root and returns the decoded reply and the HTTP
-// status, 0 when no response came. Only a JSON Content-Type travels with it.
-func (s *Server) agentRPC(ctx context.Context, rpc map[string]any) (any, int, error) {
+// status, 0 when no response came. Only a JSON Content-Type travels with it, and an X-Witch-Name header
+// when witch is set.
+func (s *Server) agentRPC(ctx context.Context, rpc map[string]any, witch string) (any, int, error) {
 	body, err := json.Marshal(rpc)
 	if err != nil {
 		return nil, 0, err
@@ -489,6 +493,9 @@ func (s *Server) agentRPC(ctx context.Context, rpc map[string]any) (any, int, er
 		return nil, 0, err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if witch != "" {
+		req.Header.Set("X-Witch-Name", witch)
+	}
 	otel.GetTextMapPropagator().Inject(ctx, propagation.HeaderCarrier(req.Header))
 	res, err := s.client.Do(req)
 	if err != nil {
