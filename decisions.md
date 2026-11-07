@@ -557,3 +557,22 @@ a span, and the mutation check holds the log line.
 
 Revisit if a GET ever joins an interaction (a caller sending W3C context on a discovery fetch the trace
 should show), or if the console moves to a push channel and the poll objection goes away.
+
+## 2026-11-07: GET /prompts carries each prompt's witch name in a parallel `witches` list
+
+The prompt wall labels each prompt with its cluster, so on a busy wall nobody can find their own prompt.
+Unleash_an_Agent_Watch_It_Burn#921 asked for the sender's witch name instead (guard-proxy-agenticburn#59).
+Both builds now answer `{"enabled", "prompts", "witches"}`; `witches[i]` names whoever sent `prompts[i]`,
+from one copy of the feed under one lock.
+
+- `prompts` stays bare strings. The wall's `parse_payload()` keeps only `str` items, lab-platform's
+  `internal/promptfeed` decodes `*[]string`, and Unleash's `display.js` sets each item as `textContent`,
+  so `{text, witch}` objects there would empty the wall rather than label it.
+- A parallel list rather than a second, object-shaped field: lab-platform refuses a `/prompts` body over
+  256 KiB whole, and proxy.py's `json.dumps` escapes an emoji as a 12-byte surrogate pair. Fifty
+  280-character emoji prompts with names are about 170 KB; a second copy of each text made about 339 KB.
+  `test_a_full_feed_of_named_emoji_prompts_fits_lab_platforms_read` holds the bound.
+- A prompt with no usable name carries `""`, never null or a shorter list, and every A2A prompt does.
+- The name is client-chosen and only shape-checked, so "Shit the Ghoul" passes the `<First> the
+  <Creature>` shape. A name the feed's moderator would change in any way is dropped whole to `""` rather
+  than shown as "[redacted] the Ghoul". The name never goes into the prompt text.

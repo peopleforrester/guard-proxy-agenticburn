@@ -150,8 +150,15 @@ build spans a GET; a failed GET passthrough now logs `forward_error` at ERROR in
 nothing at INFO or above before). The Go `/toggle` 500 already logs `spend_store_error`. Decision
 recorded 2026-11-05; conformance in `test_logging.py` and `test_telemetry.py`, one new mutant.
 
+### Agent-task #59: GET /prompts carries each prompt's witch name in `witches`
+Asked by Unleash_an_Agent_Watch_It_Burn#921 for the prompt wall (prompts-agenticburn#16). Both builds
+answer `{"enabled", "prompts", "witches"}`: `prompts` unchanged, `witches[i]` the sender of `prompts[i]`,
+`""` for none, for every A2A prompt and for a name moderation would change. Built from the diff Unleash
+run 17641 tested on c5f71f3. Decision recorded 2026-11-07. The workshop then repins
+`gitops/ai-layer/guard-proxy` and its `checksum/proxy-py`.
+
 ## Branch & Tests
-- Branch: agent/57-17346 (#57)
+- Branch: agent/59-18086 (#59)
 - Working tree: clean
 - Last CI: green on 3407cef (staging and main)
 
