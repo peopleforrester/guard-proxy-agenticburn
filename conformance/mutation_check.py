@@ -187,6 +187,11 @@ MUTANTS: list[tuple[str, str, str]] = [
         '"output_tokens": 0})',
     ),
     (
+        "a failed A2A forward leaves the sanitize span unset",
+        "                        san_span.set_status(Status(StatusCode.ERROR, str(exc)))\n",
+        "                        pass\n",
+    ),
+    (
         "a failed A2A forward's root names nothing",
         '{"error": f"agent forward failed: {exc}"}, error=str(exc))',
         '{"error": f"agent forward failed: {exc}"})',

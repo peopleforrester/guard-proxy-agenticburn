@@ -455,10 +455,32 @@ def test_a2a_forward_failure_marks_the_root(traced, agent, failure):
     assert root["status_message"]
 
 
+@pytest.mark.parametrize("failure", ["http_500", "unreachable"])
+def test_a2a_forward_failure_marks_the_sanitize_span(traced, agent, failure):
+    # guard-proxy-agenticburn#61: the workshop collector makes sanitize the turn's root in Agent Observability
+    # and drops agent.forward, so sanitize itself must read as failed, naming the same error.type. It carries
+    # no status code of its own: the agent's status stays on agent.forward.
+    env = {}
+    if failure == "http_500":
+        agent.respond = lambda req: Reply(status=500, body={})
+    else:
+        env["AGENT_URL"] = unreachable_url()
+    p, collector = traced(**env)
+    assert p.a2a("hi").status == 502
+    spans = _by_name(collector, {"sanitize", "agent.forward"})
+    san, fwd = spans["sanitize"], spans["agent.forward"]
+    assert san["status"] == "ERROR"
+    assert san["status_message"]
+    assert san["attributes"]["error.type"] == fwd["attributes"]["error.type"]
+    assert "http.response.status_code" not in san["attributes"]
+
+
 def test_a2a_answered_request_leaves_the_root_unset(traced, agent):
     p, collector = traced()
     assert p.a2a("two burritos").status == 200
-    assert _by_name(collector, {"POST /"})["POST /"]["status"] == "UNSET"
+    spans = _by_name(collector, {"POST /", "sanitize"})
+    assert spans["POST /"]["status"] == "UNSET"
+    assert spans["sanitize"]["status"] == "UNSET"
 
 
 def test_a2a_blocked_request_has_no_forward_span(traced, agent):
