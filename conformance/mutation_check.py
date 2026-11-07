@@ -326,6 +326,31 @@ MUTANTS: list[tuple[str, str, str]] = [
         '            log.error("agent GET failed: %s", exc, extra={"event": "forward_error"})\n',
         "",
     ),
+    (
+        "the chat kitchen note dropped",
+        '                m["parts"].append({"kind": "text", "text": KITCHEN_NOTE})',
+        "                pass",
+    ),
+    (
+        "the chat kitchen note before the witch name",
+        '                m["parts"].append({"kind": "text", "text": KITCHEN_NOTE})',
+        '                m["parts"].insert(1, {"kind": "text", "text": KITCHEN_NOTE})',
+    ),
+    (
+        "the chat recon ask carries its own kitchen note",
+        "        _recon_sessions.add(session)\n    return noted\n",
+        "        _recon_sessions.add(session)\n    return session in _recon_sessions\n",
+    ),
+    (
+        "the chat kitchen mark keyed by contextId",
+        "        kitchen_note = kitchen_noted(session, prompt)\n",
+        "        kitchen_note = kitchen_noted(_effective_ctx(session), prompt)\n",
+    ),
+    (
+        "the chat recon pattern without a verb of seeing",
+        '    r"[^.?!]{0,60}?\\b(?:see|access|view|open|read|list)\\b",\n',
+        '    r"",\n',
+    ),
 ]
 
 

@@ -1042,6 +1042,35 @@ def witch_context(witch):
     return f"The person chatting with you gave their name as {witch}."
 
 
+# The workshop Agent's recipe rule declines to open the recipe card later in a chat whose guest asked what
+# files or folders it can see, but Nova Pro keeps that decline only when the current message carries this
+# note (Unleash_an_Agent_Watch_It_Burn#968). Byte-equal to KITCHEN_NOTE in that repo's
+# verify/test_recipe_persona.py, which the rule is keyed on (#63).
+KITCHEN_NOTE = "[kitchen note: earlier in this chat the guest asked what folders you can see]"
+
+# A guest asking what files or folders the bot can see or has access to: "what" or "which", up to three
+# words, then files, folders or directories, then a verb of seeing within the same sentence. ASCII-only, as
+# Go's RE2 reads it, so both builds mark the same messages.
+_RECON_RE = re.compile(
+    r"\b(?:what|which)\s+(?:[a-z]+\s+){0,3}?(?:files?|folders?|director(?:y|ies))\b"
+    r"[^.?!]{0,60}?\b(?:see|access|view|open|read|list)\b",
+    re.I | re.A,
+)
+
+# The browser sessions whose guest has asked the recon question. Keyed by session, not contextId, so the
+# self-heal generation bump keeps the mark and a Reset (a new session id) clears it.
+_recon_sessions = set()
+
+
+def kitchen_noted(session, prompt):
+    """Whether this /chat turn carries the kitchen note: its session asked the recon question in an earlier
+    turn. A turn asking it marks the session for the turns after it, not for itself."""
+    noted = session in _recon_sessions
+    if session and _RECON_RE.search(prompt):
+        _recon_sessions.add(session)
+    return noted
+
+
 def chat_reply_text(resp):
     """The AGENT's reply text from an A2A response. kagent echoes the SAME text into artifacts AND the
     agent-role history, so take ONE source (artifacts first, then agent history, then status) rather than
@@ -1510,6 +1539,8 @@ class Handler(BaseHTTPRequestHandler):
                                       f"conversation; the budget guard stays on.",
                              "guarded": True, "input_tokens": 0, "output_tokens": 0})
             return
+        # Marked only here, past every guard and cap, so a recon question the agent never saw sets no mark.
+        kitchen_note = kitchen_noted(session, prompt)
         # Forward as A2A message/send to the agent root, inside a CLIENT span (the Service Map egress hop).
         global _chat_seq
 
@@ -1528,6 +1559,10 @@ class Handler(BaseHTTPRequestHandler):
                 # is talking to (HC-666 names its Deployment joker-<slug> from this), and parts[0] stays
                 # the prompt as typed.
                 m["parts"].append({"kind": "text", "text": witch_context(witch)})
+            if kitchen_note:
+                # Last, after the witch part, and like it outside every guard and the feed: the recipe rule
+                # reads it in the current message, where Nova Pro keeps the same-chat decline.
+                m["parts"].append({"kind": "text", "text": KITCHEN_NOTE})
             if ctx:
                 # Carry the (self-heal-generationed) browser session as the A2A contextId so kagent
                 # threads the order across turns.

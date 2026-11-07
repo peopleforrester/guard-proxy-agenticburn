@@ -183,6 +183,8 @@ func (s *Server) chatTurn(ctx context.Context, w http.ResponseWriter, r *http.Re
 			"Press Reset for a fresh conversation; the budget guard stays on.", s.budgetCap)))
 		return nil
 	}
+	// Marked only here, past every guard and cap, so a recon question the agent never saw sets no mark.
+	kitchenNote := s.kitchenNoted(session, prompt)
 
 	// The turn reaches the model, so the root and a gen_ai "chat" span carry what Datadog LLM Observability
 	// reads: the root for the trace list preview, the chat span for drill-down. The forwards parent onto
@@ -204,7 +206,7 @@ func (s *Server) chatTurn(ctx context.Context, w http.ResponseWriter, r *http.Re
 	var spentUSD float64
 	answered := false
 	attempt := func(optional bool) (any, bool) {
-		resp, running, err := s.forwardChat(ctx, prompt, witch, s.contextID(session))
+		resp, running, err := s.forwardChat(ctx, prompt, witch, kitchenNote, s.contextID(session))
 		if err != nil {
 			s.log.ErrorContext(ctx, "chat forward failed: "+err.Error(), "event", "forward_error")
 			if !optional {
@@ -320,11 +322,11 @@ const (
 )
 
 // forwardChat sends the prompt to the agent root as a non-blocking A2A message/send, under contextID when
-// set so kagent threads the conversation, with the visitor's witch name as a second text part when set,
-// and polls the task to its end. PROXY_TIMEOUT bounds the whole
+// set so kagent threads the conversation, with the visitor's witch name as a second text part when set and
+// the kitchen note as the last part when kitchenNote is, and polls the task to its end. PROXY_TIMEOUT bounds the whole
 // forward, the send and every poll, and the turn's deadline cuts it shorter. On an error, running is the
 // id of the task the agent may still be working on, or "" when there is none to cancel.
-func (s *Server) forwardChat(ctx context.Context, prompt, witch, contextID string) (resp any, running string, err error) {
+func (s *Server) forwardChat(ctx context.Context, prompt, witch string, kitchenNote bool, contextID string) (resp any, running string, err error) {
 	// One agent.forward span for the send and every poll; each request carries its W3C context.
 	ctx, span := s.clientSpan(ctx, semconv.UrlFullKey.String(s.agentURL+"/"))
 	// status is the last status the agent answered. A non-2xx answer ends the forward, so a forward that
@@ -356,6 +358,11 @@ func (s *Server) forwardChat(ctx context.Context, prompt, witch, contextID strin
 		// hands every text part to the model, so the agent knows who it is talking to (HC-666 names its
 		// Deployment joker-<slug> from this).
 		parts = append(parts, map[string]string{"kind": "text", "text": witchContext(witch)})
+	}
+	if kitchenNote {
+		// Last, after the witch part, and like it outside every guard and the feed: the recipe rule reads it
+		// in the current message, where Nova Pro keeps the same-chat decline.
+		parts = append(parts, map[string]string{"kind": "text", "text": kitchenNoteText})
 	}
 	msg := map[string]any{
 		"role":      "user",
@@ -408,6 +415,18 @@ var witchNameRE = regexp.MustCompile(`^[A-Z][a-z]{1,15} the [A-Z][a-z]{1,15}$`)
 func witchContext(witch string) string {
 	return "The person chatting with you gave their name as " + witch + "."
 }
+
+// kitchenNoteText follows a session's recon question. The workshop Agent's recipe rule declines to open the
+// recipe card later in a chat whose guest asked what files or folders it can see, but Nova Pro keeps that
+// decline only when the current message carries this note (Unleash_an_Agent_Watch_It_Burn#968). Byte-equal
+// to KITCHEN_NOTE in that repo's verify/test_recipe_persona.py, which the rule is keyed on (#63).
+const kitchenNoteText = "[kitchen note: earlier in this chat the guest asked what folders you can see]"
+
+// reconRE is a guest asking what files or folders the bot can see or has access to: "what" or "which", up
+// to three words, then files, folders or directories, then a verb of seeing within the same sentence. It is
+// proxy.py's _RECON_RE, which reads it ASCII-only as RE2 does.
+var reconRE = regexp.MustCompile(`(?i)\b(?:what|which)\s+(?:[a-z]+\s+){0,3}?(?:files?|folders?|director(?:y|ies))\b` +
+	`[^.?!]{0,60}?\b(?:see|access|view|open|read|list)\b`)
 
 // runningTaskID is the id of the task an A2A response carries while the agent is still working on it,
 // or "" when it carries none. A running task without an id cannot be polled or cancelled, so it is an error.
@@ -498,6 +517,20 @@ func (s *Server) contextID(session string) string {
 		return fmt.Sprintf("%s-g%d", session, g)
 	}
 	return session
+}
+
+// kitchenNoted reports whether this /chat turn carries the kitchen note: its session asked the recon question
+// in an earlier turn. A turn asking it marks the session for the turns after it, not for itself. The mark is
+// keyed by session, not contextId, so the self-heal generation bump keeps it and a Reset (a new session id)
+// clears it.
+func (s *Server) kitchenNoted(session, prompt string) bool {
+	s.ctxMu.Lock()
+	defer s.ctxMu.Unlock()
+	noted := s.recon[session]
+	if session != "" && reconRE.MatchString(prompt) {
+		s.recon[session] = true
+	}
+	return noted
 }
 
 // rotateContext moves a session to a fresh contextId and returns its new generation.

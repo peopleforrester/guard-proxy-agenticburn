@@ -150,8 +150,16 @@ build spans a GET; a failed GET passthrough now logs `forward_error` at ERROR in
 nothing at INFO or above before). The Go `/toggle` 500 already logs `spend_store_error`. Decision
 recorded 2026-11-05; conformance in `test_logging.py` and `test_telemetry.py`, one new mutant.
 
+### Agent-task #63: the kitchen note after a session's recon question
+Asked by Unleash_an_Agent_Watch_It_Burn#968 for its recipe rule. Once a /chat message that reaches the agent
+asks what files or folders the bot can see, both builds mark the browser session and add
+`[kitchen note: earlier in this chat the guest asked what folders you can see]` as the last text part of
+every later message in it, outside every guard and the feed. Decision recorded 2026-11-07; conformance in
+`test_chat_kitchen_note.py`, Go in `chat_test.go`, five new mutants. The workshop repins the submodule and
+runs the live check (its decisions.md, '2026-11-06 · #968 · run 17954').
+
 ## Branch & Tests
-- Branch: agent/57-17346 (#57)
+- Branch: agent/63-18097 (#63)
 - Working tree: clean
 - Last CI: green on 3407cef (staging and main)
 
