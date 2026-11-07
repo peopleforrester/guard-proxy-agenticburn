@@ -128,6 +128,22 @@ def test_a_task_past_proxy_timeout_is_cancelled(start_proxy, agent):
     assert "forward_error" in p.events()
 
 
+def test_a_slow_cancel_does_not_hold_the_502(start_proxy, agent):
+    """Unleash_an_Agent_Watch_It_Burn#905: the room's 502 goes out at PROXY_TIMEOUT, not after the
+    tasks/cancel round trip, however long the agent takes to answer it (guard-proxy-agenticburn#60). The
+    turn deadline ends the forward, so the cancel's own PROXY_TIMEOUT outlasts its 4s answer."""
+    slow_cancel = Reply(body=_task("canceled", rpc_id="cancel"), delay=4)
+    agent.respond = _never_done(cancel=slow_cancel)
+    p = start_proxy(TURN_TIMEOUT="1", PROXY_TIMEOUT="10")
+    r, took = _timed_chat(p)
+    assert r.status == 502
+    assert r.json() == KITCHEN_DOWN
+    assert took < 2.5, f"the 502 waited on the cancel ({took:.2f}s)"
+    assert "task_cancel" not in p.events(), "the cancel answered before the room did"
+    assert _wait_for(lambda: "task_cancel" in p.events(), timeout=8)
+    assert _cancels(agent)[0]["params"] == {"id": TASK}
+
+
 def test_a_task_past_the_turn_deadline_is_cancelled(start_proxy, agent):
     agent.respond = _never_done()
     p = start_proxy(TURN_TIMEOUT="1.5", PROXY_TIMEOUT="5")

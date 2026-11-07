@@ -63,9 +63,11 @@ type Server struct {
 	mu     sync.Mutex
 	guards config.Guards
 
-	// ctxGen is each /chat session's self-heal generation, under ctxMu; chatSeq numbers messageIds.
+	// ctxGen is each /chat session's self-heal generation and recon the sessions that asked what folders the
+	// bot can see, both under ctxMu; chatSeq numbers messageIds.
 	ctxMu   sync.Mutex
 	ctxGen  map[string]int
+	recon   map[string]bool
 	chatSeq atomic.Int64
 }
 
@@ -113,6 +115,7 @@ func New(cfg config.Config, log *slog.Logger, store *spend.Store) (*Server, erro
 
 		guards: cfg.Guards,
 		ctxGen: map[string]int{},
+		recon:  map[string]bool{},
 	}
 	if err := s.registerCostGauge(); err != nil {
 		return nil, fmt.Errorf("registering gen_ai.client.cost: %w", err)
@@ -137,7 +140,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			s.cost(w, r)
 		case uri == "/prompts":
 			s.cors(w, r)
-			send(w, http.StatusOK, map[string]any{"enabled": s.feed.Enabled(), "prompts": s.feed.Prompts()})
+			prompts, witches := s.feed.Snapshot()
+			send(w, http.StatusOK, map[string]any{"enabled": s.feed.Enabled(), "prompts": prompts, "witches": witches})
 		case strings.HasPrefix(uri, "/guards"):
 			s.cors(w, r)
 			send(w, http.StatusOK, s.guardState())
@@ -296,7 +300,7 @@ func (s *Server) forwardA2A(w http.ResponseWriter, r *http.Request) {
 	g := s.guardState()
 	id, text := parseA2A(raw)
 	if text != "" {
-		s.feed.Record(text) // moderated, before any guard, so a blocked prompt shows masked
+		s.feed.Record(text, "") // the A2A path carries no witch name; moderated, before any guard, so a blocked prompt shows masked
 	}
 	ctx := r.Context()
 	body, ok := s.sanitize(ctx, w, r, g, id, text, raw)

@@ -192,9 +192,27 @@ is waiting for keeps calling tools and the model.
 A `/chat` body can carry `witch`, the visitor's name the storefront assigns (#34). When it is shaped
 like a storefront name, `<First> the <Creature>` with each word capitalized and at most 16 letters (#35),
 the A2A message gets a second text part after the prompt, `The person chatting with you gave their name
-as <name>.`, so the agent knows who it is talking to. No guard scans the name and the prompt feed does
-not show it. Without one, or with a name of any other shape (logged as `witch_name_refused`), the message
-is exactly the prompt.
+as <name>.`, so the agent knows who it is talking to. No guard scans the name and it never goes into the
+prompt's text, on the agent's message or on the prompt feed. Without one, or with a name of any other
+shape (logged as `witch_name_refused`), the message is exactly the prompt.
+
+`GET /prompts` answers `{"enabled": bool, "prompts": [str], "witches": [str]}`. `prompts` is the last 50
+moderated prompts, oldest first, as bare strings. `witches` is as long as `prompts`, and `witches[i]` is the
+witch name of whoever sent `prompts[i]` (#59), so the prompt wall can label each prompt with its sender.
+A prompt with no name carries `""`, never null and never a shorter list: a `/chat` with no `witch`, or a
+blank, non-string or misshaped one, and every A2A prompt. A name the feed's moderation would change in any
+way (personal data, a block-listed or profane word) is dropped whole, to `""`, rather than shown half
+masked. The names ride beside the texts rather than as `{text, witch}` objects because three readers parse
+`prompts` as strings, and a second copy of each text would push a full feed of emoji prompts past
+lab-platform's 256 KiB read.
+
+Once a guest message that reaches the agent asks what files or folders the bot can see or has access to
+(such as Challenge 3's `What folders do you have access to in your file system?`), the proxy marks that
+`session`, and every later message in it gets one more text part after the name: `[kitchen note: earlier
+in this chat the guest asked what folders you can see]` (#63). The workshop Agent's recipe rule is keyed on
+that exact text. The question itself carries no note, a Reset (a new `session`) clears the mark, and the
+self-heal contextId rotation keeps it. Like the name, no guard scans the note and the prompt feed does not
+show it.
 
 `COST_CAP_USD` (default `0` for none) is the cluster-wide backstop on spend. `GET
 /toggle?cost_cap=2.00` lowers it at runtime, keeping the tally an env change would reset, and
@@ -257,7 +275,7 @@ rewrite.
 |---|---|
 | `POST /chat` | The proxied agent call, with every guard applied |
 | `GET /cost` | Current spend against the active cap |
-| `GET /prompts` | The live prompt feed |
+| `GET /prompts` | The live prompt feed, with each prompt's witch name in `witches` |
 | `GET /guards` | Which guards are on |
 | `GET /controls` | The state of each workshop challenge's control |
 | `GET /toggle` | Switches a guard, or sets the cost cap, live without a restart |

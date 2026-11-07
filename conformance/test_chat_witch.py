@@ -101,10 +101,12 @@ def test_a_block_listed_word_in_the_name_does_not_block(start_proxy, agent):
     )
 
 
-def test_the_prompt_feed_shows_only_the_prompt(start_proxy, agent):
+def test_the_prompt_feed_carries_the_name_beside_the_prompt_never_in_it(start_proxy, agent):
     p = start_proxy(STREAM_PROMPTS="on")
     chat(p, "one burrito", NAME)
-    assert p.get("/prompts").json()["prompts"] == ["one burrito"]
+    body = p.get("/prompts").json()
+    assert body["prompts"] == ["one burrito"]
+    assert body["witches"] == [NAME]
 
 
 def test_the_self_heal_retry_carries_the_name(start_proxy, agent):

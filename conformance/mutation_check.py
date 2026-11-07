@@ -221,8 +221,28 @@ MUTANTS: list[tuple[str, str, str]] = [
     ),
     (
         "feed redaction reaches the bot",
-        "                _prompts.append(moderate(prompt))",
-        "                prompt = moderate(prompt)\n                _prompts.append(prompt)",
+        "        record_prompt(prompt, witch)\n",
+        "        prompt = moderate(prompt)\n        record_prompt(prompt, witch)\n",
+    ),
+    (
+        "feed drops the witch name",
+        '"witches": [witch for _, witch in kept]}',
+        '"witches": ["" for _ in kept]}',
+    ),
+    (
+        "feed names out of step with the prompts",
+        '"witches": [witch for _, witch in kept]}',
+        '"witches": sorted(witch for _, witch in kept)}',
+    ),
+    (
+        "feed shows a name moderation would mask",
+        '    return witch if witch and moderate(witch) == witch else ""',
+        "    return witch",
+    ),
+    (
+        "feed puts the witch name in the prompt",
+        "    entry = (moderate(text), feed_witch(witch))",
+        '    entry = (moderate(f"{witch} {text}".strip()), feed_witch(witch))',
     ),
     (
         "no context rotation",
@@ -286,6 +306,13 @@ MUTANTS: list[tuple[str, str, str]] = [
         "                        pass",
     ),
     (
+        "the chat 502 waits on tasks/cancel",
+        "                    if not optional:\n                        # The turn fails with the forward",
+        "                    if task_id:\n                        _cancel_task(task_id, str(exc))\n"
+        "                        task_id = None\n"
+        "                    if not optional:\n                        # The turn fails with the forward",
+    ),
+    (
         "the chat poll ignores PROXY_TIMEOUT",
         "            fwd_deadline = time.monotonic() + TIMEOUT\n",
         "            fwd_deadline = time.monotonic() + 3600\n",
@@ -330,6 +357,31 @@ MUTANTS: list[tuple[str, str, str]] = [
         "a failed GET passthrough not logged",
         '            log.error("agent GET failed: %s", exc, extra={"event": "forward_error"})\n',
         "",
+    ),
+    (
+        "the chat kitchen note dropped",
+        '                m["parts"].append({"kind": "text", "text": KITCHEN_NOTE})',
+        "                pass",
+    ),
+    (
+        "the chat kitchen note before the witch name",
+        '                m["parts"].append({"kind": "text", "text": KITCHEN_NOTE})',
+        '                m["parts"].insert(1, {"kind": "text", "text": KITCHEN_NOTE})',
+    ),
+    (
+        "the chat recon ask carries its own kitchen note",
+        "        _recon_sessions.add(session)\n    return noted\n",
+        "        _recon_sessions.add(session)\n    return session in _recon_sessions\n",
+    ),
+    (
+        "the chat kitchen mark keyed by contextId",
+        "        kitchen_note = kitchen_noted(session, prompt)\n",
+        "        kitchen_note = kitchen_noted(_effective_ctx(session), prompt)\n",
+    ),
+    (
+        "the chat recon pattern without a verb of seeing",
+        '    r"[^.?!]{0,60}?\\b(?:see|access|view|open|read|list)\\b",\n',
+        '    r"",\n',
     ),
 ]
 

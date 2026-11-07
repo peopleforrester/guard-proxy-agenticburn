@@ -18,6 +18,38 @@ workshop's `gitops/ai-layer/guard-proxy` submodule to this entry's commit (or a 
   `weaver/registry/guard-proxy-spans.yaml` declares `ref: error.type`, conditionally required when the
   forward fails. The Go build's `internal/telemetry/semconv` already has the key and needs no regeneration.
 
+## 2026-11-07: /chat adds the kitchen note after a session's recon question
+
+Both builds (guard-proxy-agenticburn#63, asked by Unleash_an_Agent_Watch_It_Burn#968). Repin the
+workshop's `gitops/ai-layer/guard-proxy` submodule to this entry's commit (or a later one) to pick it up.
+
+- Once a `/chat` message that reaches the agent asks what files or folders the bot can see or has access
+  to, its `session` is marked. Every later message in it carries one more A2A text part, last, after the
+  witch-name part: `[kitchen note: earlier in this chat the guest asked what folders you can see]`,
+  byte-equal to `KITCHEN_NOTE` in the workshop's `verify/test_recipe_persona.py`.
+- The recon message itself carries no note, so a fresh chat's first attack (lab.html's Challenge 3) has
+  none. A Reset is a new `session` and clears the mark; the self-heal contextId rotation keeps it.
+- A recon question a guard, rate limit or cap blocks sets no mark. No guard scans the note, the prompt
+  feed does not show it, and it logs no event.
+- The mark lives in memory, as the self-heal generation does: a proxy restart clears every mark.
+
+## 2026-11-07: GET /prompts carries each prompt's witch name in `witches`
+
+Both builds (guard-proxy-agenticburn#59, asked by Unleash_an_Agent_Watch_It_Burn#921 for
+prompts-agenticburn#16). Repin the workshop's `gitops/ai-layer/guard-proxy` submodule and its
+`checksum/proxy-py` to this entry's commit (or a later one) to pick it up.
+
+- `GET /prompts` answers `{"enabled", "prompts", "witches"}`. `prompts` is unchanged: the bare moderated
+  texts, oldest first, at most 50.
+- `witches` is a list of strings as long as `prompts`; `witches[i]` is the witch name of whoever sent
+  `prompts[i]`, taken from the same copy of the feed.
+- A prompt with no name carries `""`, never null and never a shorter list: a `/chat` with no `witch`, a
+  blank, non-string or misshaped one, and every A2A prompt.
+- A name the feed's moderation would change in any way is dropped whole, to `""`. The name never goes into
+  the prompt text.
+- Readers that ignore unknown fields are unaffected. A full feed of fifty 280-character emoji prompts with
+  names stays under lab-platform's 256 KiB read.
+
 ## 2026-11-03: the /chat `chat` span carries the turn's token counts
 
 Both builds (guard-proxy-agenticburn#49, asked by Unleash_an_Agent_Watch_It_Burn#784). Repin the
