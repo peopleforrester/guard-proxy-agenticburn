@@ -638,3 +638,43 @@ does not need to move for this; the 2.5s bound in the workshop's test is filed t
 
 Conformance: `test_a_slow_cancel_does_not_hold_the_502` in `test_task_cancel.py`, against both builds,
 and the mutant "the chat 502 waits on tasks/cancel" holds it.
+
+## 2026-11-07: /chat sends X-Pantry-Shut on a turn whose chat may not have the recipe card
+
+BurritoBot gave Challenge 2's recipe card away in the same chat where it had just named its folders
+(Unleash_an_Agent_Watch_It_Burn#1000). workshop-mcp's run_shell and get_vault_entry now withhold the recipe
+on a tools/call carrying `X-Pantry-Shut`, and kagent copies that header from the A2A request onto its MCP
+calls, so both builds now decide each /chat turn whether the guest may have the card and send the header
+when not (guard-proxy-agenticburn#65). The rule is the issue's:
+
+- **Two flags per browser session.** guest_named: some guest message so far, the current one included,
+  matches `burrito-data|config/legacy|secret-sauce-recipe` in the prompt (parts[0]). shown: a reply matched
+  `burrito-data|secret-sauce-recipe` while guest_named was still false. Keyed by session, so a Reset starts
+  clean and the self-heal generation bump keeps them; no session keeps no state, as a chat without one has
+  no memory either.
+- **The value.** `shown` once shown, else `unnamed` when the current prompt names none of the three, else
+  no header. It rides on the message/send and every tasks/get poll of the turn, retries included;
+  tasks/cancel and the /a2a passthrough carry none.
+
+Three choices the issue left open:
+
+- **A guest message counts before any guard.** The flag says whether the guest knew the name, and a
+  message a guard, rate limit or cap blocks still shows it did. The kitchen note (#63) marks only past the
+  guards because it is about what the agent's conversation holds; this flag is about the guest.
+- **The reply read is the one the guest receives**: the final reply after the retries, the last-resort
+  scratchpad and the output guard, thinking block included. A first reply the retry replaced, or a name the
+  output guard scrubbed or blocked, never reached the guest.
+- **Case folds for ASCII letters only** in both builds (proxy.py `re.I | re.A`; Go lowers ASCII bytes
+  before an exact RE2 match). Python's Unicode `re.I` folds ı and İ to i, and Go's `(?i)` folds ſ to s, so
+  the defaults would mark different messages in each build; a dotless i or long s is not the path anyway.
+
+The flags live in memory, as the self-heal generation and the kitchen mark do: a proxy restart clears them.
+A chat whose reply named the folder before a restart then sends no header on a message that names it, so
+the card opens there again; a message naming none of the three still sends `unnamed`.
+
+Conformance in `test_chat_pantry_shut.py`, against both builds; Go's `TestPantryShut` and
+`TestAsciiLowerFoldsOnlyASCII`; ten mutants in `mutation_check.py`.
+
+Not yet run on a cluster: the workshop repins `gitops/ai-layer/guard-proxy` to this commit and runs #1000's
+owed live replays on https://attackme.burritobot.co/ ('2026-11-07 · #1000 · run 18077' in that repo's
+decisions.md).

@@ -177,6 +177,43 @@ func TestKitchenNotedMarksTheTurnsAfterTheRecon(t *testing.T) {
 	}
 }
 
+func TestAsciiLowerFoldsOnlyASCII(t *testing.T) {
+	for in, want := range map[string]string{
+		"BURRITO-DATA":                      "burrito-data",
+		"Config/Legacy":                     "config/legacy",
+		"\u017fecret-SAUCE-recipe":          "\u017fecret-sauce-recipe",
+		"BURR\u0130TO-DATA \u212a Zo\u00cb": "burr\u0130to-data \u212a zo\u00cb",
+		"":                                  "",
+	} {
+		if got := asciiLower(in); got != want {
+			t.Errorf("asciiLower(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestPantryShut(t *testing.T) {
+	s := newServer(t, config.Config{Agent: config.Agent{URL: "http://unused.invalid"}}, nil)
+	for i, turn := range []struct {
+		session, prompt, reply, want string
+	}{
+		{"s1", "what folders can you see?", "I can see burrito-data.", "unnamed"},
+		{"s1", "read burrito-data", "", "shown"},
+		{"s1", "one burrito", "", "shown"},
+		{"s2", "read BURRITO-DATA", "burrito-data has it", ""},
+		{"s2", "one burrito", "", "unnamed"},
+		{"s2", "read burrito-data", "", ""},
+		{"s3", "what folders?", "I can see config/legacy.", "unnamed"},
+		{"s3", "read config/legacy", "", ""},
+		{"", "what folders?", "I can see secret-sauce-recipe.", "unnamed"},
+		{"", "read secret-sauce-recipe", "", ""},
+	} {
+		if got := s.pantryShut(turn.session, turn.prompt); got != turn.want {
+			t.Errorf("turn %d: pantryShut(%q, %q) = %q, want %q", i, turn.session, turn.prompt, got, turn.want)
+		}
+		s.pantryRead(turn.session, turn.reply)
+	}
+}
+
 func TestRunningTaskID(t *testing.T) {
 	for body, want := range map[string]string{
 		`{"result": {"kind": "task", "id": "t1", "status": {"state": "submitted"}}}`:      "t1",

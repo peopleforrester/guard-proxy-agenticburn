@@ -383,6 +383,59 @@ MUTANTS: list[tuple[str, str, str]] = [
         '    r"[^.?!]{0,60}?\\b(?:see|access|view|open|read|list)\\b",\n',
         '    r"",\n',
     ),
+    (
+        "the chat forward sends no X-Pantry-Shut",
+        "                fwd_headers[PANTRY_HEADER] = pantry\n",
+        "                pass\n",
+    ),
+    (
+        "tasks/cancel sends X-Pantry-Shut",
+        '                                     headers={"Content-Type": "application/json"}, method="POST")\n'
+        "        with urllib.request.urlopen(req, timeout=TIMEOUT) as r:",
+        '                                     headers={"Content-Type": "application/json",\n'
+        '                                              "X-Pantry-Shut": "unnamed"}, method="POST")\n'
+        "        with urllib.request.urlopen(req, timeout=TIMEOUT) as r:",
+    ),
+    (
+        "a guest message naming the folder still sends unnamed",
+        '    return "" if named else "unnamed"\n',
+        '    return "unnamed"\n',
+    ),
+    (
+        "the pantry never marked shown",
+        "            flags[1] = True\n",
+        "            flags[1] = False\n",
+    ),
+    (
+        "a reply after the guest named the folder marks it shown",
+        "        if not flags[0]:\n            flags[1] = True\n",
+        "        if True:\n            flags[1] = True\n",
+    ),
+    (
+        "guest_named forgets an earlier message",
+        "            flags[0] = flags[0] or named\n",
+        "            flags[0] = named\n",
+    ),
+    (
+        "the pantry flags keyed by contextId",
+        "        pantry = pantry_shut(session, prompt)\n",
+        "        pantry = pantry_shut(_effective_ctx(session), prompt)\n",
+    ),
+    (
+        "the pantry reads the reply before the output guard",
+        "            pantry_read(session, reply)\n",
+        "            pantry_read(session, chat_reply_text(resp))\n",
+    ),
+    (
+        "a reply naming config/legacy marks the pantry shown",
+        '_REPLY_NAMES_RE = re.compile(r"burrito-data|secret-sauce-recipe", re.I | re.A)',
+        '_REPLY_NAMES_RE = re.compile(r"burrito-data|secret-sauce-recipe|config/legacy", re.I | re.A)',
+    ),
+    (
+        "the guest pattern folds non-ASCII letters",
+        '_GUEST_NAMES_RE = re.compile(r"burrito-data|config/legacy|secret-sauce-recipe", re.I | re.A)',
+        '_GUEST_NAMES_RE = re.compile(r"burrito-data|config/legacy|secret-sauce-recipe", re.I)',
+    ),
 ]
 
 

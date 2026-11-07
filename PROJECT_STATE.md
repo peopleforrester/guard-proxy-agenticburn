@@ -157,8 +157,16 @@ answer `{"enabled", "prompts", "witches"}`: `prompts` unchanged, `witches[i]` th
 run 17641 tested on c5f71f3. Decision recorded 2026-11-07. The workshop then repins
 `gitops/ai-layer/guard-proxy` and its `checksum/proxy-py`.
 
+### Agent-task #65: send X-Pantry-Shut on a /chat turn whose chat may not have the recipe card
+Asked by Unleash_an_Agent_Watch_It_Burn#1000. Both builds keep per-session guest_named and shown flags and
+send `X-Pantry-Shut: shown` or `unnamed` on the turn's message/send and every tasks/get poll; kagent copies
+it onto MCP calls and workshop-mcp withholds the recipe. Decision recorded 2026-11-07. Built on staging
+without #64 (agent/64-18112, X-Witch-Name), which also changes `agentRPC`'s signature: merging the two
+means one `http.Header` carrying both. The workshop then repins `gitops/ai-layer/guard-proxy` and runs
+#1000's live replays.
+
 ## Branch & Tests
-- Branch: agent/59-18086 (#59)
+- Branch: agent/65-18128 (#65)
 - Working tree: clean
 - Last CI: green on 3407cef (staging and main)
 

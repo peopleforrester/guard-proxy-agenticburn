@@ -1098,6 +1098,49 @@ def kitchen_noted(session, prompt):
     return noted
 
 
+# The recipe card's pantry (Unleash_an_Agent_Watch_It_Burn#1000). workshop-mcp withholds the card on any
+# tools/call carrying this header, which kagent copies from the /chat forward onto its MCP calls. Byte-equal,
+# case aside, to PANTRY_HEADER in that repo's gitops/ai-layer/workshop-mcp-server.py and to the allowedHeaders
+# entry in gitops/workshop-agent/agent.yaml (#65).
+PANTRY_HEADER = "X-Pantry-Shut"
+# A guest message that names where the card is, and a reply that names it to a guest who had not. Case is
+# folded for ASCII letters only, as the Go build folds it, so both builds mark the same messages.
+_GUEST_NAMES_RE = re.compile(r"burrito-data|config/legacy|secret-sauce-recipe", re.I | re.A)
+_REPLY_NAMES_RE = re.compile(r"burrito-data|secret-sauce-recipe", re.I | re.A)
+
+# Each browser session's [guest_named, shown]. Keyed by session, not contextId, so the self-heal generation
+# bump keeps them and a Reset (a new session id) starts clean.
+_pantry = {}
+_pantry_lock = threading.Lock()
+
+
+def pantry_shut(session, prompt):
+    """The X-Pantry-Shut value for this /chat turn, "" for none: `shown` once a reply named the card's folder
+    to a guest who had not, else `unnamed` when this message names none of them. Marks the session named when
+    this message names one, so a reply after it marks nothing."""
+    named = bool(_GUEST_NAMES_RE.search(prompt))
+    shown = False
+    if session:
+        with _pantry_lock:
+            flags = _pantry.setdefault(session, [False, False])
+            flags[0] = flags[0] or named
+            shown = flags[1]
+    if shown:
+        return "shown"
+    return "" if named else "unnamed"
+
+
+def pantry_read(session, reply):
+    """Marks the session shown when the reply the guest reads, thinking block included, names the card's
+    folder or file before any of the guest's messages did."""
+    if not session or not _REPLY_NAMES_RE.search(reply):
+        return
+    with _pantry_lock:
+        flags = _pantry.setdefault(session, [False, False])
+        if not flags[0]:
+            flags[1] = True
+
+
 def chat_reply_text(resp):
     """The AGENT's reply text from an A2A response. kagent echoes the SAME text into artifacts AND the
     agent-role history, so take ONE source (artifacts first, then agent history, then status) rather than
@@ -1505,6 +1548,8 @@ class Handler(BaseHTTPRequestHandler):
                              "input_tokens": 0, "output_tokens": 0})
             return
         record_prompt(prompt, witch)
+        # Read before any guard: a message a guard blocks still shows the guest knew the card's folder.
+        pantry = pantry_shut(session, prompt)
         # Input guards and the topic guard (same toggles as the A2A path), then rate/cost cap. A blocked
         # request spends 0 tokens.
         if GUARDS["input_blocklist"]:
@@ -1598,6 +1643,11 @@ class Handler(BaseHTTPRequestHandler):
             a2a = {"jsonrpc": "2.0", "id": "chat", "method": "message/send",
                    "params": {"message": m, "configuration": {"blocking": False}}}
             fwd_headers = {"Content-Type": "application/json"}
+            if pantry:
+                # The send and every poll carry it: kagent copies it onto the agent's MCP calls, so
+                # workshop-mcp keeps the recipe card shut in a chat that may not have it (#65). tasks/cancel
+                # and /a2a carry none.
+                fwd_headers[PANTRY_HEADER] = pantry
             # PROXY_TIMEOUT bounds the whole forward, the send and every poll, as it bounded the one
             # blocking call before; the turn's deadline cuts it shorter.
             fwd_deadline = time.monotonic() + TIMEOUT
@@ -1776,6 +1826,8 @@ class Handler(BaseHTTPRequestHandler):
             if guarded:
                 log.info("output guardrail modified response content", extra={"event": "output_scrub"})
                 self._stamp("witb.guard.decision", "output_redacted")
+            # The reply as the guest reads it, so a scrubbed or blocked name marks nothing.
+            pantry_read(session, reply)
             # Per-call cost (cost_usd, summed above) so the storefront can show a live dollar counter
             # without hardcoding rates client-side.
             self._send(200, {"reply": reply or "...", "guarded": guarded,
