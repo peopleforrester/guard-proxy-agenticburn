@@ -702,8 +702,9 @@ swapping host does, did. The margins are now set as follows.
 - The cost is about 40 s more per suite run, out of about 9 minutes.
 
 Measured with 8 parallel copies of the two files against the Go build, 32 runs each, the injector
-stopping each process for up to the given time at random intervals: base build, 4 runs of 32 failing at
-0.8 s stalls and 32 of 32 at 2 s; the change, 0 of 32 at 0.8 s (with a 1 s margin each side) and 4 of 32 at 2 s, where stops of two
-seconds stacked inside one 3 s call ate the 1.5 s to spare. The host's own failures overran by about
-half a second inside a call and 2.4 to 4.1 s outside the turn, which these margins cover; widening
-further would double the tests' time again.
+stopping each process for up to the given time at random intervals. The base build failed 4 runs of 32
+at 0.8 s stalls and 32 of 32 at 2 s. The change failed 4 of 32 at 2 s, where stops of two seconds stacked
+inside one 3 s call ate the 1.5 s to spare, and none of 32 at 0.8 s with the narrower SLOW 2.5 s and
+TURN 4 s it was tuned through. The host's own failures overran by about half a second inside a call and
+2.4 to 4.1 s outside the turn, which these margins cover; widening further would double the tests' time
+again.
