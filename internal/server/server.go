@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -63,11 +64,12 @@ type Server struct {
 	mu     sync.Mutex
 	guards config.Guards
 
-	// ctxGen is each /chat session's self-heal generation and recon the sessions that asked what folders the
-	// bot can see, both under ctxMu; chatSeq numbers messageIds.
+	// ctxGen is each /chat session's self-heal generation, recon the sessions that asked what folders the
+	// bot can see and pantry each session's recipe card flags, all under ctxMu; chatSeq numbers messageIds.
 	ctxMu   sync.Mutex
 	ctxGen  map[string]int
 	recon   map[string]bool
+	pantry  map[string]*pantryFlags
 	chatSeq atomic.Int64
 }
 
@@ -116,6 +118,7 @@ func New(cfg config.Config, log *slog.Logger, store *spend.Store) (*Server, erro
 		guards: cfg.Guards,
 		ctxGen: map[string]int{},
 		recon:  map[string]bool{},
+		pantry: map[string]*pantryFlags{},
 	}
 	if err := s.registerCostGauge(); err != nil {
 		return nil, fmt.Errorf("registering gen_ai.client.cost: %w", err)
@@ -227,6 +230,7 @@ func (s *Server) toggle(w http.ResponseWriter, r *http.Request) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	was, wasCap := s.guards, s.meter.CostCap()
 	if capAsked {
 		if err := s.meter.SetCostCap(newCap); err != nil {
 			s.storeError(r.Context(), err)
@@ -248,6 +252,7 @@ func (s *Server) toggle(w http.ResponseWriter, r *http.Request) {
 	set("output", &s.guards.Output)
 	set("budget", &s.guards.Budget)
 	set("topic", &s.guards.Topic)
+	s.logToggles(r, was, wasCap)
 	send(w, http.StatusOK, map[string]any{
 		"input_blocklist":  s.guards.InputBlocklist,
 		"input_classifier": s.guards.InputClassifier,
@@ -256,6 +261,48 @@ func (s *Server) toggle(w http.ResponseWriter, r *http.Request) {
 		"topic":            s.guards.Topic,
 		"cost_cap_usd":     s.meter.CostCap(),
 	})
+}
+
+// toggleCallerMax is how much of a caller's X-WIB-Caller header a guard_toggle line keeps.
+const toggleCallerMax = 200
+
+// logToggles writes one guard_toggle line per guard a /toggle changed, in the order /toggle's answer lists them,
+// so a guard found in the wrong state can be traced to the request that put it there
+// (Unleash_an_Agent_Watch_It_Burn#1024). The peer is the TCP client, 127.0.0.1 for a kubectl exec into the pod; the
+// caller is the X-WIB-Caller header a script may send to name itself, cut to toggleCallerMax bytes, and "" when
+// absent. A /toggle that changes nothing logs nothing. Called with s.mu held.
+func (s *Server) logToggles(r *http.Request, was config.Guards, wasCap float64) {
+	peer, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		peer = r.RemoteAddr
+	}
+	caller := r.Header.Get("X-WIB-Caller")
+	if len(caller) > toggleCallerMax {
+		caller = caller[:toggleCallerMax]
+	}
+	by := peer
+	if caller != "" {
+		by += " (" + caller + ")"
+	}
+	now := s.guards
+	changes := []struct {
+		guard    string
+		was, now any
+	}{
+		{"input_blocklist", was.InputBlocklist, now.InputBlocklist},
+		{"input_classifier", was.InputClassifier, now.InputClassifier},
+		{"output", was.Output, now.Output},
+		{"budget", was.Budget, now.Budget},
+		{"topic", was.Topic, now.Topic},
+		{"cost_cap", wasCap, s.meter.CostCap()},
+	}
+	for _, c := range changes {
+		if c.was == c.now {
+			continue
+		}
+		s.log.InfoContext(r.Context(), fmt.Sprintf("guard %s set to %v by %s", c.guard, c.now, by),
+			"event", "guard_toggle", "guard", c.guard, "value", c.now, "was", c.was, "peer", peer, "caller", caller)
+	}
 }
 
 // firstNonBlank is the first value of a key that has one, which is the value the reference reads: it

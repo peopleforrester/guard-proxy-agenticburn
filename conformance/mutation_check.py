@@ -281,6 +281,12 @@ MUTANTS: list[tuple[str, str, str]] = [
         "        return None if FAIL_CLOSED else text",
     ),
     (
+        "the dangling tool_use retry gets a turn of its own",
+        '_ctx_gen[session], extra={"event": "ctx_rotate"})\n',
+        '_ctx_gen[session], extra={"event": "ctx_rotate"})\n'
+        "                deadline = time.monotonic() + TURN_TIMEOUT\n",
+    ),
+    (
         "cors echoes any origin",
         "        if _origin and _origin_allowed(self):",
         "        if _origin:",
@@ -410,6 +416,94 @@ MUTANTS: list[tuple[str, str, str]] = [
         "the chat recon pattern without a verb of seeing",
         '    r"[^.?!]{0,60}?\\b(?:see|access|view|open|read|list)\\b",\n',
         '    r"",\n',
+    ),
+    (
+        "the chat forward sends no X-Pantry-Shut",
+        "                fwd_headers[PANTRY_HEADER] = pantry\n",
+        "                pass\n",
+    ),
+    (
+        "tasks/cancel sends X-Pantry-Shut",
+        '                                     headers={"Content-Type": "application/json"}, method="POST")\n'
+        "        with urllib.request.urlopen(req, timeout=TIMEOUT) as r:",
+        '                                     headers={"Content-Type": "application/json",\n'
+        '                                              "X-Pantry-Shut": "unnamed"}, method="POST")\n'
+        "        with urllib.request.urlopen(req, timeout=TIMEOUT) as r:",
+    ),
+    (
+        "a guest message naming the folder still sends unnamed",
+        '    return "" if named else "unnamed"\n',
+        '    return "unnamed"\n',
+    ),
+    (
+        "the pantry never marked shown",
+        "            flags[1] = True\n",
+        "            flags[1] = False\n",
+    ),
+    (
+        "a reply after the guest named the folder marks it shown",
+        "        if not flags[0]:\n            flags[1] = True\n",
+        "        if True:\n            flags[1] = True\n",
+    ),
+    (
+        "guest_named forgets an earlier message",
+        "            flags[0] = flags[0] or named\n",
+        "            flags[0] = named\n",
+    ),
+    (
+        "the pantry flags keyed by contextId",
+        "        pantry = pantry_shut(session, prompt)\n",
+        "        pantry = pantry_shut(_effective_ctx(session), prompt)\n",
+    ),
+    (
+        "the pantry reads the reply before the output guard",
+        "            pantry_read(session, reply)\n",
+        "            pantry_read(session, chat_reply_text(resp))\n",
+    ),
+    (
+        "a reply naming config/legacy marks the pantry shown",
+        '_REPLY_NAMES_RE = re.compile(r"burrito-data|secret-sauce-recipe", re.I | re.A)',
+        '_REPLY_NAMES_RE = re.compile(r"burrito-data|secret-sauce-recipe|config/legacy", re.I | re.A)',
+    ),
+    (
+        "the guest pattern folds non-ASCII letters",
+        '_GUEST_NAMES_RE = re.compile(r"burrito-data|config/legacy|secret-sauce-recipe", re.I | re.A)',
+        '_GUEST_NAMES_RE = re.compile(r"burrito-data|config/legacy|secret-sauce-recipe", re.I)',
+    ),
+    (
+        "a toggle that changes nothing still logs",
+        "            if now[guard] != was[guard]:\n",
+        "            if True:\n",
+    ),
+    (
+        "the guard_toggle lines out of answer order",
+        'TOGGLE_KEYS = ("input_blocklist", "input_classifier", "output", "budget", "topic", "cost_cap")',
+        'TOGGLE_KEYS = ("cost_cap", "input_blocklist", "input_classifier", "output", "budget", "topic")',
+    ),
+    (
+        "the guard_toggle line keeps the whole caller header",
+        '        caller = (self.headers.get("X-WIB-Caller") or "")[:TOGGLE_CALLER_MAX]\n',
+        '        caller = self.headers.get("X-WIB-Caller") or ""\n',
+    ),
+    (
+        "the guard_toggle message drops the caller",
+        '        by = f"{peer} ({caller})" if caller else peer\n',
+        "        by = peer\n",
+    ),
+    (
+        "the guard_toggle line reads the old value after the change",
+        "                self._log_toggles(was, {**GUARDS, \"cost_cap\": _cost_cap[\"usd\"]})\n",
+        "                self._log_toggles({**GUARDS, \"cost_cap\": _cost_cap[\"usd\"]}, {**GUARDS, \"cost_cap\": _cost_cap[\"usd\"]})\n",
+    ),
+    (
+        "the guard_toggle message writes a whole cap as 2.0",
+        "        return str(int(value))\n",
+        "        return repr(value)\n",
+    ),
+    (
+        "guard_toggle logged at WARNING",
+        '                log.info("guard %s set to %s by %s"',
+        '                log.warning("guard %s set to %s by %s"',
     ),
 ]
 

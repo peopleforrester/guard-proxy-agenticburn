@@ -109,6 +109,8 @@ func (s *Server) chatTurn(ctx context.Context, w http.ResponseWriter, r *http.Re
 		return nil
 	}
 	s.feed.Record(prompt, witch)
+	// Read before any guard: a message a guard blocks still shows the guest knew the card's folder.
+	pantry := s.pantryShut(session, prompt)
 	g := s.guardState()
 
 	// The input guards and the topic guard, then the limits and the caps. A blocked turn spends nothing.
@@ -206,7 +208,7 @@ func (s *Server) chatTurn(ctx context.Context, w http.ResponseWriter, r *http.Re
 	var spentUSD float64
 	answered := false
 	attempt := func(optional bool) (any, bool) {
-		resp, running, err := s.forwardChat(ctx, prompt, witch, kitchenNote, s.contextID(session))
+		resp, running, err := s.forwardChat(ctx, prompt, witch, kitchenNote, pantry, s.contextID(session))
 		if err != nil {
 			s.log.ErrorContext(ctx, "chat forward failed: "+err.Error(), "event", "forward_error")
 			if !optional {
@@ -311,6 +313,8 @@ func (s *Server) chatTurn(ctx context.Context, w http.ResponseWriter, r *http.Re
 		root.SetAttributes(semconv.WitbGuardDecisionKey.String(semconv.WitbGuardDecisionOutputRedacted))
 		s.log.InfoContext(ctx, "output guardrail modified response content", "event", "output_scrub")
 	}
+	// The reply as the guest reads it, so a scrubbed or blocked name marks nothing.
+	s.pantryRead(session, reply)
 	sent := reply
 	if sent == "" {
 		sent = "..."
@@ -333,10 +337,11 @@ const (
 
 // forwardChat sends the prompt to the agent root as a non-blocking A2A message/send, under contextID when
 // set so kagent threads the conversation, with the visitor's witch name as a second text part when set and
-// the kitchen note as the last part when kitchenNote is, and polls the task to its end. PROXY_TIMEOUT bounds the whole
+// the kitchen note as the last part when kitchenNote is, and polls the task to its end. The send and every
+// poll carry an X-Pantry-Shut header when pantry is set. PROXY_TIMEOUT bounds the whole
 // forward, the send and every poll, and the turn's deadline cuts it shorter. On an error, running is the
 // id of the task the agent may still be working on, or "" when there is none to cancel.
-func (s *Server) forwardChat(ctx context.Context, prompt, witch string, kitchenNote bool, contextID string) (resp any, running string, err error) {
+func (s *Server) forwardChat(ctx context.Context, prompt, witch string, kitchenNote bool, pantry, contextID string) (resp any, running string, err error) {
 	// One agent.forward span for the send and every poll; each request carries its W3C context.
 	ctx, span := s.clientSpan(ctx, semconv.UrlFullKey.String(s.agentURL+"/"))
 	// status is the last status the agent answered. A non-2xx answer ends the forward, so a forward that
@@ -354,11 +359,20 @@ func (s *Server) forwardChat(ctx context.Context, prompt, witch string, kitchenN
 	}()
 	ctx, cancel := context.WithTimeout(ctx, s.agentTimeout)
 	defer cancel()
+	// The send and every poll carry these headers, and kagent copies them onto the agent's MCP calls.
+	// tasks/cancel and /a2a carry none.
+	header := http.Header{}
+	if witch != "" {
+		// The name as a header too, so workshop-mcp credits a deploy to the visitor from the request rather
+		// than from the model (Unleash_an_Agent_Watch_It_Burn#995).
+		header.Set("X-Witch-Name", witch)
+	}
+	if pantry != "" {
+		// So workshop-mcp keeps the recipe card shut in a chat that may not have it (#65).
+		header.Set(pantryHeader, pantry)
+	}
 	call := func(rpc map[string]any) (any, error) {
-		// The send and every poll carry the name as a header too: kagent copies it onto the agent's MCP
-		// calls, so workshop-mcp credits a deploy to the visitor from the request rather than from the model
-		// (Unleash_an_Agent_Watch_It_Burn#995).
-		v, code, err := s.agentRPC(ctx, rpc, witch)
+		v, code, err := s.agentRPC(ctx, rpc, header)
 		if code != 0 {
 			status = code
 			span.SetAttributes(semconv.HttpResponseStatusCodeKey.Int(code))
@@ -463,7 +477,7 @@ func (s *Server) cancelTask(ctx context.Context, taskID, reason string) {
 	ctx, cancel := context.WithTimeout(ctx, s.agentTimeout)
 	defer cancel()
 	resp, _, err := s.agentRPC(ctx, map[string]any{"jsonrpc": "2.0", "id": "cancel", "method": "tasks/cancel",
-		"params": map[string]any{"id": taskID}}, "")
+		"params": map[string]any{"id": taskID}}, nil)
 	if err != nil {
 		s.log.ErrorContext(ctx, fmt.Sprintf("could not cancel the agent's task %s: %v", taskID, err), "event", "task_cancel_failed")
 		return
@@ -491,9 +505,8 @@ func truncate(v any, n int) string {
 }
 
 // agentRPC posts one JSON-RPC request to the agent root and returns the decoded reply and the HTTP
-// status, 0 when no response came. Only a JSON Content-Type travels with it, and an X-Witch-Name header
-// when witch is set.
-func (s *Server) agentRPC(ctx context.Context, rpc map[string]any, witch string) (any, int, error) {
+// status, 0 when no response came. Only a JSON Content-Type and the given headers travel with it.
+func (s *Server) agentRPC(ctx context.Context, rpc map[string]any, header http.Header) (any, int, error) {
 	body, err := json.Marshal(rpc)
 	if err != nil {
 		return nil, 0, err
@@ -502,10 +515,10 @@ func (s *Server) agentRPC(ctx context.Context, rpc map[string]any, witch string)
 	if err != nil {
 		return nil, 0, err
 	}
-	req.Header.Set("Content-Type", "application/json")
-	if witch != "" {
-		req.Header.Set("X-Witch-Name", witch)
+	for k, v := range header {
+		req.Header[k] = v
 	}
+	req.Header.Set("Content-Type", "application/json")
 	otel.GetTextMapPropagator().Inject(ctx, propagation.HeaderCarrier(req.Header))
 	res, err := s.client.Do(req)
 	if err != nil {
@@ -548,6 +561,81 @@ func (s *Server) kitchenNoted(session, prompt string) bool {
 		s.recon[session] = true
 	}
 	return noted
+}
+
+// pantryHeader shuts the recipe card's pantry (Unleash_an_Agent_Watch_It_Burn#1000): workshop-mcp withholds the
+// card on any tools/call carrying it, which kagent copies from the /chat forward onto its MCP calls. Byte-equal,
+// case aside, to PANTRY_HEADER in that repo's gitops/ai-layer/workshop-mcp-server.py and to the allowedHeaders
+// entry in gitops/workshop-agent/agent.yaml (#65).
+const pantryHeader = "X-Pantry-Shut"
+
+// guestNamesRE is a guest message naming where the recipe card is, and replyNamesRE a reply naming it to a guest
+// who had not. Both read asciiLower's text, so case is folded for ASCII letters only, as proxy.py folds it.
+var (
+	guestNamesRE = regexp.MustCompile(`burrito-data|config/legacy|secret-sauce-recipe`)
+	replyNamesRE = regexp.MustCompile(`burrito-data|secret-sauce-recipe`)
+)
+
+// asciiLower is s with its ASCII capitals lowered and every other byte kept.
+func asciiLower(s string) string {
+	b := []byte(s)
+	for i, c := range b {
+		if 'A' <= c && c <= 'Z' {
+			b[i] = c + 'a' - 'A'
+		}
+	}
+	return string(b)
+}
+
+// pantryFlags is one session's recipe card state: named once a guest message named the card's folder or
+// file, shown once a reply named it while named was still false, so the guest learned it from the bot.
+type pantryFlags struct{ named, shown bool }
+
+// pantryShut is the X-Pantry-Shut value for this /chat turn, "" for none: "shown" once a reply named the card's
+// folder to a guest who had not, else "unnamed" when this message names none of them. It marks the session
+// named when this message names one, so a reply after it marks nothing. The flags are keyed by session, not
+// contextId, so the self-heal generation bump keeps them and a Reset (a new session id) starts clean.
+func (s *Server) pantryShut(session, prompt string) string {
+	named := guestNamesRE.MatchString(asciiLower(prompt))
+	shown := false
+	if session != "" {
+		s.ctxMu.Lock()
+		f := s.pantryOf(session)
+		f.named = f.named || named
+		shown = f.shown
+		s.ctxMu.Unlock()
+	}
+	switch {
+	case shown:
+		return "shown"
+	case named:
+		return ""
+	default:
+		return "unnamed"
+	}
+}
+
+// pantryRead marks the session shown when the reply the guest reads, thinking block included, names the card's
+// folder or file before any of the guest's messages did.
+func (s *Server) pantryRead(session, reply string) {
+	if session == "" || !replyNamesRE.MatchString(asciiLower(reply)) {
+		return
+	}
+	s.ctxMu.Lock()
+	defer s.ctxMu.Unlock()
+	if f := s.pantryOf(session); !f.named {
+		f.shown = true
+	}
+}
+
+// pantryOf is the session's flags, made on first use; the caller holds ctxMu.
+func (s *Server) pantryOf(session string) *pantryFlags {
+	f := s.pantry[session]
+	if f == nil {
+		f = &pantryFlags{}
+		s.pantry[session] = f
+	}
+	return f
 }
 
 // rotateContext moves a session to a fresh contextId and returns its new generation.

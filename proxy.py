@@ -63,6 +63,10 @@ class _TraceJsonFormatter(logging.Formatter):
         scanners = getattr(record, "scanners", None)
         if scanners:
             payload["scanners"] = scanners
+        # A /toggle that changed a guard (guard_toggle): which guard, the value it took and had, and who asked.
+        toggle = getattr(record, "toggle", None)
+        if toggle:
+            payload.update(toggle)
         if _OTEL_AVAILABLE:
             ctx = trace.get_current_span().get_span_context()
             if ctx.is_valid:
@@ -112,6 +116,10 @@ LLM_GUARD_TOKEN = os.environ.get("LLM_GUARD_TOKEN", "")
 # change also restarts the pod (resetting the cost counter). A runtime toggle changes no managed
 # spec, so it sticks AND the counter survives. The live demo flips guards via /toggle, not kubectl.
 _guard_lock = threading.Lock()
+# The keys a guard_toggle line can name, in the order /toggle's answer lists them, and how much of a caller's
+# X-WIB-Caller header the line keeps.
+TOGGLE_KEYS = ("input_blocklist", "input_classifier", "output", "budget", "topic", "cost_cap")
+TOGGLE_CALLER_MAX = 200
 # Input guard is TWO progressively-enabled stages (ruling 2026-06-19): stage 1 is the deterministic
 # block-list (cheapest, pre-LLM, zero tokens), stage 2 is the model-based classifier. They toggle
 # INDEPENDENTLY so the demo shows "cheaper first" on the cost counter. Output is the exfil sidecar.
@@ -487,6 +495,16 @@ def parse_cost_cap(value):
     if not math.isfinite(cap) or cap <= 0 or (COST_CAP_USD > 0 and cap > COST_CAP_USD):
         return None
     return cap
+
+
+def _toggle_value_text(value):
+    """A guard_toggle message's value as the Go build's %v writes it: true or false, and a cap in its shortest
+    digits (2, not 2.0), whole caps below 1e21 without an exponent."""
+    if isinstance(value, bool):
+        return json.dumps(value)
+    if value.is_integer() and abs(value) < 1e21:
+        return str(int(value))
+    return repr(value)
 
 
 def cost_cap_refusal():
@@ -1103,6 +1121,49 @@ def kitchen_noted(session, prompt):
     return noted
 
 
+# The recipe card's pantry (Unleash_an_Agent_Watch_It_Burn#1000). workshop-mcp withholds the card on any
+# tools/call carrying this header, which kagent copies from the /chat forward onto its MCP calls. Byte-equal,
+# case aside, to PANTRY_HEADER in that repo's gitops/ai-layer/workshop-mcp-server.py and to the allowedHeaders
+# entry in gitops/workshop-agent/agent.yaml (#65).
+PANTRY_HEADER = "X-Pantry-Shut"
+# A guest message that names where the card is, and a reply that names it to a guest who had not. Case is
+# folded for ASCII letters only, as the Go build folds it, so both builds mark the same messages.
+_GUEST_NAMES_RE = re.compile(r"burrito-data|config/legacy|secret-sauce-recipe", re.I | re.A)
+_REPLY_NAMES_RE = re.compile(r"burrito-data|secret-sauce-recipe", re.I | re.A)
+
+# Each browser session's [guest_named, shown]. Keyed by session, not contextId, so the self-heal generation
+# bump keeps them and a Reset (a new session id) starts clean.
+_pantry = {}
+_pantry_lock = threading.Lock()
+
+
+def pantry_shut(session, prompt):
+    """The X-Pantry-Shut value for this /chat turn, "" for none: `shown` once a reply named the card's folder
+    to a guest who had not, else `unnamed` when this message names none of them. Marks the session named when
+    this message names one, so a reply after it marks nothing."""
+    named = bool(_GUEST_NAMES_RE.search(prompt))
+    shown = False
+    if session:
+        with _pantry_lock:
+            flags = _pantry.setdefault(session, [False, False])
+            flags[0] = flags[0] or named
+            shown = flags[1]
+    if shown:
+        return "shown"
+    return "" if named else "unnamed"
+
+
+def pantry_read(session, reply):
+    """Marks the session shown when the reply the guest reads, thinking block included, names the card's
+    folder or file before any of the guest's messages did."""
+    if not session or not _REPLY_NAMES_RE.search(reply):
+        return
+    with _pantry_lock:
+        flags = _pantry.setdefault(session, [False, False])
+        if not flags[0]:
+            flags[1] = True
+
+
 def chat_reply_text(resp):
     """The AGENT's reply text from an A2A response. kagent echoes the SAME text into artifacts AND the
     agent-role history, so take ONE source (artifacts first, then agent history, then status) rather than
@@ -1225,6 +1286,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(400, {"error": cost_cap_refusal()})
                 return
             with _guard_lock:
+                was = {**GUARDS, "cost_cap": _cost_cap["usd"]}
                 if "input" in q:
                     on = q["input"][0].lower() == "on"
                     GUARDS["input_blocklist"] = on
@@ -1234,6 +1296,7 @@ class Handler(BaseHTTPRequestHandler):
                         GUARDS[k] = q[k][0].lower() == "on"
                 if cap_q:
                     _cost_cap["usd"] = cap
+                self._log_toggles(was, {**GUARDS, "cost_cap": _cost_cap["usd"]})
                 self._send(200, {**GUARDS, "cost_cap_usd": _cost_cap["usd"]})
             return
         # Pass through agent-card / .well-known discovery unchanged. A GET has no server span
@@ -1250,6 +1313,20 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as exc:
             log.error("agent GET failed: %s", exc, extra={"event": "forward_error"})
             self._send(502, {"error": f"agent GET failed: {exc}"})
+
+    def _log_toggles(self, was, now):
+        """One guard_toggle line per guard a /toggle changed, so a guard found in the wrong state can be traced to
+        the request that put it there (Unleash_an_Agent_Watch_It_Burn#1024). The peer is the TCP client, which is
+        127.0.0.1 for a kubectl exec into this pod; the caller is the X-WIB-Caller header a script may send to name
+        itself, cut to TOGGLE_CALLER_MAX characters, and "" when absent. A /toggle that changes nothing logs nothing."""
+        peer = self.client_address[0] if self.client_address else ""
+        caller = (self.headers.get("X-WIB-Caller") or "")[:TOGGLE_CALLER_MAX]
+        by = f"{peer} ({caller})" if caller else peer
+        for guard in TOGGLE_KEYS:
+            if now[guard] != was[guard]:
+                log.info("guard %s set to %s by %s", guard, _toggle_value_text(now[guard]), by,
+                         extra={"event": "guard_toggle", "toggle": {
+                             "guard": guard, "value": now[guard], "was": was[guard], "peer": peer, "caller": caller}})
 
     def do_POST(self):
         # HTTP SERVER span (PRD #22 M1), the trace root: it starts the trace unless the caller sent a W3C
@@ -1510,6 +1587,8 @@ class Handler(BaseHTTPRequestHandler):
                              "input_tokens": 0, "output_tokens": 0})
             return
         record_prompt(prompt, witch)
+        # Read before any guard: a message a guard blocks still shows the guest knew the card's folder.
+        pantry = pantry_shut(session, prompt)
         # Input guards and the topic guard (same toggles as the A2A path), then rate/cost cap. A blocked
         # request spends 0 tokens.
         if GUARDS["input_blocklist"]:
@@ -1608,6 +1687,11 @@ class Handler(BaseHTTPRequestHandler):
                 # MCP calls, so workshop-mcp credits a deploy to the visitor from the request rather than from
                 # the model (Unleash_an_Agent_Watch_It_Burn#995). tasks/cancel and /a2a carry none.
                 fwd_headers["X-Witch-Name"] = witch
+            if pantry:
+                # The send and every poll carry it: kagent copies it onto the agent's MCP calls, so
+                # workshop-mcp keeps the recipe card shut in a chat that may not have it (#65). tasks/cancel
+                # and /a2a carry none.
+                fwd_headers[PANTRY_HEADER] = pantry
             # PROXY_TIMEOUT bounds the whole forward, the send and every poll, as it bounded the one
             # blocking call before; the turn's deadline cuts it shorter.
             fwd_deadline = time.monotonic() + TIMEOUT
@@ -1797,6 +1881,8 @@ class Handler(BaseHTTPRequestHandler):
             if guarded:
                 log.info("output guardrail modified response content", extra={"event": "output_scrub"})
                 self._stamp("witb.guard.decision", "output_redacted")
+            # The reply as the guest reads it, so a scrubbed or blocked name marks nothing.
+            pantry_read(session, reply)
             # Per-call cost (cost_usd, summed above) so the storefront can show a live dollar counter
             # without hardcoding rates client-side.
             self._send(200, {"reply": reply or "...", "guarded": guarded,

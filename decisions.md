@@ -708,3 +708,66 @@ inside one 3 s call ate the 1.5 s to spare, and none of 32 at 0.8 s with the nar
 TURN 4 s it was tuned through. The host's own failures overran by about half a second inside a call and
 2.4 to 4.1 s outside the turn, which these margins cover; widening further would double the tests' time
 again.
+## 2026-11-07: /chat sends X-Pantry-Shut on a turn whose chat may not have the recipe card
+
+BurritoBot gave Challenge 2's recipe card away in the same chat where it had just named its folders
+(Unleash_an_Agent_Watch_It_Burn#1000). workshop-mcp's run_shell and get_vault_entry now withhold the recipe
+on a tools/call carrying `X-Pantry-Shut`, and kagent copies that header from the A2A request onto its MCP
+calls, so both builds now decide each /chat turn whether the guest may have the card and send the header
+when not (guard-proxy-agenticburn#65). The rule is the issue's:
+
+- **Two flags per browser session.** guest_named: some guest message so far, the current one included,
+  matches `burrito-data|config/legacy|secret-sauce-recipe` in the prompt (parts[0]). shown: a reply matched
+  `burrito-data|secret-sauce-recipe` while guest_named was still false. Keyed by session, so a Reset starts
+  clean and the self-heal generation bump keeps them; no session keeps no state, as a chat without one has
+  no memory either.
+- **The value.** `shown` once shown, else `unnamed` when the current prompt names none of the three, else
+  no header. It rides on the message/send and every tasks/get poll of the turn, retries included;
+  tasks/cancel and the /a2a passthrough carry none.
+
+Three choices the issue left open:
+
+- **A guest message counts before any guard.** The flag says whether the guest knew the name, and a
+  message a guard, rate limit or cap blocks still shows it did. The kitchen note (#63) marks only past the
+  guards because it is about what the agent's conversation holds; this flag is about the guest.
+- **The reply read is the one the guest receives**: the final reply after the retries, the last-resort
+  scratchpad and the output guard, thinking block included. A first reply the retry replaced, or a name the
+  output guard scrubbed or blocked, never reached the guest.
+- **Case folds for ASCII letters only** in both builds (proxy.py `re.I | re.A`; Go lowers ASCII bytes
+  before an exact RE2 match). Python's Unicode `re.I` folds ı and İ to i, and Go's `(?i)` folds ſ to s, so
+  the defaults would mark different messages in each build; a dotless i or long s is not the path anyway.
+
+The flags live in memory, as the self-heal generation and the kitchen mark do: a proxy restart clears them.
+A chat whose reply named the folder before a restart then sends no header on a message that names it, so
+the card opens there again; a message naming none of the three still sends `unnamed`.
+
+Conformance in `test_chat_pantry_shut.py`, against both builds; Go's `TestPantryShut` and
+`TestAsciiLowerFoldsOnlyASCII`; ten mutants in `mutation_check.py`.
+
+Not yet run on a cluster: the workshop repins `gitops/ai-layer/guard-proxy` to this commit and runs #1000's
+owed live replays on https://attackme.burritobot.co/ ('2026-11-07 · #1000 · run 18077' in that repo's
+decisions.md).
+
+## 2026-11-07: every /toggle that changes a guard logs a guard_toggle line
+
+A KubeCon probe run on watch-it-burn-private found the output guard on three times in five, flipped by some
+other run, and nobody could name the caller because guard-proxy logged no toggle
+(Unleash_an_Agent_Watch_It_Burn#1024). Both builds now log one `guard_toggle` INFO line per guard or cost cap
+change, with `guard`, `value`, `was`, `peer` and `caller` (guard-proxy-agenticburn#67, as the issue specifies).
+Choices the issue left open:
+
+- **The peer is the connection's address**, not `X-Forwarded-For`. `/toggle` answers only from inside the
+  cluster, and a header is the caller's own claim; that is what `caller` already carries, labelled as such.
+- **A cap in the message reads as Go's `%v` writes it**, `2` and `2.5`, not Python's `2.0`, so the two builds
+  write the same message; proxy.py's `_toggle_value_text` matches it. The `value` and `was` fields stay JSON
+  numbers, equal in both.
+- **The caller is cut at 200 bytes in Go and 200 characters in proxy.py**, as the issue says. Both cut at
+  the same byte, since `http.server` decodes headers as Latin-1, one character per byte; a non-ASCII caller
+  then reads as mojibake in proxy.py's line and as UTF-8 in Go's. The workshop's scripts send ASCII, so the
+  conformance test uses ASCII.
+- **Logged inside the toggle lock, before the answer**, so two concurrent toggles' lines come out in the order
+  they took effect and each `was` is the value the request actually replaced.
+
+Conformance in `test_toggle_log.py`, against both builds; Go's `TestToggleLogsEachChangeWithPeerAndCaller`
+and the refused-store assertion in `TestToggleCostCapTheStoreRefusedChangesNothing`; mutants in
+`mutation_check.py`.

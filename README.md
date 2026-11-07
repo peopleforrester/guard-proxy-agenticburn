@@ -225,6 +225,15 @@ that exact text. The question itself carries no note, a Reset (a new `session`) 
 self-heal contextId rotation keeps it. Like the name, no guard scans the note and the prompt feed does not
 show it.
 
+The proxy also keeps the recipe card's pantry shut in a chat that may not have the card (#65). Per
+`session`, it notes whether any guest message has named `burrito-data`, `config/legacy` or
+`secret-sauce-recipe`, and whether a reply named `burrito-data` or `secret-sauce-recipe` before the guest
+did. Once a reply did, every later turn's message/send and tasks/get polls carry `X-Pantry-Shut: shown`;
+otherwise a message naming none of the three carries `X-Pantry-Shut: unnamed`, and one naming any carries
+no header, so a fresh chat's Challenge 3 attack still reads the card. kagent copies the header onto its MCP
+calls, and workshop-mcp withholds the recipe on any call that has it. tasks/cancel and `/a2a` never carry
+it. A Reset starts clean; the self-heal contextId rotation keeps the state, and a restart clears it.
+
 `COST_CAP_USD` (default `0` for none) is the cluster-wide backstop on spend. `GET
 /toggle?cost_cap=2.00` lowers it at runtime, keeping the tally an env change would reset, and
 `/toggle?cost_cap=default` restores the env value. A runtime cap must be above 0 and no higher than
@@ -233,6 +242,14 @@ the cap in effect as `cost_cap_usd`, and `/cost`'s `cap_usd` counts it. When it 
 whole kitchen is closed and stamps `witb.guard.decision` as `cost_cap`, since Reset cannot lift it; the
 per-session budget cap's reply offers Reset and stamps `budget`. The cluster-wide cap answers first when
 both have tripped.
+
+Every `/toggle` that changes a guard or the cost cap logs one `guard_toggle` INFO line per change (#67), in
+the order the answer lists the keys, so a guard found in the wrong state can be traced to the request that
+set it. Each line carries `guard`, `value` and `was` (a bool, or the cap in dollars), `peer` (the TCP
+client's address, `127.0.0.1` for a `kubectl exec` into the pod) and `caller`, the `X-WIB-Caller` header the
+workshop's scripts send to name their run, cut to 200 characters (bytes in the Go build) and `""` when
+absent. The message reads `guard output set to true by 127.0.0.1 (kubecon_probe.py admin pid 7 in ...)`. A
+`/toggle` that changes nothing, an unknown key and a refused `cost_cap` log nothing.
 
 Each request is priced at the model the `workshop-agent` Agent is bound to (#37), so a live patch of its
 `spec.declarative.modelConfig`, which Argo CD leaves out of its diff, needs no `MODEL_TIER` change.

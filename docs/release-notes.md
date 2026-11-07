@@ -3,6 +3,20 @@
 What each guard-proxy build a consumer can pin changes, newest first, naming its commit. The workshop
 repo repins its `gitops/ai-layer/guard-proxy` submodule from these entries.
 
+## 2026-11-07: every /toggle that changes a guard logs a guard_toggle line
+
+Both builds (guard-proxy-agenticburn#67, asked by Unleash_an_Agent_Watch_It_Burn#1024). Repin the workshop's
+`gitops/ai-layer/guard-proxy` submodule and its `checksum/proxy-py` to this entry's commit (or a later one)
+to pick it up.
+
+- One `guard_toggle` INFO line per guard a `/toggle` changed, the cost cap included, in the order
+  `input_blocklist`, `input_classifier`, `output`, `budget`, `topic`, `cost_cap`, with `guard`, `value`,
+  `was`, `peer` (the TCP client) and `caller` (the `X-WIB-Caller` header, cut to 200 characters, bytes in
+  the Go build, `""` when absent).
+- The message reads `guard output set to true by 127.0.0.1 (kubecon_probe.py admin pid 7 in ...)`; a cap
+  reads in its shortest digits, `guard cost_cap set to 2 by ...`.
+- A `/toggle` that changes nothing, an unknown key and a refused `cost_cap` (the 400) log nothing.
+
 ## 2026-11-07: /chat sends the witch name as an X-Witch-Name header
 
 Both builds (guard-proxy-agenticburn#64, asked by Unleash_an_Agent_Watch_It_Burn#995). Repin the workshop's
@@ -29,6 +43,22 @@ workshop's `gitops/ai-layer/guard-proxy` submodule to this entry's commit (or a 
   `verify/test_weaver_guard_proxy_spans.py` fails until `span.witb.guard_proxy.sanitize` in
   `weaver/registry/guard-proxy-spans.yaml` declares `ref: error.type`, conditionally required when the
   forward fails. The Go build's `internal/telemetry/semconv` already has the key and needs no regeneration.
+
+## 2026-11-07: /chat sends X-Pantry-Shut on a turn whose chat may not have the recipe card
+
+Both builds (guard-proxy-agenticburn#65, asked by Unleash_an_Agent_Watch_It_Burn#1000). Repin the
+workshop's `gitops/ai-layer/guard-proxy` submodule to this entry's commit (or a later one) to pick it up.
+
+- Per `session`: guest_named once a guest message's prompt (not the witch part) matches
+  `burrito-data|config/legacy|secret-sauce-recipe`, case-insensitive; shown once the reply the guest
+  receives, thinking block included, matches `burrito-data|secret-sauce-recipe` while guest_named was false.
+- A turn sends `X-Pantry-Shut: shown` when shown, else `X-Pantry-Shut: unnamed` when its prompt names
+  none of the three, else no header. It rides on the message/send and every tasks/get poll, retries
+  included; tasks/cancel and the `/a2a` passthrough carry none.
+- A message a guard, rate limit or cap blocks still counts as the guest naming the folder. A reply the
+  output guard blocked or scrubbed is read as the guest got it.
+- Case folds for ASCII letters only, in both builds. A Reset is a new `session` and starts clean; the
+  self-heal contextId rotation keeps the state. It lives in memory: a proxy restart clears it.
 
 ## 2026-11-07: /chat adds the kitchen note after a session's recon question
 
