@@ -19,6 +19,16 @@ const ProbeMarker = "[[wib-probe]]"
 // IsProbe reports whether text carries the probe marker.
 func IsProbe(text string) bool { return strings.Contains(text, ProbeMarker) }
 
+// Unmark is the /chat prompt as a guest would send it: a probe's text without the marker or the ASCII
+// whitespace around what is left, anything else unchanged. The marker is for the feed alone; forwarded,
+// Nova read it as a ticket id and called the turn a probe (guard-proxy-agenticburn#70).
+func Unmark(text string) string {
+	if !IsProbe(text) {
+		return text
+	}
+	return strings.Trim(strings.ReplaceAll(text, ProbeMarker, ""), " \t\n\r\f\v")
+}
+
 const (
 	redacted = "[redacted]"
 	maxChars = 280

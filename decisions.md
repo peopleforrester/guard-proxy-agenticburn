@@ -742,3 +742,24 @@ Choices the issue left open:
 Conformance in `test_toggle_log.py`, against both builds; Go's `TestToggleLogsEachChangeWithPeerAndCaller`
 and the refused-store assertion in `TestToggleCostCapTheStoreRefusedChangesNothing`; mutants in
 `mutation_check.py`.
+
+## 2026-11-07: /chat strips the probe marker once the feed has read it
+
+On watch-it-burn-community Nova called `read_support_ticket` with ticket id `wib-probe` on 3 of 50 fresh-chat
+probe turns, and one reply called the turn a probe, so every live probe tested a message no guest sends
+(Unleash_an_Agent_Watch_It_Burn#1089). Both builds now record the prompt in the feed as typed, where the marker
+keeps a probe out, then strip the marker for the rest of the turn (guard-proxy-agenticburn#70). Choices the
+issue left open:
+
+- **Stripped before the guards, not only from the forward.** The block-list, the classifier, the topic guard,
+  the spans and the agent all read the prompt a guest would send, so a probe of the off-topic or injection
+  guard measures what the room gets. The cost: a probe's spans in Datadog no longer show the marker; probes
+  that read their traces back (`agent_obs_flow.py`) match on their own session id, not the prompt.
+- **The ASCII whitespace around what is left is trimmed**, since probes put the marker after `\n\n`
+  (`kubecon_probe.py`) or before a space (`browser-smoke.py`). Only a probe's prompt is touched; a guest's
+  spacing reaches the agent as typed. ASCII only, so the two builds trim the same bytes.
+- **A prompt that is only the marker is an empty prompt** and answers 400, as a blank one does.
+- **The A2A path is unchanged.** It forwards the caller's body, and the issue is about /chat.
+
+Conformance in `test_prompt_feed.py`, against both builds; Go's `TestUnmarkStripsOnlyAProbesMarker`; a mutant
+in `mutation_check.py`.

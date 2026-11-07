@@ -104,6 +104,19 @@ func TestFeedKeepsTheLatest50AndSkipsProbes(t *testing.T) {
 	}
 }
 
+func TestUnmarkStripsOnlyAProbesMarker(t *testing.T) {
+	for in, want := range map[string]string{
+		"what proteins do you have?\n\n" + ProbeMarker: "what proteins do you have?",
+		ProbeMarker + " one burrito":                   "one burrito",
+		" " + ProbeMarker + "\n":                       "",
+		"  one burrito\n":                              "  one burrito\n",
+	} {
+		if got := Unmark(in); got != want {
+			t.Errorf("Unmark(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
 func TestDisabledFeedRecordsNothing(t *testing.T) {
 	f := New(false, moderator(""))
 	f.Record("one burrito", "Agatha the Banshee")

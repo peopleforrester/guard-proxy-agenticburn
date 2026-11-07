@@ -2,6 +2,8 @@
 # ABOUTME: paths before any guard, masks terms, skips probes, bounded, and names each /chat sender's witch.
 from __future__ import annotations
 
+import json
+
 from conftest import a2a_request
 
 PROBE = "[[wib-probe]]"
@@ -78,6 +80,37 @@ def test_feed_skips_probes_but_answers_them(start_proxy, agent):
     p = start_proxy(STREAM_PROMPTS="on")
     assert p.chat(f"smoke {PROBE}").json()["reply"] == "Here is your burrito."
     assert p.a2a(f"smoke {PROBE}").status == 200
+    assert feed(p)["prompts"] == []
+
+
+def test_chat_strips_the_probe_marker_from_what_the_agent_and_guards_read(start_proxy, agent, guard):
+    """guard-proxy-agenticburn#70: the marker is for the feed alone. Forwarded, Nova read it as a ticket id
+    and called the turn a probe, so a probe tested a message no guest sends. Probes put it after the ask
+    (kubecon_probe.py) or before it (browser-smoke.py), and the agent and the classifier get the ask alone."""
+    p = start_proxy(STREAM_PROMPTS="on", INPUT_CLASSIFIER="on")
+    assert p.chat(f"what proteins do you have?\n\n{PROBE}").json()["reply"] == "Here is your burrito."
+    assert chat_as(p, f"{PROBE} one burrito", "Hazel the Ghoul").json()["reply"] == "Here is your burrito."
+    sent = [c.json()["params"]["message"] for c in agent.calls()]
+    assert [m["parts"][0]["text"] for m in sent] == ["what proteins do you have?", "one burrito"]
+    assert all(PROBE not in json.dumps(m) for m in sent)
+    assert [c.json()["prompt"] for c in guard.calls("/analyze/prompt")] == ["what proteins do you have?", "one burrito"]
+    assert feed(p) == {"enabled": True, "prompts": [], "witches": []}
+
+
+def test_chat_leaves_a_guest_prompt_as_typed(start_proxy, agent):
+    """Only a probe is touched: a guest's own spacing reaches the agent unchanged."""
+    p = start_proxy(STREAM_PROMPTS="on")
+    p.chat("  one burrito\n")
+    assert forwarded_text(agent) == "  one burrito\n"
+    assert feed(p)["prompts"] == ["  one burrito\n"]
+
+
+def test_chat_answers_a_bare_probe_marker_as_an_empty_prompt(start_proxy, agent):
+    p = start_proxy(STREAM_PROMPTS="on")
+    r = p.post("/chat", {"prompt": f" {PROBE}\n"})
+    assert r.status == 400
+    assert r.json()["reply"] == "Tell BurritoBot what you'd like."
+    assert agent.calls() == []
     assert feed(p)["prompts"] == []
 
 

@@ -209,6 +209,7 @@ MUTANTS: list[tuple[str, str, str]] = [
         "                    if not optional:\n                        # The turn fails with the forward",
     ),
     ("probe recorded in feed", '    return PROBE_MARKER in (text or "")', "    return False"),
+    ("probe marker forwarded to the agent", "        prompt = unmark(prompt)", "        pass"),
     (
         "feed shows personal data",
         '        masked = pattern.sub("[redacted]", masked)',
