@@ -301,6 +301,13 @@ MUTANTS: list[tuple[str, str, str]] = [
         "                        pass",
     ),
     (
+        "the chat 502 waits on tasks/cancel",
+        "                    if not optional:\n                        # The turn fails with the forward",
+        "                    if task_id:\n                        _cancel_task(task_id, str(exc))\n"
+        "                        task_id = None\n"
+        "                    if not optional:\n                        # The turn fails with the forward",
+    ),
+    (
         "the chat poll ignores PROXY_TIMEOUT",
         "            fwd_deadline = time.monotonic() + TIMEOUT\n",
         "            fwd_deadline = time.monotonic() + 3600\n",
