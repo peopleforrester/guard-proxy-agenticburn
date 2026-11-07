@@ -187,6 +187,11 @@ MUTANTS: list[tuple[str, str, str]] = [
         '"output_tokens": 0})',
     ),
     (
+        "a failed A2A forward leaves the sanitize span unset",
+        "                        san_span.set_status(Status(StatusCode.ERROR, str(exc)))\n",
+        "                        pass\n",
+    ),
+    (
         "a failed A2A forward's root names nothing",
         '{"error": f"agent forward failed: {exc}"}, error=str(exc))',
         '{"error": f"agent forward failed: {exc}"})',
@@ -299,6 +304,13 @@ MUTANTS: list[tuple[str, str, str]] = [
         "a failed chat forward leaves its task running",
         "                        threading.Thread(target=_cancel_task, args=(task_id, str(exc)), daemon=True).start()",
         "                        pass",
+    ),
+    (
+        "the chat 502 waits on tasks/cancel",
+        "                    if not optional:\n                        # The turn fails with the forward",
+        "                    if task_id:\n                        _cancel_task(task_id, str(exc))\n"
+        "                        task_id = None\n"
+        "                    if not optional:\n                        # The turn fails with the forward",
     ),
     (
         "the chat poll ignores PROXY_TIMEOUT",

@@ -258,6 +258,10 @@ on `agent.forward` (#53), so a Datadog error rate or the Agent Observability lis
 as failed. A failed reasoning-only retry, where the turn still answers 200 with the first reply, leaves
 the root and `chat` span Unset; only that retry's `agent.forward` span is an error.
 
+A failed A2A forward is an error on its `sanitize` span too (#61), with the same `error.type` as
+`agent.forward` and no status code of its own. The workshop collector makes `sanitize` that turn's root
+in Agent Observability and drops `agent.forward`, so without it a failed turn reads as green.
+
 Every POST answered with a 5xx is an error on its `POST <path>` server span (#54), as OTel's HTTP
 conventions have it: a failed A2A forward, a `/chat` turn whose guard stage ran out of `TURN_TIMEOUT`,
 and, in the Go build, a reply withheld because the spend store did not commit its spend. The span's

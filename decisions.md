@@ -634,3 +634,26 @@ both builds now send it on the /chat forward (guard-proxy-agenticburn#64).
 Conformance in `test_chat_witch_header.py`; three mutants in `mutation_check.py`. The live check is the
 workshop's: repin `gitops/ai-layer/guard-proxy`, extend `verify/test_chat_witch_name.py`, then a chat deploy
 on https://attackme.burritobot.co shows on deployments.burritobot.co under the sender's witch name.
+## 2026-11-07: a timed-out /chat answers before its tasks/cancel, and the proxy needs no change for #60
+
+guard-proxy-agenticburn#60 read a failed check in Unleash_an_Agent_Watch_It_Burn run 17768 (#905) as the
+room's 502 waiting on the tasks/cancel round trip: the turn took 4.98s against a 2.5s bound, and the
+`task_cancel` line came about 4s after `forward_error`. It proposed sending the 502 first, or putting the
+cancel on a short timeout of its own.
+
+Both builds already answer first, and did at the pinned 0f0c809. proxy.py's `_forward` writes the 502
+with `_send`, whose socket writer is unbuffered, and only then starts `_cancel_task` on a daemon thread;
+the Go build's `attempt` sends the 502 and then runs `cancelTask` in a goroutine, and the handler returns
+at once. Measured: with the agent taking 4s to answer tasks/cancel, both builds answer at the 1s turn
+deadline and log `task_cancel` about 4s later. Moving the cancel in front of the 502 gives 5.01s, the
+symptom #905 saw, and the new test fails on it.
+
+So the run's 4.98s was most likely host load, not ordering; the run's own logs were not readable here. That check runs the client, proxy.py and the fake agent
+in one Python process on the shared hecaton host; when the host starves the process, the client thread
+reads an answer already in its socket late, and the cancel thread finishes late too, which is why the two
+times line up. The cancel keeps PROXY_TIMEOUT as its own bound: it runs after the room has its answer, so
+its length cannot hold the room, and a shorter one would only give up on a slow agent sooner. The pin
+does not need to move for this; the 2.5s bound in the workshop's test is filed there.
+
+Conformance: `test_a_slow_cancel_does_not_hold_the_502` in `test_task_cancel.py`, against both builds,
+and the mutant "the chat 502 waits on tasks/cancel" holds it.

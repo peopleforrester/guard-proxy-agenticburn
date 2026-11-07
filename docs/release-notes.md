@@ -15,6 +15,21 @@ to pick it up.
 - A turn with no name, a blank one or a misshaped one sends no header. `tasks/cancel` and the A2A
   passthrough never send one, and a client's own `X-Witch-Name` on the passthrough is not forwarded.
 
+## 2026-11-07: a failed A2A forward is an error on the `sanitize` span
+
+Both builds (guard-proxy-agenticburn#61, found on Unleash_an_Agent_Watch_It_Burn#894). Repin the
+workshop's `gitops/ai-layer/guard-proxy` submodule to this entry's commit (or a later one) and update
+`checksum/proxy-py`, **in the same change as the registry line below**.
+
+- When the A2A pass-through's agent forward fails and answers 502, the `sanitize` span's status is ERROR,
+  with the failure as its description and `error.type` equal to the `agent.forward` span's. It sets no
+  `http.response.status_code`; that stays on `agent.forward`.
+- A successful or refused A2A turn leaves `sanitize` Unset, as before.
+- **Registry.** `proxy.py` now sets `error.type` on `san_span`, so the workshop's
+  `verify/test_weaver_guard_proxy_spans.py` fails until `span.witb.guard_proxy.sanitize` in
+  `weaver/registry/guard-proxy-spans.yaml` declares `ref: error.type`, conditionally required when the
+  forward fails. The Go build's `internal/telemetry/semconv` already has the key and needs no regeneration.
+
 ## 2026-11-07: /chat adds the kitchen note after a session's recon question
 
 Both builds (guard-proxy-agenticburn#63, asked by Unleash_an_Agent_Watch_It_Burn#968). Repin the

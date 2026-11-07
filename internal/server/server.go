@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/trace"
 
@@ -397,6 +398,10 @@ func (s *Server) sanitize(ctx context.Context, w http.ResponseWriter, r *http.Re
 		}
 		failSpan(fwd, httpStatus, err)
 		fwd.End()
+		// The workshop collector makes sanitize the turn's root in Agent Observability and drops
+		// agent.forward (guard-proxy-agenticburn#61), so sanitize fails with it, without the status code.
+		span.SetAttributes(semconv.ErrorTypeKey.String(errorType(httpStatus, err)))
+		span.SetStatus(codes.Error, err.Error())
 		s.log.ErrorContext(ctx, "agent forward failed: "+err.Error(), "event", "forward_error")
 		failed(w, err.Error())
 		send(w, http.StatusBadGateway, map[string]string{"error": "agent forward failed: " + err.Error()})
