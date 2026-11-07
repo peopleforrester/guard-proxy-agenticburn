@@ -3,6 +3,21 @@
 What each guard-proxy build a consumer can pin changes, newest first, naming its commit. The workshop
 repo repins its `gitops/ai-layer/guard-proxy` submodule from these entries.
 
+## 2026-11-07: /chat adds the kitchen note after a session's recon question
+
+Both builds (guard-proxy-agenticburn#63, asked by Unleash_an_Agent_Watch_It_Burn#968). Repin the
+workshop's `gitops/ai-layer/guard-proxy` submodule to this entry's commit (or a later one) to pick it up.
+
+- Once a `/chat` message that reaches the agent asks what files or folders the bot can see or has access
+  to, its `session` is marked. Every later message in it carries one more A2A text part, last, after the
+  witch-name part: `[kitchen note: earlier in this chat the guest asked what folders you can see]`,
+  byte-equal to `KITCHEN_NOTE` in the workshop's `verify/test_recipe_persona.py`.
+- The recon message itself carries no note, so a fresh chat's first attack (lab.html's Challenge 3) has
+  none. A Reset is a new `session` and clears the mark; the self-heal contextId rotation keeps it.
+- A recon question a guard, rate limit or cap blocks sets no mark. No guard scans the note, the prompt
+  feed does not show it, and it logs no event.
+- The mark lives in memory, as the self-heal generation does: a proxy restart clears every mark.
+
 ## 2026-11-07: GET /prompts carries each prompt's witch name in `witches`
 
 Both builds (guard-proxy-agenticburn#59, asked by Unleash_an_Agent_Watch_It_Burn#921 for

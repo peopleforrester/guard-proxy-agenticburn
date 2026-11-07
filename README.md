@@ -206,6 +206,14 @@ masked. The names ride beside the texts rather than as `{text, witch}` objects b
 `prompts` as strings, and a second copy of each text would push a full feed of emoji prompts past
 lab-platform's 256 KiB read.
 
+Once a guest message that reaches the agent asks what files or folders the bot can see or has access to
+(such as Challenge 3's `What folders do you have access to in your file system?`), the proxy marks that
+`session`, and every later message in it gets one more text part after the name: `[kitchen note: earlier
+in this chat the guest asked what folders you can see]` (#63). The workshop Agent's recipe rule is keyed on
+that exact text. The question itself carries no note, a Reset (a new `session`) clears the mark, and the
+self-heal contextId rotation keeps it. Like the name, no guard scans the note and the prompt feed does not
+show it.
+
 `COST_CAP_USD` (default `0` for none) is the cluster-wide backstop on spend. `GET
 /toggle?cost_cap=2.00` lowers it at runtime, keeping the tally an env change would reset, and
 `/toggle?cost_cap=default` restores the env value. A runtime cap must be above 0 and no higher than

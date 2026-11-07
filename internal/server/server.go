@@ -62,9 +62,11 @@ type Server struct {
 	mu     sync.Mutex
 	guards config.Guards
 
-	// ctxGen is each /chat session's self-heal generation, under ctxMu; chatSeq numbers messageIds.
+	// ctxGen is each /chat session's self-heal generation and recon the sessions that asked what folders the
+	// bot can see, both under ctxMu; chatSeq numbers messageIds.
 	ctxMu   sync.Mutex
 	ctxGen  map[string]int
+	recon   map[string]bool
 	chatSeq atomic.Int64
 }
 
@@ -112,6 +114,7 @@ func New(cfg config.Config, log *slog.Logger, store *spend.Store) (*Server, erro
 
 		guards: cfg.Guards,
 		ctxGen: map[string]int{},
+		recon:  map[string]bool{},
 	}
 	if err := s.registerCostGauge(); err != nil {
 		return nil, fmt.Errorf("registering gen_ai.client.cost: %w", err)
