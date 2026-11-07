@@ -718,3 +718,27 @@ Conformance in `test_chat_pantry_shut.py`, against both builds; Go's `TestPantry
 Not yet run on a cluster: the workshop repins `gitops/ai-layer/guard-proxy` to this commit and runs #1000's
 owed live replays on https://attackme.burritobot.co/ ('2026-11-07 · #1000 · run 18077' in that repo's
 decisions.md).
+
+## 2026-11-07: every /toggle that changes a guard logs a guard_toggle line
+
+A KubeCon probe run on watch-it-burn-private found the output guard on three times in five, flipped by some
+other run, and nobody could name the caller because guard-proxy logged no toggle
+(Unleash_an_Agent_Watch_It_Burn#1024). Both builds now log one `guard_toggle` INFO line per guard or cost cap
+change, with `guard`, `value`, `was`, `peer` and `caller` (guard-proxy-agenticburn#67, as the issue specifies).
+Choices the issue left open:
+
+- **The peer is the connection's address**, not `X-Forwarded-For`. `/toggle` answers only from inside the
+  cluster, and a header is the caller's own claim; that is what `caller` already carries, labelled as such.
+- **A cap in the message reads as Go's `%v` writes it**, `2` and `2.5`, not Python's `2.0`, so the two builds
+  write the same message; proxy.py's `_toggle_value_text` matches it. The `value` and `was` fields stay JSON
+  numbers, equal in both.
+- **The caller is cut at 200 bytes in Go and 200 characters in proxy.py**, as the issue says. Both cut at
+  the same byte, since `http.server` decodes headers as Latin-1, one character per byte; a non-ASCII caller
+  then reads as mojibake in proxy.py's line and as UTF-8 in Go's. The workshop's scripts send ASCII, so the
+  conformance test uses ASCII.
+- **Logged inside the toggle lock, before the answer**, so two concurrent toggles' lines come out in the order
+  they took effect and each `was` is the value the request actually replaced.
+
+Conformance in `test_toggle_log.py`, against both builds; Go's `TestToggleLogsEachChangeWithPeerAndCaller`
+and the refused-store assertion in `TestToggleCostCapTheStoreRefusedChangesNothing`; mutants in
+`mutation_check.py`.

@@ -470,6 +470,41 @@ MUTANTS: list[tuple[str, str, str]] = [
         '_GUEST_NAMES_RE = re.compile(r"burrito-data|config/legacy|secret-sauce-recipe", re.I | re.A)',
         '_GUEST_NAMES_RE = re.compile(r"burrito-data|config/legacy|secret-sauce-recipe", re.I)',
     ),
+    (
+        "a toggle that changes nothing still logs",
+        "            if now[guard] != was[guard]:\n",
+        "            if True:\n",
+    ),
+    (
+        "the guard_toggle lines out of answer order",
+        'TOGGLE_KEYS = ("input_blocklist", "input_classifier", "output", "budget", "topic", "cost_cap")',
+        'TOGGLE_KEYS = ("cost_cap", "input_blocklist", "input_classifier", "output", "budget", "topic")',
+    ),
+    (
+        "the guard_toggle line keeps the whole caller header",
+        '        caller = (self.headers.get("X-WIB-Caller") or "")[:TOGGLE_CALLER_MAX]\n',
+        '        caller = self.headers.get("X-WIB-Caller") or ""\n',
+    ),
+    (
+        "the guard_toggle message drops the caller",
+        '        by = f"{peer} ({caller})" if caller else peer\n',
+        "        by = peer\n",
+    ),
+    (
+        "the guard_toggle line reads the old value after the change",
+        "                self._log_toggles(was, {**GUARDS, \"cost_cap\": _cost_cap[\"usd\"]})\n",
+        "                self._log_toggles({**GUARDS, \"cost_cap\": _cost_cap[\"usd\"]}, {**GUARDS, \"cost_cap\": _cost_cap[\"usd\"]})\n",
+    ),
+    (
+        "the guard_toggle message writes a whole cap as 2.0",
+        "        return str(int(value))\n",
+        "        return repr(value)\n",
+    ),
+    (
+        "guard_toggle logged at WARNING",
+        '                log.info("guard %s set to %s by %s"',
+        '                log.warning("guard %s set to %s by %s"',
+    ),
 ]
 
 

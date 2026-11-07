@@ -63,6 +63,10 @@ class _TraceJsonFormatter(logging.Formatter):
         scanners = getattr(record, "scanners", None)
         if scanners:
             payload["scanners"] = scanners
+        # A /toggle that changed a guard (guard_toggle): which guard, the value it took and had, and who asked.
+        toggle = getattr(record, "toggle", None)
+        if toggle:
+            payload.update(toggle)
         if _OTEL_AVAILABLE:
             ctx = trace.get_current_span().get_span_context()
             if ctx.is_valid:
@@ -112,6 +116,10 @@ LLM_GUARD_TOKEN = os.environ.get("LLM_GUARD_TOKEN", "")
 # change also restarts the pod (resetting the cost counter). A runtime toggle changes no managed
 # spec, so it sticks AND the counter survives. The live demo flips guards via /toggle, not kubectl.
 _guard_lock = threading.Lock()
+# The keys a guard_toggle line can name, in the order /toggle's answer lists them, and how much of a caller's
+# X-WIB-Caller header the line keeps.
+TOGGLE_KEYS = ("input_blocklist", "input_classifier", "output", "budget", "topic", "cost_cap")
+TOGGLE_CALLER_MAX = 200
 # Input guard is TWO progressively-enabled stages (ruling 2026-06-19): stage 1 is the deterministic
 # block-list (cheapest, pre-LLM, zero tokens), stage 2 is the model-based classifier. They toggle
 # INDEPENDENTLY so the demo shows "cheaper first" on the cost counter. Output is the exfil sidecar.
@@ -487,6 +495,16 @@ def parse_cost_cap(value):
     if not math.isfinite(cap) or cap <= 0 or (COST_CAP_USD > 0 and cap > COST_CAP_USD):
         return None
     return cap
+
+
+def _toggle_value_text(value):
+    """A guard_toggle message's value as the Go build's %v writes it: true or false, and a cap in its shortest
+    digits (2, not 2.0), whole caps below 1e21 without an exponent."""
+    if isinstance(value, bool):
+        return json.dumps(value)
+    if value.is_integer() and abs(value) < 1e21:
+        return str(int(value))
+    return repr(value)
 
 
 def cost_cap_refusal():
@@ -1268,6 +1286,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(400, {"error": cost_cap_refusal()})
                 return
             with _guard_lock:
+                was = {**GUARDS, "cost_cap": _cost_cap["usd"]}
                 if "input" in q:
                     on = q["input"][0].lower() == "on"
                     GUARDS["input_blocklist"] = on
@@ -1277,6 +1296,7 @@ class Handler(BaseHTTPRequestHandler):
                         GUARDS[k] = q[k][0].lower() == "on"
                 if cap_q:
                     _cost_cap["usd"] = cap
+                self._log_toggles(was, {**GUARDS, "cost_cap": _cost_cap["usd"]})
                 self._send(200, {**GUARDS, "cost_cap_usd": _cost_cap["usd"]})
             return
         # Pass through agent-card / .well-known discovery unchanged. A GET has no server span
@@ -1293,6 +1313,20 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as exc:
             log.error("agent GET failed: %s", exc, extra={"event": "forward_error"})
             self._send(502, {"error": f"agent GET failed: {exc}"})
+
+    def _log_toggles(self, was, now):
+        """One guard_toggle line per guard a /toggle changed, so a guard found in the wrong state can be traced to
+        the request that put it there (Unleash_an_Agent_Watch_It_Burn#1024). The peer is the TCP client, which is
+        127.0.0.1 for a kubectl exec into this pod; the caller is the X-WIB-Caller header a script may send to name
+        itself, cut to TOGGLE_CALLER_MAX characters, and "" when absent. A /toggle that changes nothing logs nothing."""
+        peer = self.client_address[0] if self.client_address else ""
+        caller = (self.headers.get("X-WIB-Caller") or "")[:TOGGLE_CALLER_MAX]
+        by = f"{peer} ({caller})" if caller else peer
+        for guard in TOGGLE_KEYS:
+            if now[guard] != was[guard]:
+                log.info("guard %s set to %s by %s", guard, _toggle_value_text(now[guard]), by,
+                         extra={"event": "guard_toggle", "toggle": {
+                             "guard": guard, "value": now[guard], "was": was[guard], "peer": peer, "caller": caller}})
 
     def do_POST(self):
         # HTTP SERVER span (PRD #22 M1), the trace root: it starts the trace unless the caller sent a W3C

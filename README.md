@@ -243,6 +243,14 @@ whole kitchen is closed and stamps `witb.guard.decision` as `cost_cap`, since Re
 per-session budget cap's reply offers Reset and stamps `budget`. The cluster-wide cap answers first when
 both have tripped.
 
+Every `/toggle` that changes a guard or the cost cap logs one `guard_toggle` INFO line per change (#67), in
+the order the answer lists the keys, so a guard found in the wrong state can be traced to the request that
+set it. Each line carries `guard`, `value` and `was` (a bool, or the cap in dollars), `peer` (the TCP
+client's address, `127.0.0.1` for a `kubectl exec` into the pod) and `caller`, the `X-WIB-Caller` header the
+workshop's scripts send to name their run, cut to 200 characters (bytes in the Go build) and `""` when
+absent. The message reads `guard output set to true by 127.0.0.1 (kubecon_probe.py admin pid 7 in ...)`. A
+`/toggle` that changes nothing, an unknown key and a refused `cost_cap` log nothing.
+
 Each request is priced at the model the `workshop-agent` Agent is bound to (#37), so a live patch of its
 `spec.declarative.modelConfig`, which Argo CD leaves out of its diff, needs no `MODEL_TIER` change.
 guard-proxy reads the Agent with the same get-only token as `/controls`, at most every 5 seconds, and a

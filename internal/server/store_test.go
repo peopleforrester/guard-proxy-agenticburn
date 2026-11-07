@@ -114,6 +114,9 @@ func TestToggleCostCapTheStoreRefusedChangesNothing(t *testing.T) {
 	if !strings.Contains(logs.String(), `"event":"spend_store_error"`) {
 		t.Errorf("no spend_store_error logged: %s", logs)
 	}
+	if strings.Contains(logs.String(), `"event":"guard_toggle"`) {
+		t.Errorf("a refused toggle logged a guard_toggle: %s", logs)
+	}
 }
 
 // recordSpans sends s's spans to a recorder instead of the global provider.

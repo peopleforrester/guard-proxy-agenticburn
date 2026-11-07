@@ -255,3 +255,36 @@ func TestForwardFailureLogsAnErrorEvent(t *testing.T) {
 		t.Errorf("log record = %v", rec)
 	}
 }
+
+// A /toggle that changes a guard logs who asked: the peer from the connection, not a header, and the
+// X-WIB-Caller header cut to 200 bytes (Unleash_an_Agent_Watch_It_Burn#1024).
+func TestToggleLogsEachChangeWithPeerAndCaller(t *testing.T) {
+	s, logs := newProxy(t, "http://unused.invalid", config.Guards{Topic: true})
+	caller := strings.Repeat("c", 250)
+	if w := do(s, http.MethodGet, "/toggle?topic=on&cost_cap=2.5&output=on", "", map[string]string{"X-WIB-Caller": caller}); w.Code != http.StatusOK {
+		t.Fatalf("toggle = %d %s", w.Code, w.Body)
+	}
+	var got []map[string]any
+	for _, r := range records(t, logs) {
+		if r["event"] == "guard_toggle" {
+			got = append(got, r)
+		}
+	}
+	if len(got) != 2 {
+		t.Fatalf("guard_toggle lines = %v, want output and cost_cap", got)
+	}
+	want := []map[string]any{
+		{"guard": "output", "value": true, "was": false, "message": "guard output set to true by 192.0.2.1 (" + caller[:200] + ")"},
+		{"guard": "cost_cap", "value": 2.5, "was": 0.0, "message": "guard cost_cap set to 2.5 by 192.0.2.1 (" + caller[:200] + ")"},
+	}
+	for i, w := range want {
+		for k, v := range w {
+			if got[i][k] != v {
+				t.Errorf("line %d %s = %v, want %v", i, k, got[i][k], v)
+			}
+		}
+		if got[i]["peer"] != "192.0.2.1" || got[i]["caller"] != caller[:200] || got[i]["level"] != "INFO" {
+			t.Errorf("line %d = %v", i, got[i])
+		}
+	}
+}
