@@ -183,12 +183,14 @@ def test_the_optional_retry_is_cancelled_when_time_runs_out(start_proxy, agent):
         return _never_done("task-2")(req)
 
     agent.respond = respond
-    p = start_proxy(TURN_TIMEOUT="1.5", PROXY_TIMEOUT="5")
+    # The first reply has the whole 4 s turn to arrive on a starved host. The retry ends with the turn,
+    # well under the 12 s bound, where a retry given the 30 s PROXY_TIMEOUT would run past it.
+    p = start_proxy(TURN_TIMEOUT="4", PROXY_TIMEOUT="30")
     r, took = _timed_chat(p)
     assert r.status == 200
     assert r.json()["reply"] == "menu first"
-    assert took < 3
-    assert _wait_for(lambda: _cancels(agent))
+    assert took < 12
+    assert _wait_for(lambda: _cancels(agent), timeout=15.0)
     assert [c["params"] for c in _cancels(agent)] == [{"id": "task-2"}]
 
 

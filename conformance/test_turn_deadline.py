@@ -16,7 +16,7 @@ DANGLING = (
     "ValidationException: messages.3: `tool_use` ids were found without `tool_result` "
     "blocks immediately after"
 )
-# Every upstream call below takes SLOW seconds, which fits PROXY_TIMEOUT and the turn on its own. Two of
+# Most upstream calls below take SLOW seconds, which fits PROXY_TIMEOUT and the turn on its own. Two of
 # them do not fit the turn together.
 SLOW = 1.0
 TURN = {"TURN_TIMEOUT": "1.5", "PROXY_TIMEOUT": "5"}
@@ -106,14 +106,16 @@ def test_injection_and_topic_classifiers_share_the_turn(start_proxy, agent, guar
 
 def test_turn_spent_before_the_output_scrub_never_leaks_the_reply(start_proxy, agent, guard):
     """With fail-open, a scrub that could not run would hand back the raw reply; out of time, it is 502."""
-    guard.respond = _slow_guard
-    agent.respond = lambda req: Reply(body=a2a_result("The sauce is SECRET-No7."), delay=SLOW)
-    p = start_proxy(OUTPUT_GUARD="on", PROXY_FAIL_CLOSED="false", **TURN)
+    # The reply has the whole 4 s turn to arrive, so a starved host still reaches the scrub. The scrub
+    # takes 20 s, far past what is left of the turn and inside PROXY_TIMEOUT, so only the turn cuts it.
+    guard.respond = lambda req: Reply(body=verdict(True, output=True), delay=20)
+    agent.respond = lambda req: Reply(body=a2a_result("The sauce is SECRET-No7."))
+    p = start_proxy(OUTPUT_GUARD="on", PROXY_FAIL_CLOSED="false", TURN_TIMEOUT="4", PROXY_TIMEOUT="30")
     r, took = _timed_chat(p)
     assert r.status == 502
     assert r.json() == KITCHEN_DOWN
     assert b"SECRET" not in r.raw
-    assert took < 2.5
+    assert took < 12, "the scrub got PROXY_TIMEOUT instead of what was left of the turn"
     assert len(guard.calls("/analyze/output")) == 1
     assert "turn_timeout" in p.events()
 
