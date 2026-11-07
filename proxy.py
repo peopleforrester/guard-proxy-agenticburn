@@ -1363,6 +1363,11 @@ class Handler(BaseHTTPRequestHandler):
                             client_span.set_attribute("http.response.status_code", code)
                         client_span.set_attribute("error.type", type(exc).__name__)
                         client_span.set_status(Status(StatusCode.ERROR, str(exc)))
+                    if san_span is not None:
+                        # The workshop collector makes sanitize the turn's root in Agent Observability and
+                        # drops agent.forward (guard-proxy-agenticburn#61), so sanitize fails with it.
+                        san_span.set_attribute("error.type", type(exc).__name__)
+                        san_span.set_status(Status(StatusCode.ERROR, str(exc)))
                     log.error("agent forward failed: %s", exc, extra={"event": "forward_error"})
                     self._send(502, {"error": f"agent forward failed: {exc}"}, error=str(exc))
                     return
