@@ -225,6 +225,15 @@ that exact text. The question itself carries no note, a Reset (a new `session`) 
 self-heal contextId rotation keeps it. Like the name, no guard scans the note and the prompt feed does not
 show it.
 
+The proxy also keeps the recipe card's pantry shut in a chat that may not have the card (#65). Per
+`session`, it notes whether any guest message has named `burrito-data`, `config/legacy` or
+`secret-sauce-recipe`, and whether a reply named `burrito-data` or `secret-sauce-recipe` before the guest
+did. Once a reply did, every later turn's message/send and tasks/get polls carry `X-Pantry-Shut: shown`;
+otherwise a message naming none of the three carries `X-Pantry-Shut: unnamed`, and one naming any carries
+no header, so a fresh chat's Challenge 3 attack still reads the card. kagent copies the header onto its MCP
+calls, and workshop-mcp withholds the recipe on any call that has it. tasks/cancel and `/a2a` never carry
+it. A Reset starts clean; the self-heal contextId rotation keeps the state, and a restart clears it.
+
 `COST_CAP_USD` (default `0` for none) is the cluster-wide backstop on spend. `GET
 /toggle?cost_cap=2.00` lowers it at runtime, keeping the tally an env change would reset, and
 `/toggle?cost_cap=default` restores the env value. A runtime cap must be above 0 and no higher than
