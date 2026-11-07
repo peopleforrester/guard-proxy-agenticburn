@@ -13,6 +13,12 @@ KITCHEN_DOWN = {
     "output_tokens": 0,
 }
 TASK = "task-7"
+# How long past its deadline a forward may answer on a shared host that stalls the proxy or the fakes for
+# seconds at a time (guard-proxy-agenticburn#66). Each test's wrong behaviour answers later still.
+SLACK = 5.0
+# A turn with seconds to spare for the optional retry to start in, and a PROXY_TIMEOUT far past the turn's
+# deadline plus SLACK, which a forward given PROXY_TIMEOUT instead of what was left of the turn polls on to.
+TURN = {"TURN_TIMEOUT": "3", "PROXY_TIMEOUT": "20"}
 
 
 def _task(state, task_id=TASK, rpc_id="chat"):
@@ -42,8 +48,9 @@ def _cancels(agent):
     return [c.json() for c in agent.calls() if _method(c) == "tasks/cancel"]
 
 
-def _wait_for(predicate, timeout=5.0):
-    """The cancel goes out after the room has its answer, so a test waits for it to arrive."""
+def _wait_for(predicate, timeout=2 * SLACK):
+    """The cancel goes out after the room has its answer, so a test waits for it to arrive. A cancel that
+    never comes costs the whole wait, so it is long enough for a loaded host's stalls."""
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if predicate():
@@ -119,7 +126,7 @@ def test_a_task_past_proxy_timeout_is_cancelled(start_proxy, agent):
     r, took = _timed_chat(p)
     assert r.status == 502
     assert r.json() == KITCHEN_DOWN
-    assert took < 3, "the poll ran past PROXY_TIMEOUT"
+    assert took < 1 + SLACK, "the poll ran past PROXY_TIMEOUT"
     assert _wait_for(lambda: _cancels(agent)), "no tasks/cancel reached the agent"
     (cancel,) = _cancels(agent)
     assert cancel["jsonrpc"] == "2.0"
@@ -131,26 +138,28 @@ def test_a_task_past_proxy_timeout_is_cancelled(start_proxy, agent):
 def test_a_slow_cancel_does_not_hold_the_502(start_proxy, agent):
     """Unleash_an_Agent_Watch_It_Burn#905: the room's 502 goes out at PROXY_TIMEOUT, not after the
     tasks/cancel round trip, however long the agent takes to answer it (guard-proxy-agenticburn#60). The
-    turn deadline ends the forward, so the cancel's own PROXY_TIMEOUT outlasts its 4s answer."""
-    slow_cancel = Reply(body=_task("canceled", rpc_id="cancel"), delay=4)
+    turn deadline ends the forward, so the cancel's own PROXY_TIMEOUT outlasts its answer, which comes
+    later than the turn's deadline plus SLACK."""
+    cancel_delay = SLACK + 3
+    slow_cancel = Reply(body=_task("canceled", rpc_id="cancel"), delay=cancel_delay)
     agent.respond = _never_done(cancel=slow_cancel)
-    p = start_proxy(TURN_TIMEOUT="1", PROXY_TIMEOUT="10")
+    p = start_proxy(TURN_TIMEOUT="1", PROXY_TIMEOUT="20")
     r, took = _timed_chat(p)
     assert r.status == 502
     assert r.json() == KITCHEN_DOWN
-    assert took < 2.5, f"the 502 waited on the cancel ({took:.2f}s)"
+    assert took < 1 + SLACK, f"the 502 waited on the cancel ({took:.2f}s)"
     assert "task_cancel" not in p.events(), "the cancel answered before the room did"
-    assert _wait_for(lambda: "task_cancel" in p.events(), timeout=8)
+    assert _wait_for(lambda: "task_cancel" in p.events(), timeout=cancel_delay + SLACK)
     assert _cancels(agent)[0]["params"] == {"id": TASK}
 
 
 def test_a_task_past_the_turn_deadline_is_cancelled(start_proxy, agent):
     agent.respond = _never_done()
-    p = start_proxy(TURN_TIMEOUT="1.5", PROXY_TIMEOUT="5")
+    p = start_proxy(**TURN)
     r, took = _timed_chat(p)
     assert r.status == 502
     assert r.json() == KITCHEN_DOWN
-    assert took < 3
+    assert took < float(TURN["TURN_TIMEOUT"]) + SLACK
     assert _wait_for(lambda: _cancels(agent))
     assert _cancels(agent)[0]["params"] == {"id": TASK}
     assert _wait_for(lambda: "task_cancel" in p.events())
@@ -183,11 +192,11 @@ def test_the_optional_retry_is_cancelled_when_time_runs_out(start_proxy, agent):
         return _never_done("task-2")(req)
 
     agent.respond = respond
-    p = start_proxy(TURN_TIMEOUT="1.5", PROXY_TIMEOUT="5")
+    p = start_proxy(**TURN)
     r, took = _timed_chat(p)
     assert r.status == 200
     assert r.json()["reply"] == "menu first"
-    assert took < 3
+    assert took < float(TURN["TURN_TIMEOUT"]) + SLACK
     assert _wait_for(lambda: _cancels(agent))
     assert [c["params"] for c in _cancels(agent)] == [{"id": "task-2"}]
 
