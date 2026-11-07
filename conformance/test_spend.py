@@ -230,6 +230,10 @@ DANGLING = (
     "ValidationException: messages.3: `tool_use` ids were found without `tool_result` "
     "blocks immediately after"
 )
+MODEL_ERROR = (
+    "LLM error: API_ERROR operation error Bedrock Runtime: Converse, https response error StatusCode: 424, "
+    "RequestID: a1, ModelErrorException: Model produced invalid sequence as part of ToolUse."
+)
 
 
 def _queue(*replies):
@@ -243,7 +247,10 @@ def _queue(*replies):
         ("<thinking>hmm</thinking>", "Done."),  # the retry recovers
         ("<thinking>hmm</thinking>", "<thinking>still</thinking>"),  # both reasoning-only
         (DANGLING, "Fresh start."),  # the context rotation
+        (MODEL_ERROR, "Done."),  # the 424 tool-call grammar retry
+        (MODEL_ERROR, MODEL_ERROR),  # both 424s
     ],
+    ids=["thinking_recovers", "thinking_twice", "context_rotation", "model_error_retry", "model_error_twice"],
 )
 def test_retry_meters_every_attempt(start_proxy, agent, first, second):
     agent.respond = _queue(

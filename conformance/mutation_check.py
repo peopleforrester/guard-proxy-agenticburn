@@ -250,6 +250,16 @@ MUTANTS: list[tuple[str, str, str]] = [
         "_ctx_gen[session] = 0",
     ),
     (
+        "no tool-call grammar retry",
+        "            if _is_tooluse_model_error(chat_reply_text(resp)):",
+        "            if False:",
+    ),
+    (
+        "tool-call grammar retry on either phrase",
+        '"ModelErrorException" in reply and "invalid sequence as part of ToolUse" in reply',
+        '("ModelErrorException" in reply or "invalid sequence as part of ToolUse" in reply)',
+    ),
+    (
         "no thinking retry",
         '            if _thinking_only:\n                log.info("model returned reasoning with no answer',
         '            if False:\n                log.info("model returned reasoning with no answer',
@@ -342,6 +352,24 @@ MUTANTS: list[tuple[str, str, str]] = [
         "a chat witch name of unbounded length forwarded",
         '_WITCH_NAME_RE = re.compile(r"[A-Z][a-z]{1,15} the [A-Z][a-z]{1,15}")',
         '_WITCH_NAME_RE = re.compile(r"[A-Z][a-z]+ the [A-Z][a-z]+")',
+    ),
+    (
+        "the chat forward sends no X-Witch-Name",
+        '                fwd_headers["X-Witch-Name"] = witch\n',
+        "                pass\n",
+    ),
+    (
+        "the chat forward sends X-Witch-Name with no name",
+        '            if witch:\n                # The send and every poll carry the name as a header too',
+        '            if True:\n                # The send and every poll carry the name as a header too',
+    ),
+    (
+        "tasks/cancel sends X-Witch-Name",
+        '                                     headers={"Content-Type": "application/json"}, method="POST")\n'
+        "        with urllib.request.urlopen(req, timeout=TIMEOUT) as r:",
+        '                                     headers={"Content-Type": "application/json",\n'
+        '                                              "X-Witch-Name": "Mortimer the Witch"}, method="POST")\n'
+        "        with urllib.request.urlopen(req, timeout=TIMEOUT) as r:",
     ),
     (
         "a refused cancel logged as done",

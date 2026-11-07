@@ -1039,6 +1039,11 @@ def _is_dangling_tooluse(reply):
     return bool(reply) and "tool_use" in reply and "tool_result" in reply and "ValidationException" in reply
 
 
+def _is_tooluse_model_error(reply):
+    """True when a reply is Bedrock's 424 for a model that broke the tool-call grammar (#62)."""
+    return bool(reply) and "ModelErrorException" in reply and "invalid sequence as part of ToolUse" in reply
+
+
 # Nova sometimes emits ONLY its <thinking> block and no answer. Measured on a live cluster 2026-09-03:
 # 1 of 6 identical requests came back reasoning-only, so roughly one student prompt in six would render
 # as an empty bubble. It is not a token ceiling (an empty reply used 148 output tokens and a good one
@@ -1643,6 +1648,11 @@ class Handler(BaseHTTPRequestHandler):
             a2a = {"jsonrpc": "2.0", "id": "chat", "method": "message/send",
                    "params": {"message": m, "configuration": {"blocking": False}}}
             fwd_headers = {"Content-Type": "application/json"}
+            if witch:
+                # The send and every poll carry the name as a header too: kagent copies it onto the agent's
+                # MCP calls, so workshop-mcp credits a deploy to the visitor from the request rather than from
+                # the model (Unleash_an_Agent_Watch_It_Burn#995). tasks/cancel and /a2a carry none.
+                fwd_headers["X-Witch-Name"] = witch
             if pantry:
                 # The send and every poll carry it: kagent copies it onto the agent's MCP calls, so
                 # workshop-mcp keeps the recipe card shut in a chat that may not have it (#65). tasks/cancel
@@ -1770,6 +1780,17 @@ class Handler(BaseHTTPRequestHandler):
                 _ctx_gen[session] = _ctx_gen.get(session, 0) + 1
                 log.info("chat session poisoned by dangling tool_use; rotated contextId to gen %d",
                          _ctx_gen[session], extra={"event": "ctx_rotate"})
+                retry = _attempt()
+                if retry is None:
+                    return
+                resp = retry
+            # Bedrock answers 424 ModelErrorException when Nova's output breaks the tool-call grammar, and
+            # kagent hands that error back as the reply. The same ask sent again usually gets an answer, so
+            # re-send it once in the same conversation, as a presenter would (guard-proxy-agenticburn#62).
+            # The first reply is a raw Bedrock error, so a failed retry answers 502; a second 424 is returned.
+            if _is_tooluse_model_error(chat_reply_text(resp)):
+                log.info("model broke the tool-call grammar (Bedrock 424); retrying once",
+                         extra={"event": "model_error_retry"})
                 retry = _attempt()
                 if retry is None:
                     return

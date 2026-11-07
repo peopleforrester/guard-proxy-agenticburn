@@ -1,5 +1,5 @@
 // ABOUTME: POST /chat, the BurritoBot storefront: one turn under one TURN_TIMEOUT deadline, the same guards
-// ABOUTME: and caps as the A2A path, the prompt wrapped as A2A message/send, and both self-heal retries.
+// ABOUTME: and caps as the A2A path, the prompt wrapped as A2A message/send, and the three self-heal retries.
 // SPDX-License-Identifier: Apache-2.0
 package server
 
@@ -252,6 +252,16 @@ func (s *Server) chatTurn(ctx context.Context, w http.ResponseWriter, r *http.Re
 			return nil
 		}
 	}
+	// Bedrock answers 424 ModelErrorException when Nova's output breaks the tool-call grammar, and kagent
+	// hands that error back as the reply. The same ask sent again usually gets an answer, so re-send it once
+	// in the same conversation, as a presenter would (guard-proxy-agenticburn#62). The first reply is a raw
+	// Bedrock error, so a failed retry answers 502; a second 424 is returned.
+	if isToolUseModelError(replyText(resp)) {
+		s.log.InfoContext(ctx, "model broke the tool-call grammar (Bedrock 424); retrying once", "event", "model_error_retry")
+		if resp, ok = attempt(false); !ok {
+			return nil
+		}
+	}
 	// The same self-heal for a reasoning-only reply: ask once more, never in a loop. The first reply is
 	// still usable, so a failed retry keeps it instead of answering 502 (guard-proxy-agenticburn#1).
 	thinkingOnly := isThinkingOnly(replyText(resp))
@@ -349,10 +359,16 @@ func (s *Server) forwardChat(ctx context.Context, prompt, witch string, kitchenN
 	}()
 	ctx, cancel := context.WithTimeout(ctx, s.agentTimeout)
 	defer cancel()
-	// kagent copies the pantry header onto the agent's MCP calls, so workshop-mcp keeps the recipe card shut
-	// in a chat that may not have it (#65). tasks/cancel and /a2a carry none.
+	// The send and every poll carry these headers, and kagent copies them onto the agent's MCP calls.
+	// tasks/cancel and /a2a carry none.
 	header := http.Header{}
+	if witch != "" {
+		// The name as a header too, so workshop-mcp credits a deploy to the visitor from the request rather
+		// than from the model (Unleash_an_Agent_Watch_It_Burn#995).
+		header.Set("X-Witch-Name", witch)
+	}
 	if pantry != "" {
+		// So workshop-mcp keeps the recipe card shut in a chat that may not have it (#65).
 		header.Set(pantryHeader, pantry)
 	}
 	call := func(rpc map[string]any) (any, error) {
@@ -661,6 +677,11 @@ func replyText(resp any) string {
 func isDanglingToolUse(reply string) bool {
 	return strings.Contains(reply, "tool_use") && strings.Contains(reply, "tool_result") &&
 		strings.Contains(reply, "ValidationException")
+}
+
+// isToolUseModelError is Bedrock's 424 for a model that broke the tool-call grammar (guard-proxy-agenticburn#62).
+func isToolUseModelError(reply string) bool {
+	return strings.Contains(reply, "ModelErrorException") && strings.Contains(reply, "invalid sequence as part of ToolUse")
 }
 
 // thinkRE matches a scratchpad block. Nova varies the tag (<Thinking>, </thinking >, inner padding) and

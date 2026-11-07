@@ -678,3 +678,43 @@ Conformance in `test_chat_pantry_shut.py`, against both builds; Go's `TestPantry
 Not yet run on a cluster: the workshop repins `gitops/ai-layer/guard-proxy` to this commit and runs #1000's
 owed live replays on https://attackme.burritobot.co/ ('2026-11-07 · #1000 · run 18077' in that repo's
 decisions.md).
+## 2026-11-07: /chat sends the witch name as an X-Witch-Name header
+
+The workshop's deployments page credits each deploy to the chat visitor's witch name from the request, not
+from the model's `requested_by` argument (Unleash_an_Agent_Watch_It_Burn#995). workshop-mcp's `deploy_app`
+reads an `X-Witch-Name` header, and kagent copies that header from the A2A request onto its MCP calls, so
+both builds now send it on the /chat forward (guard-proxy-agenticburn#64).
+
+- **The send and every poll, not the cancel.** The header goes on each POST a turn makes to the agent root
+  while it waits, message/send and each tasks/get, as the issue asks. `tasks/cancel` and the A2A
+  passthrough carry none; the passthrough still forwards only a JSON Content-Type, so a client cannot set
+  the header itself.
+- **Only a name that passed the shape check**, exactly as the second text part carries it, trimmed. The
+  shape check is what keeps a client-supplied header value free of anything but `<First> the <Creature>`.
+- **The second text part stays**: HC-666 names its Deployment from the name the model reads.
+
+Conformance in `test_chat_witch_header.py`; three mutants in `mutation_check.py`. The live check is the
+workshop's: repin `gitops/ai-layer/guard-proxy`, extend `verify/test_chat_witch_name.py`, then a chat deploy
+on https://attackme.burritobot.co shows on deployments.burritobot.co under the sender's witch name.
+
+## 2026-11-07: retry a /chat turn once on Bedrock's 424 tool-call grammar error
+
+When Nova's output breaks the tool-call grammar, Bedrock answers 424 `ModelErrorException: Model produced
+invalid sequence as part of ToolUse`, and kagent returns that as the turn's reply. Sending the same ask
+again usually gets an answer (1 of 12 asks on attackme's `/chat` on 2026-11-06), so both builds now re-send
+it once (guard-proxy-agenticburn#62). Choices the issue left open:
+
+- **The reply must name both `ModelErrorException` and `invalid sequence as part of ToolUse`.** Another
+  model error, or a reply that only mentions the phrase, is returned as before.
+- **Same contextId, no rotation.** The issue's evidence is a presenter re-sending in the same
+  conversation, and nothing shows the 424 poisons the history the way a dangling `tool_use` does.
+  Revisit if a re-sent 424 starts coming back as a `ValidationException`.
+- **Any session or none.** Unlike the rotation, the re-send needs no session.
+- **Not optional.** The first reply is a raw Bedrock error, nothing a guest should read, so a failed or
+  timed-out retry answers the forward's 502, as the dangling `tool_use` retry does.
+- **After the rotation, before the reasoning-only retry.** A rotated retry that comes back 424 is re-sent
+  once more, and a 424 retry that comes back reasoning-only gets that retry, so each case retries at most
+  once and a turn makes at most four forwards. A second 424 is returned without a third attempt.
+- Logged as `model_error_retry`. Conformance in `test_chat_path.py`, both attempts metered in
+  `test_spend.py` and on the `chat` span in `test_telemetry.py`; the mutation check holds the retry and
+  its two-phrase match.

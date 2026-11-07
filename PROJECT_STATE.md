@@ -157,13 +157,18 @@ answer `{"enabled", "prompts", "witches"}`: `prompts` unchanged, `witches[i]` th
 run 17641 tested on c5f71f3. Decision recorded 2026-11-07. The workshop then repins
 `gitops/ai-layer/guard-proxy` and its `checksum/proxy-py`.
 
+### Agent-task #64: /chat sends the witch name as an X-Witch-Name header
+Asked by Unleash_an_Agent_Watch_It_Burn#995 so deploys are credited from the request. Both builds send
+`X-Witch-Name` on a /chat turn's message/send and every tasks/get poll when the name passed the shape check;
+none on tasks/cancel or the A2A passthrough. Decision recorded 2026-11-07; conformance in
+`test_chat_witch_header.py`. The workshop then repins `gitops/ai-layer/guard-proxy` and runs the live check.
+
 ### Agent-task #65: send X-Pantry-Shut on a /chat turn whose chat may not have the recipe card
 Asked by Unleash_an_Agent_Watch_It_Burn#1000. Both builds keep per-session guest_named and shown flags and
 send `X-Pantry-Shut: shown` or `unnamed` on the turn's message/send and every tasks/get poll; kagent copies
-it onto MCP calls and workshop-mcp withholds the recipe. Decision recorded 2026-11-07. Built on staging
-without #64 (agent/64-18112, X-Witch-Name), which also changes `agentRPC`'s signature: merging the two
-means one `http.Header` carrying both. The workshop then repins `gitops/ai-layer/guard-proxy` and runs
-#1000's live replays.
+it onto MCP calls and workshop-mcp withholds the recipe. Decision recorded 2026-11-07. Merged with #64: the
+Go `agentRPC` takes one `http.Header` carrying both X-Witch-Name and X-Pantry-Shut. The workshop then
+repins `gitops/ai-layer/guard-proxy` and runs #1000's live replays.
 
 ## Branch & Tests
 - Branch: agent/65-18128 (#65)
@@ -207,4 +212,5 @@ _(append-only. Each phase transition adds one line, oldest first.)_
 - 2026-11-05 #29 deployed proxy's own task_cancel seen live after a 120 s /chat forward; Bedrock and tool spans end at the cancel
 - 2026-11-07 #59 implemented and verified locally (2.3) on agent/59-18086: go vet and go test ./... green, proxy.py and Go suites 425/425, mutation check 69/69 caught
 - 2026-11-07 #60 verified locally (2.3) on agent/60-18090: test-only change, proxy.py suite green, go vet and go test ./... green, mutation check 66/66 caught (across two interrupted runs and one for the rest); E2E against Go fails one pre-existing deadline test per run on the loaded shared host, filed as a follow-up
+- 2026-11-07 #62 implemented and verified locally (2.3) on agent/62-18107: go vet and go test ./... green, proxy.py suite 434/434 and Go suite green, mutation check 71/71 caught
 - 2026-11-07 #65 implemented and verified locally (2.3) on agent/65-18128: go vet and go test ./... green, proxy.py and Go suites 475/475, mutation check 86/86 caught (across one interrupted run and one for the rest)

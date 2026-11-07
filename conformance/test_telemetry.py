@@ -24,6 +24,10 @@ DANGLING = (
     "ValidationException: messages.3: `tool_use` ids were found without `tool_result` "
     "blocks immediately after"
 )
+MODEL_ERROR = (
+    "LLM error: API_ERROR operation error Bedrock Runtime: Converse, https response error StatusCode: 424, "
+    "RequestID: a1, ModelErrorException: Model produced invalid sequence as part of ToolUse."
+)
 
 
 def _by_name(collector, names: set[str]) -> dict[str, dict]:
@@ -115,9 +119,10 @@ def test_chat_span_tree(traced, agent):
     "first,second",
     [
         (DANGLING, "Fresh start."),  # the context rotation
+        (MODEL_ERROR, "Done."),  # the 424 tool-call grammar retry
         ("<thinking>hmm</thinking>", "Done."),  # the reasoning-only retry
     ],
-    ids=["context_rotation", "thinking_only_retry"],
+    ids=["context_rotation", "model_error_retry", "thinking_only_retry"],
 )
 def test_chat_span_counts_every_forward_of_the_turn(traced, agent, first, second):
     # A self-heal retry is a second billed model call, so the chat span sums the tokens of both forwards,
