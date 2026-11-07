@@ -17,9 +17,18 @@ DANGLING = (
     "blocks immediately after"
 )
 # Every upstream call below takes SLOW seconds, which fits PROXY_TIMEOUT and the turn on its own. Two of
-# them do not fit the turn together.
-SLOW = 1.0
-TURN = {"TURN_TIMEOUT": "1.5", "PROXY_TIMEOUT": "5"}
+# them do not fit the turn together. One call fits with 1.5 s to spare and two overrun by 1.5 s, so a shared
+# host that stalls the proxy or the fakes for a second or more still lands each on its side
+# (guard-proxy-agenticburn#66).
+SLOW = 3.0
+TURN = {"TURN_TIMEOUT": "4.5", "PROXY_TIMEOUT": "20"}
+# How long past the turn's deadline its answer may come on a loaded host that stalls processes for seconds.
+SLACK = 5.0
+# A turn cut at its deadline has answered by now.
+CUT_BY = float(TURN["TURN_TIMEOUT"]) + SLACK
+# An upstream that answers after CUT_BY but well inside PROXY_TIMEOUT: a call given PROXY_TIMEOUT instead of
+# what was left of the turn gets this answer.
+HANG = 12
 
 
 def _timed_chat(p, prompt="hi", session=None):
@@ -33,20 +42,20 @@ def _slow_guard(req):
 
 
 def test_one_long_forward_is_cut_at_the_turn_deadline(start_proxy, agent):
-    agent.respond = lambda req: Reply(body=a2a_result(), delay=4)
+    agent.respond = lambda req: Reply(body=a2a_result(), delay=HANG)
     p = start_proxy(**TURN)
     r, took = _timed_chat(p)
     assert r.status == 502
     assert r.json() == KITCHEN_DOWN
-    assert took < 2.5, "the forward got PROXY_TIMEOUT instead of what was left of the turn"
+    assert took < CUT_BY, "the forward got PROXY_TIMEOUT instead of what was left of the turn"
     assert "forward_error" in p.events()
 
 
 def test_without_turn_timeout_each_call_gets_proxy_timeout(start_proxy, agent, guard):
-    # The same two calls that overrun a 1.5 s turn below both finish when no turn deadline is set.
+    # The same two calls that overrun a TURN_TIMEOUT turn below both finish when each gets that long alone.
     guard.respond = _slow_guard
     agent.respond = lambda req: Reply(body=a2a_result("Two burritos."), delay=SLOW)
-    r = start_proxy(INPUT_CLASSIFIER="on", PROXY_TIMEOUT="1.5").chat("hi")
+    r = start_proxy(INPUT_CLASSIFIER="on", PROXY_TIMEOUT=TURN["TURN_TIMEOUT"]).chat("hi")
     assert r.status == 200
     assert r.json()["reply"] == "Two burritos."
 
@@ -66,25 +75,25 @@ def test_classifier_and_forward_share_the_turn(start_proxy, agent, guard):
     r, took = _timed_chat(p)
     assert r.status == 502
     assert r.json() == KITCHEN_DOWN
-    assert took < 2.5
+    assert took < CUT_BY
     assert len(guard.calls()) == 1
     assert len(agent.calls()) == 1
 
 
 def test_turn_spent_in_the_classifier_is_502_even_failing_open(start_proxy, agent, guard):
     """A classifier cut off by the turn deadline is not a scanner outage, so fail-open does not forward."""
-    guard.respond = lambda req: Reply(body=verdict(True), delay=4)
+    guard.respond = lambda req: Reply(body=verdict(True), delay=HANG)
     p = start_proxy(INPUT_CLASSIFIER="on", PROXY_FAIL_CLOSED="false", **TURN)
     r, took = _timed_chat(p)
     assert r.status == 502
     assert r.json() == KITCHEN_DOWN
-    assert took < 2.5
+    assert took < CUT_BY
     assert agent.calls() == []
     assert "turn_timeout" in p.events()
 
 
 def test_turn_spent_in_the_classifier_is_502_not_a_refusal(start_proxy, agent, guard):
-    guard.respond = lambda req: Reply(body=verdict(True), delay=4)
+    guard.respond = lambda req: Reply(body=verdict(True), delay=HANG)
     p = start_proxy(INPUT_CLASSIFIER="on", **TURN)
     r = p.chat("hi")
     assert r.status == 502
@@ -98,7 +107,7 @@ def test_injection_and_topic_classifiers_share_the_turn(start_proxy, agent, guar
     r, took = _timed_chat(p)
     assert r.status == 502
     assert r.json() == KITCHEN_DOWN
-    assert took < 2.5
+    assert took < CUT_BY
     assert len(guard.calls()) == 2
     assert agent.calls() == []
     assert "turn_timeout" in p.events()
@@ -113,7 +122,7 @@ def test_turn_spent_before_the_output_scrub_never_leaks_the_reply(start_proxy, a
     assert r.status == 502
     assert r.json() == KITCHEN_DOWN
     assert b"SECRET" not in r.raw
-    assert took < 2.5
+    assert took < CUT_BY
     assert len(guard.calls("/analyze/output")) == 1
     assert "turn_timeout" in p.events()
 
@@ -124,7 +133,7 @@ def test_dangling_tool_use_retry_shares_the_turn(start_proxy, agent):
     r, took = _timed_chat(p, session="s1")
     assert r.status == 502
     assert r.json() == KITCHEN_DOWN
-    assert took < 2.5
+    assert took < CUT_BY
     assert len(agent.calls()) == 2
 
 
@@ -136,7 +145,7 @@ def test_thinking_only_retry_out_of_time_keeps_the_first_reply(start_proxy, agen
         calls["n"] += 1
         if calls["n"] == 1:
             return Reply(body=a2a_result("<thinking>menu first</thinking>", prompt_tokens=10, output_tokens=1))
-        return Reply(body=a2a_result("Chicken, steak, tofu."), delay=4)
+        return Reply(body=a2a_result("Chicken, steak, tofu."), delay=HANG)
 
     agent.respond = respond
     p = start_proxy(**TURN)
@@ -145,7 +154,7 @@ def test_thinking_only_retry_out_of_time_keeps_the_first_reply(start_proxy, agen
     body = r.json()
     assert body["reply"] == "menu first"
     assert (body["input_tokens"], body["output_tokens"]) == (10, 1)
-    assert took < 2.5
+    assert took < CUT_BY
     assert len(agent.calls()) == 2
     assert "thinking_only_surfaced" in p.events()
 
