@@ -136,7 +136,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			s.cost(w, r)
 		case uri == "/prompts":
 			s.cors(w, r)
-			send(w, http.StatusOK, map[string]any{"enabled": s.feed.Enabled(), "prompts": s.feed.Prompts()})
+			prompts, witches := s.feed.Snapshot()
+			send(w, http.StatusOK, map[string]any{"enabled": s.feed.Enabled(), "prompts": prompts, "witches": witches})
 		case strings.HasPrefix(uri, "/guards"):
 			s.cors(w, r)
 			send(w, http.StatusOK, s.guardState())
@@ -295,7 +296,7 @@ func (s *Server) forwardA2A(w http.ResponseWriter, r *http.Request) {
 	g := s.guardState()
 	id, text := parseA2A(raw)
 	if text != "" {
-		s.feed.Record(text) // moderated, before any guard, so a blocked prompt shows masked
+		s.feed.Record(text, "") // the A2A path carries no witch name; moderated, before any guard, so a blocked prompt shows masked
 	}
 	ctx := r.Context()
 	body, ok := s.sanitize(ctx, w, r, g, id, text, raw)

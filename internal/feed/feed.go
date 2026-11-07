@@ -202,7 +202,12 @@ type Feed struct {
 	mod     *Moderator
 
 	mu      sync.Mutex
-	prompts []string
+	entries []entry
+}
+
+// entry is one kept prompt: its moderated text and the sender's witch name, "" for none.
+type entry struct {
+	text, witch string
 }
 
 // New returns a feed that records only when enabled.
@@ -213,23 +218,41 @@ func New(enabled bool, mod *Moderator) *Feed {
 // Enabled reports whether the feed captures prompts.
 func (f *Feed) Enabled() bool { return f.enabled }
 
-// Record moderates text and keeps it, unless the feed is off or text is a probe.
-func (f *Feed) Record(text string) {
+// Record moderates text and keeps it with the sender's witch name, unless the feed is off or text is a
+// probe. A name moderation would change is dropped whole: it is a label on a projected screen.
+func (f *Feed) Record(text, witch string) {
 	if !f.enabled || IsProbe(text) {
 		return
 	}
-	masked := f.mod.Moderate(text)
+	e := entry{text: f.mod.Moderate(text)}
+	if witch != "" && f.mod.Moderate(witch) == witch {
+		e.witch = witch
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.prompts = append(f.prompts, masked)
-	if len(f.prompts) > keep {
-		f.prompts = append([]string(nil), f.prompts[len(f.prompts)-keep:]...)
+	f.entries = append(f.entries, e)
+	if len(f.entries) > keep {
+		f.entries = append([]entry(nil), f.entries[len(f.entries)-keep:]...)
 	}
 }
 
-// Prompts is a copy of the kept prompts, oldest first.
-func (f *Feed) Prompts() []string {
+// Snapshot copies the kept prompts under one lock, oldest first: their texts, and each one's witch name at
+// the same index, so the two always line up. The names ride beside the texts, not with a second copy of
+// them, which keeps the body inside lab-platform's 256 KiB read.
+func (f *Feed) Snapshot() (prompts, witches []string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return append([]string{}, f.prompts...)
+	prompts = make([]string, 0, len(f.entries))
+	witches = make([]string, 0, len(f.entries))
+	for _, e := range f.entries {
+		prompts = append(prompts, e.text)
+		witches = append(witches, e.witch)
+	}
+	return prompts, witches
+}
+
+// Prompts is a copy of the kept prompts' texts, oldest first.
+func (f *Feed) Prompts() []string {
+	prompts, _ := f.Snapshot()
+	return prompts
 }

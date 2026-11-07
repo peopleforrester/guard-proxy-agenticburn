@@ -216,8 +216,28 @@ MUTANTS: list[tuple[str, str, str]] = [
     ),
     (
         "feed redaction reaches the bot",
-        "                _prompts.append(moderate(prompt))",
-        "                prompt = moderate(prompt)\n                _prompts.append(prompt)",
+        "        record_prompt(prompt, witch)\n",
+        "        prompt = moderate(prompt)\n        record_prompt(prompt, witch)\n",
+    ),
+    (
+        "feed drops the witch name",
+        '"witches": [witch for _, witch in kept]}',
+        '"witches": ["" for _ in kept]}',
+    ),
+    (
+        "feed names out of step with the prompts",
+        '"witches": [witch for _, witch in kept]}',
+        '"witches": sorted(witch for _, witch in kept)}',
+    ),
+    (
+        "feed shows a name moderation would mask",
+        '    return witch if witch and moderate(witch) == witch else ""',
+        "    return witch",
+    ),
+    (
+        "feed puts the witch name in the prompt",
+        "    entry = (moderate(text), feed_witch(witch))",
+        '    entry = (moderate(f"{witch} {text}".strip()), feed_witch(witch))',
     ),
     (
         "no context rotation",

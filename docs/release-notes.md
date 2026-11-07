@@ -3,6 +3,23 @@
 What each guard-proxy build a consumer can pin changes, newest first, naming its commit. The workshop
 repo repins its `gitops/ai-layer/guard-proxy` submodule from these entries.
 
+## 2026-11-07: GET /prompts carries each prompt's witch name in `witches`
+
+Both builds (guard-proxy-agenticburn#59, asked by Unleash_an_Agent_Watch_It_Burn#921 for
+prompts-agenticburn#16). Repin the workshop's `gitops/ai-layer/guard-proxy` submodule and its
+`checksum/proxy-py` to this entry's commit (or a later one) to pick it up.
+
+- `GET /prompts` answers `{"enabled", "prompts", "witches"}`. `prompts` is unchanged: the bare moderated
+  texts, oldest first, at most 50.
+- `witches` is a list of strings as long as `prompts`; `witches[i]` is the witch name of whoever sent
+  `prompts[i]`, taken from the same copy of the feed.
+- A prompt with no name carries `""`, never null and never a shorter list: a `/chat` with no `witch`, a
+  blank, non-string or misshaped one, and every A2A prompt.
+- A name the feed's moderation would change in any way is dropped whole, to `""`. The name never goes into
+  the prompt text.
+- Readers that ignore unknown fields are unaffected. A full feed of fifty 280-character emoji prompts with
+  names stays under lab-platform's 256 KiB read.
+
 ## 2026-11-03: the /chat `chat` span carries the turn's token counts
 
 Both builds (guard-proxy-agenticburn#49, asked by Unleash_an_Agent_Watch_It_Burn#784). Repin the

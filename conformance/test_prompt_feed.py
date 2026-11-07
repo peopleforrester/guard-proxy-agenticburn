@@ -1,5 +1,5 @@
 # ABOUTME: Conformance for GET /prompts, the moderated side-screen feed: off by default, captures both
-# ABOUTME: paths before any guard runs, masks block-listed and profane terms, skips probes, bounded.
+# ABOUTME: paths before any guard, masks terms, skips probes, bounded, and names each /chat sender's witch.
 from __future__ import annotations
 
 from conftest import a2a_request
@@ -15,14 +15,14 @@ def test_feed_is_off_by_default_and_records_nothing(start_proxy, agent):
     p = start_proxy()
     p.chat("one burrito")
     p.a2a("one burrito")
-    assert feed(p) == {"enabled": False, "prompts": []}
+    assert feed(p) == {"enabled": False, "prompts": [], "witches": []}
 
 
 def test_feed_records_both_paths_in_order(start_proxy, agent):
     p = start_proxy(STREAM_PROMPTS="on")
     p.chat("first")
     p.a2a("second")
-    assert feed(p) == {"enabled": True, "prompts": ["first", "second"]}
+    assert feed(p) == {"enabled": True, "prompts": ["first", "second"], "witches": ["", ""]}
 
 
 def test_feed_records_before_guards_so_blocked_prompts_appear_masked(start_proxy, agent):
@@ -153,3 +153,91 @@ def test_feed_masks_before_truncating_so_no_partial_number_shows(start_proxy, ag
     p = start_proxy(STREAM_PROMPTS="on")
     p.chat("a" * 269 + " 4111 1111 1111 1111")
     assert feed(p)["prompts"] == ["a" * 269 + " [redacted]"]
+
+
+# --- Each prompt's witch name (Unleash_an_Agent_Watch_It_Burn#921) -----------------------------------
+# `prompts` stays the bare texts the prompt wall, lab-platform's relay and display.js parse as strings.
+# `witches` holds each prompt's sender's witch name at the same index, "" when there is none.
+
+
+def chat_as(p, prompt, witch=None):
+    body = {"prompt": prompt}
+    if witch is not None:
+        body["witch"] = witch
+    return p.post("/chat", body)
+
+
+def test_witches_carry_each_prompts_name_at_its_index_and_prompts_stay_texts(start_proxy, agent):
+    p = start_proxy(STREAM_PROMPTS="on")
+    chat_as(p, "one burrito", "Agatha the Banshee")
+    chat_as(p, "two tacos", "Hazel the Ghoul")
+    assert feed(p) == {
+        "enabled": True,
+        "prompts": ["one burrito", "two tacos"],
+        "witches": ["Agatha the Banshee", "Hazel the Ghoul"],
+    }
+
+
+def test_a_prompt_with_no_witch_name_carries_an_empty_one(start_proxy, agent):
+    p = start_proxy(STREAM_PROMPTS="on")
+    chat_as(p, "no field")
+    chat_as(p, "blank", "   ")
+    chat_as(p, "not a string", ["Agatha the Banshee"])
+    chat_as(p, "not shaped", "agatha")
+    p.a2a("from the terminal")
+    body = feed(p)
+    assert body["prompts"] == [
+        "no field",
+        "blank",
+        "not a string",
+        "not shaped",
+        "from the terminal",
+    ]
+    assert body["witches"] == ["", "", "", "", ""]
+
+
+def test_a_witch_name_moderation_would_mask_is_dropped_whole(start_proxy, agent):
+    p = start_proxy(STREAM_PROMPTS="on")
+    chat_as(p, "one burrito", "Shit the Ghoul")
+    chat_as(p, "two burritos", "Delete the Witch")
+    assert feed(p)["witches"] == ["", ""]
+
+
+def test_witches_keep_the_latest_50_in_step_with_prompts(start_proxy, agent):
+    p = start_proxy(STREAM_PROMPTS="on")
+    for i in range(55):
+        chat_as(p, f"order {i}", "Agatha the Banshee" if i % 2 else "")
+    body = feed(p)
+    assert body["prompts"] == [f"order {i}" for i in range(5, 55)]
+    assert body["witches"] == ["Agatha the Banshee" if i % 2 else "" for i in range(5, 55)]
+
+
+def test_witches_follow_moderation_and_probes_as_prompts_do(start_proxy, agent):
+    p = start_proxy(STREAM_PROMPTS="on")
+    chat_as(p, "call (503) 555-0100", "Agatha the Banshee")
+    chat_as(p, f"smoke {PROBE}", "Hazel the Ghoul")
+    assert feed(p) == {
+        "enabled": True,
+        "prompts": ["call [redacted]"],
+        "witches": ["Agatha the Banshee"],
+    }
+
+
+def test_the_feed_off_records_no_witch_name(start_proxy, agent):
+    p = start_proxy()
+    chat_as(p, "one burrito", "Agatha the Banshee")
+    assert feed(p) == {"enabled": False, "prompts": [], "witches": []}
+
+
+def test_a_full_feed_of_named_emoji_prompts_fits_lab_platforms_read(start_proxy, agent):
+    """lab-platform's promptfeed refuses a /prompts body over 256 KiB whole, so the cluster would read
+    unavailable. Fifty 280-character emoji prompts, each with the longest shaped name, must fit."""
+    p = start_proxy(STREAM_PROMPTS="on")
+    longest = "Abcdefghijklmnop the Abcdefghijklmnop"
+    for _ in range(50):
+        chat_as(p, "\U0001f32f" * 400, longest)
+    resp = p.get("/prompts")
+    body = resp.json()
+    assert body["witches"] == [longest] * 50
+    assert len(body["prompts"]) == 50
+    assert len(resp.raw) <= 256 << 10
