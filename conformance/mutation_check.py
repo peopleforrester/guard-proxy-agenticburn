@@ -250,6 +250,16 @@ MUTANTS: list[tuple[str, str, str]] = [
         "_ctx_gen[session] = 0",
     ),
     (
+        "no tool-call grammar retry",
+        "            if _is_tooluse_model_error(chat_reply_text(resp)):",
+        "            if False:",
+    ),
+    (
+        "tool-call grammar retry on either phrase",
+        '"ModelErrorException" in reply and "invalid sequence as part of ToolUse" in reply',
+        '("ModelErrorException" in reply or "invalid sequence as part of ToolUse" in reply)',
+    ),
+    (
         "no thinking retry",
         '            if _thinking_only:\n                log.info("model returned reasoning with no answer',
         '            if False:\n                log.info("model returned reasoning with no answer',

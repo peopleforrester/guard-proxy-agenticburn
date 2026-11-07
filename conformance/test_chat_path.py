@@ -1,5 +1,5 @@
 # ABOUTME: Conformance for POST /chat, the BurritoBot storefront contract: request validation, the A2A
-# ABOUTME: wrapping, reply extraction, guards (always HTTP 200 + guarded), and both self-heal retries.
+# ABOUTME: wrapping, reply extraction, guards (always HTTP 200 + guarded), and the three self-heal retries.
 from __future__ import annotations
 
 import json
@@ -17,6 +17,12 @@ EMPTY_PROMPT = {
 DANGLING = (
     "ValidationException: messages.3: `tool_use` ids were found without `tool_result` "
     "blocks immediately after"
+)
+# What kagent returns as the turn's reply when Nova breaks the tool-call grammar (guard-proxy-agenticburn#62).
+MODEL_ERROR = (
+    "LLM error: API_ERROR operation error Bedrock Runtime: Converse, https response error StatusCode: 424, "
+    "RequestID: {rid}, ModelErrorException: Model produced invalid sequence as part of ToolUse. Please refer "
+    "to the model tool use troubleshooting guide."
 )
 
 
@@ -314,7 +320,74 @@ def test_dangling_tool_use_retry_failure_is_502(start_proxy, agent):
     assert start_proxy().chat("hi", session="s1").status == 502
 
 
-# --- Self-heal 2: a reasoning-only reply ----------------------------------------------------------
+# --- Self-heal 2: Bedrock's 424 when the model breaks the tool-call grammar -----------------------
+
+
+def test_tool_use_model_error_is_retried_once(start_proxy, agent):
+    agent.respond = _sequence(
+        a2a_result(MODEL_ERROR.format(rid="a1"), prompt_tokens=10, output_tokens=1),
+        a2a_result("Chicken, steak, tofu.", prompt_tokens=20, output_tokens=2),
+    )
+    p = start_proxy()
+    body = p.chat("proteins?", session="s1").json()
+    assert body["reply"] == "Chicken, steak, tofu."
+    # Both attempts were billed (guard-proxy-agenticburn#3).
+    assert (body["input_tokens"], body["output_tokens"]) == (30, 3)
+    # The re-send a presenter would make: the same conversation, not a rotated one.
+    contexts = [c.json()["params"]["message"]["contextId"] for c in agent.calls()]
+    assert contexts == ["s1", "s1"]
+    assert "model_error_retry" in p.events()
+
+
+def test_tool_use_model_error_without_session_is_retried(start_proxy, agent):
+    agent.respond = _sequence(a2a_result(MODEL_ERROR.format(rid="a1")), a2a_result("Two burritos."))
+    assert start_proxy().chat("hi").json()["reply"] == "Two burritos."
+    assert len(agent.calls()) == 2
+
+
+def test_tool_use_model_error_twice_returns_the_second(start_proxy, agent):
+    second = MODEL_ERROR.format(rid="b2")
+    # The responder repeats its last body, so a third attempt would be answered and counted.
+    agent.respond = _sequence(
+        a2a_result(MODEL_ERROR.format(rid="a1"), prompt_tokens=10, output_tokens=1),
+        a2a_result(second, prompt_tokens=20, output_tokens=2),
+    )
+    p = start_proxy()
+    body = p.chat("hi", session="s1").json()
+    assert body["reply"] == second
+    assert (body["input_tokens"], body["output_tokens"]) == (30, 3)
+    assert len(agent.calls()) == 2, "one retry, never a loop"
+    assert p.events().count("model_error_retry") == 1
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        "ModelErrorException: The model returned an unexpected response.",
+        "I hit an invalid sequence as part of ToolUse, sorry.",
+    ],
+)
+def test_other_model_errors_are_not_retried(start_proxy, agent, reply):
+    agent.respond = _sequence(a2a_result(reply), a2a_result("unused"))
+    p = start_proxy()
+    assert p.chat("hi", session="s1").json()["reply"] == reply
+    assert len(agent.calls()) == 1
+    assert "model_error_retry" not in p.events()
+
+
+def test_tool_use_model_error_retry_failure_is_502(start_proxy, agent):
+    # The first reply is a raw Bedrock error, nothing a guest should read, so the retry is not optional.
+    calls = {"n": 0}
+
+    def respond(req):
+        calls["n"] += 1
+        return Reply(body=a2a_result(MODEL_ERROR.format(rid="a1"))) if calls["n"] == 1 else Reply(status=500, body={})
+
+    agent.respond = respond
+    assert start_proxy().chat("hi", session="s1").status == 502
+
+
+# --- Self-heal 3: a reasoning-only reply ----------------------------------------------------------
 
 
 @pytest.mark.parametrize(

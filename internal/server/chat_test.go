@@ -1,5 +1,5 @@
 // ABOUTME: Unit tests for the /chat helpers the conformance suite reaches only through whole turns: reply
-// ABOUTME: extraction, the scratchpad rules, the dangling tool_use check, context generations and task cancel.
+// ABOUTME: extraction, the scratchpad rules, the dangling tool_use and 424 checks, context generations, task cancel.
 // SPDX-License-Identifier: Apache-2.0
 package server
 
@@ -79,6 +79,20 @@ func TestDanglingToolUse(t *testing.T) {
 	}
 	if isDanglingToolUse("I used a tool_use and got a tool_result") {
 		t.Error("a reply mentioning the words is not the error")
+	}
+}
+
+func TestToolUseModelError(t *testing.T) {
+	if !isToolUseModelError("StatusCode: 424, ModelErrorException: Model produced invalid sequence as part of ToolUse.") {
+		t.Error("the Bedrock error was not recognized")
+	}
+	for _, reply := range []string{
+		"ModelErrorException: The model returned an unexpected response.",
+		"I hit an invalid sequence as part of ToolUse, sorry.",
+	} {
+		if isToolUseModelError(reply) {
+			t.Errorf("%q is not the tool-call grammar error", reply)
+		}
 	}
 }
 

@@ -172,14 +172,21 @@ PROXY_FAIL_CLOSED  PROXY_TIMEOUT  RATE_LIMIT_RPM  RATE_LIMIT_SESSION_RPM  STREAM
 TOPIC_GUARD  TOPIC_OFF_LIST  TOPIC_ON_LIST  TOPIC_REFUSAL  TURN_TIMEOUT  WIB_PUBLIC_HOST
 ```
 
-`PROXY_TIMEOUT` bounds each upstream call. A `POST /chat` turn can make up to six in a row: the
-injection classifier, the topic classifier, the forward, the two self-heal retries and the output
+`PROXY_TIMEOUT` bounds each upstream call. A `POST /chat` turn can make up to seven in a row: the
+injection classifier, the topic classifier, the forward, the three self-heal retries and the output
 scrub. `TURN_TIMEOUT` (seconds, default `0` for none) is one deadline for the whole turn: each call
 gets `PROXY_TIMEOUT` or what is left of the turn, whichever is less, and a turn that runs out
 answers the same 502 as a failed forward. A guard call the deadline cuts off ends the turn with
 that 502 whatever `PROXY_FAIL_CLOSED` says, so fail-open never forwards an unscanned prompt or
 returns an unscrubbed reply. The thinking-only retry is optional, so running out of time on it keeps
 the first reply, as its failure does. The A2A path is not bounded by it.
+
+Each self-heal retry re-sends the prompt once, never in a loop, and every attempt is metered. A reply
+that is Bedrock's dangling `tool_use` error rotates the session to a fresh contextId first (`ctx_rotate`).
+A reply that is Bedrock's 424 `ModelErrorException ... invalid sequence as part of ToolUse`, the model
+breaking the tool-call grammar, is re-sent in the same conversation (`model_error_retry`, #62); a second
+424 is the reply. A reply that is only the model's scratchpad is re-sent (`thinking_only_retry`), and
+when the retry fails or is also reasoning-only the turn surfaces the scratchpad's contents.
 
 The `/chat` forward is an A2A task (#27). It is sent as a non-blocking `message/send`, which answers
 with the task's id, and polled with `tasks/get` until the task leaves `submitted` and `working`.
