@@ -74,12 +74,35 @@ MUTANTS: list[tuple[str, str, str]] = [
         '        allowed = bool(verdict.get("is_valid", True))',
         "        allowed = True",
     ),
-    ("output scrub skips status message", '        scrub(status_msg.get("parts", []))\n', ""),
+    (
+        "output scrub skips status message",
+        '        yield from texts(field(field(result.get("status"), "message"), "parts"))\n',
+        "",
+    ),
     (
         "output scrub touches user history",
-        '            if entry.get("role") == "agent":\n                scrub(',
-        "            if True:\n                scrub(",
+        '            if field(entry, "role") == "agent":\n',
+        "            if True:\n",
     ),
+    (
+        "A2A always-on redaction waits for the output guard",
+        '        resp = self._redact_response(resp)\n        if GUARDS["output"]:\n',
+        '        if GUARDS["output"]:\n            resp = self._redact_response(resp)\n',
+    ),
+    (
+        "A2A always-on redaction dropped",
+        '                p["text"] = redacted\n',
+        "                pass\n",
+    ),
+    ("chat always-on redaction dropped", "            redacted = always_redact(reply)\n", "            redacted = reply\n"),
+    (
+        "chat always-on redaction not logged",
+        "                reply = redacted\n"
+        '                log.info("always-on redaction modified response content", extra={"event": "always_redact"})\n',
+        "                reply = redacted\n",
+    ),
+    ("always-on redaction marks an empty match", 'REDACTED if m.group(0) else ""', "REDACTED"),
+    ("a blank ALWAYS_REDACT compiles", "if _ALWAYS_REDACT_SRC.strip() else None", "if _ALWAYS_REDACT_SRC else None"),
     (
         "budget ignores session",
         "session_spend = _session_cost.get(session, 0.0) if session else spend",

@@ -1030,6 +1030,30 @@ def output_scrub(text, deadline=None):
         return None if FAIL_CLOSED else text
 
 
+# The always-on redaction (Unleash_an_Agent_Watch_It_Burn#1092). ALWAYS_REDACT is one regular expression, and
+# every non-empty match of it in every agent-authored reply text is replaced with [REDACTED] whatever the
+# guard toggles say, on /chat and on the A2A pass-through alike. It is for data the workshop never shows in
+# the chat in any state (the marketing intel of Challenge 2's send, #1002), so it cannot wait for the output
+# guard: the public bot starts with every guard off, and that is when the send is played. The toggleable
+# output guard (llm-guard's scanners: the recipe, the CEO address, the MCP sentinel) is unchanged and runs
+# after it. It runs here, in-process, with no LLM Guard call, so it adds no upstream dependency, no latency
+# and no fail-closed path to a wide-open turn. A redaction by it alone leaves `guarded` false and stamps no
+# witb.guard.decision, because both say a toggleable guard acted (the leaderboard reads output_redacted as
+# "the output guard is on"); it logs event always_redact instead. Unset or blank: nothing is redacted. A
+# pattern that does not compile stops startup, rather than leaving the data unredacted.
+_ALWAYS_REDACT_SRC = os.environ.get("ALWAYS_REDACT", "")
+ALWAYS_REDACT = re.compile(_ALWAYS_REDACT_SRC) if _ALWAYS_REDACT_SRC.strip() else None
+REDACTED = "[REDACTED]"
+
+
+def always_redact(text):
+    """The text with every non-empty ALWAYS_REDACT match replaced by [REDACTED]. An empty match is left
+    alone, so a pattern that can match nothing never sprinkles the marker between letters."""
+    if ALWAYS_REDACT is None or not text:
+        return text
+    return ALWAYS_REDACT.sub(lambda m: REDACTED if m.group(0) else "", text)
+
+
 def extract_text(parts):
     return " ".join(
         p.get("text", "") for p in (parts or []) if isinstance(p, dict) and p.get("kind") == "text"
@@ -1514,31 +1538,55 @@ class Handler(BaseHTTPRequestHandler):
                     san_span.set_attribute("gen_ai.output.messages", _genai_output(_reply_txt))
 
         record_usage(resp)  # tally Bedrock token spend for the live cost counter
+        # The always-on redaction runs whatever the toggles say (#1092), before the output guard.
+        resp = self._redact_response(resp)
         if GUARDS["output"]:
             resp = self._scrub_response(resp)
         self._send(200, resp)
 
-    def _scrub_response(self, resp):
-        result = resp.get("result")
+    @staticmethod
+    def _agent_text_parts(resp):
+        """Every agent-authored text part of an A2A reply: the artifacts, the agent's turns in the history,
+        and the status message. It runs on every reply, guards off included, so a field of an unexpected
+        shape is skipped, never raised on."""
+
+        def field(obj, key):
+            return obj.get(key) if isinstance(obj, dict) else None
+
+        def items(v):
+            return v if isinstance(v, list) else []
+
+        def texts(parts):
+            for p in items(parts):
+                if isinstance(p, dict) and p.get("kind") == "text" and isinstance(p.get("text"), str) \
+                        and p["text"]:
+                    yield p
+
+        result = field(resp, "result")
         if not isinstance(result, dict):
-            return resp
+            return
+        for artifact in items(result.get("artifacts")):
+            yield from texts(field(artifact, "parts"))
+        for entry in items(result.get("history")):
+            if field(entry, "role") == "agent":
+                yield from texts(field(entry, "parts"))
+        yield from texts(field(field(result.get("status"), "message"), "parts"))
 
-        def scrub(parts):
-            for p in parts or []:
-                if isinstance(p, dict) and p.get("kind") == "text" and p.get("text"):
-                    scrubbed = output_scrub(p["text"])
-                    if scrubbed != p["text"]:
-                        log.info("output guardrail modified response content",
-                                 extra={"event": "output_scrub"})
-                    p["text"] = "[BLOCKED BY OUTPUT GUARDRAIL]" if scrubbed is None else scrubbed
+    def _redact_response(self, resp):
+        for p in self._agent_text_parts(resp):
+            redacted = always_redact(p["text"])
+            if redacted != p["text"]:
+                log.info("always-on redaction modified response content", extra={"event": "always_redact"})
+                p["text"] = redacted
+        return resp
 
-        for artifact in result.get("artifacts", []) or []:
-            scrub(artifact.get("parts", []))
-        for entry in result.get("history", []) or []:
-            if entry.get("role") == "agent":
-                scrub(entry.get("parts", []))
-        status_msg = result.get("status", {}).get("message", {})
-        scrub(status_msg.get("parts", []))
+    def _scrub_response(self, resp):
+        for p in self._agent_text_parts(resp):
+            scrubbed = output_scrub(p["text"])
+            if scrubbed != p["text"]:
+                log.info("output guardrail modified response content",
+                         extra={"event": "output_scrub"})
+            p["text"] = "[BLOCKED BY OUTPUT GUARDRAIL]" if scrubbed is None else scrubbed
         return resp
 
     def _handle_chat(self):
@@ -1871,6 +1919,11 @@ class Handler(BaseHTTPRequestHandler):
                     reply = ""
             if chat_span is not None and _CAPTURE_CONTENT and reply:
                 chat_span.set_attribute("gen_ai.output.messages", _genai_output(reply))
+            # The always-on redaction first, whatever the toggles say (#1092); it never sets guarded.
+            redacted = always_redact(reply)
+            if redacted != reply:
+                reply = redacted
+                log.info("always-on redaction modified response content", extra={"event": "always_redact"})
             guarded = False
             if GUARDS["output"] and reply:
                 scrubbed = output_scrub(reply, deadline)

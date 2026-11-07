@@ -270,3 +270,29 @@ func TestTurnTimeout(t *testing.T) {
 func TestTokenIsNotReadFromTheFile(t *testing.T) {
 	loadErr(t, writeFile(t, "agent: {url: http://a}\nllm_guard: {url: http://g, token: x}\n"), nil)
 }
+
+func TestAlwaysRedact(t *testing.T) {
+	with := func(v string) map[string]string {
+		env := map[string]string{"ALWAYS_REDACT": v}
+		for k, val := range agentOnly {
+			env[k] = val
+		}
+		return env
+	}
+	if re, err := mustLoad(t, "", agentOnly).AlwaysRedactPattern(); re != nil || err != nil {
+		t.Fatalf("unset: got %v, %v; want no pattern", re, err)
+	}
+	if re, err := mustLoad(t, "", with("  ")).AlwaysRedactPattern(); re != nil || err != nil {
+		t.Fatalf("blank: got %v, %v; want no pattern", re, err)
+	}
+	re, err := mustLoad(t, "", with(`[$]?66[\W_]{0,2}600`)).AlwaysRedactPattern()
+	if err != nil || re == nil || !re.MatchString("a $66,600 budget") {
+		t.Fatalf("set: got %v, %v; want a pattern matching the budget", re, err)
+	}
+	if got := mustLoad(t, writeFile(t, "always_redact: Midnight\n"), agentOnly).AlwaysRedact; got != "Midnight" {
+		t.Fatalf("file: got %q", got)
+	}
+	if msg := loadErr(t, "", with("Operation (Midnight")); !strings.Contains(msg, "ALWAYS_REDACT") {
+		t.Fatalf("a pattern that does not compile: %q; want it named", msg)
+	}
+}

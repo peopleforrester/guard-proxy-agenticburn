@@ -13,6 +13,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -44,6 +45,8 @@ type Server struct {
 	topic        guard.Topic
 	topicRefusal string
 	turnTimeout  time.Duration
+	// alwaysRedact runs on every reply whatever the guards say (#1092); nil redacts nothing.
+	alwaysRedact *regexp.Regexp
 
 	meter      *spend.Meter
 	limiter    *spend.Limiter
@@ -80,6 +83,10 @@ func New(cfg config.Config, log *slog.Logger, store *spend.Store) (*Server, erro
 	if err != nil {
 		return nil, err
 	}
+	alwaysRedact, err := cfg.AlwaysRedactPattern()
+	if err != nil {
+		return nil, err
+	}
 	blocklist := guard.Blocklist(cfg.Blocklist)
 	origins := map[string]bool{}
 	for _, o := range cfg.CORS.ConsoleOrigins {
@@ -98,6 +105,7 @@ func New(cfg config.Config, log *slog.Logger, store *spend.Store) (*Server, erro
 		topic:        guard.NewTopic(cfg.Topic.Off, cfg.Topic.On),
 		topicRefusal: cfg.Topic.Refusal,
 		turnTimeout:  cfg.Chat.TurnTimeout.Duration,
+		alwaysRedact: alwaysRedact,
 
 		meter:      meter,
 		limiter:    spend.NewLimiter(cfg.Spend.RateLimitRPM, cfg.Spend.RateLimitSessionRPM),
@@ -358,6 +366,13 @@ func (s *Server) forwardA2A(w http.ResponseWriter, r *http.Request) {
 		s.storeError(ctx, err)
 		failed(w, err.Error())
 		send(w, http.StatusBadGateway, map[string]string{"error": "spend not recorded: " + err.Error()})
+		return
+	}
+	// The always-on redaction runs whatever the guards say (#1092), before the output guard.
+	if body, err = s.redactReply(ctx, body); err != nil {
+		s.log.ErrorContext(ctx, "always-on redaction failed: "+err.Error(), "event", "guard_error")
+		failed(w, err.Error())
+		send(w, http.StatusBadGateway, map[string]string{"error": "always-on redaction failed: " + err.Error()})
 		return
 	}
 	if g.Output {

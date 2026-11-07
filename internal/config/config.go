@@ -11,6 +11,7 @@ import (
 	"math"
 	"net/url"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -40,6 +41,10 @@ type Config struct {
 	FailClosed bool `yaml:"fail_closed"`
 	// Guards is the state each guard starts in. The live toggles change it at runtime.
 	Guards Guards `yaml:"guards"`
+	// AlwaysRedact is one regular expression (RE2) whose every non-empty match in an agent-authored reply
+	// is replaced with [REDACTED] whatever the guards say (Unleash_an_Agent_Watch_It_Burn#1092). Empty
+	// redacts nothing; a pattern that does not compile stops startup.
+	AlwaysRedact string `yaml:"always_redact"`
 }
 
 // LLMGuard is the LLM Guard API that the classifier and the output guard call.
@@ -322,6 +327,9 @@ func applyEnv(c *Config, getenv func(string) (string, bool)) error {
 	if v, ok := getenv("TOPIC_REFUSAL"); ok {
 		c.Topic.Refusal = v
 	}
+	if v, ok := getenv("ALWAYS_REDACT"); ok {
+		c.AlwaysRedact = v
+	}
 	if v, ok := getenv("CONSOLE_ORIGIN"); ok {
 		c.CORS.ConsoleOrigins = SplitList(v)
 	}
@@ -543,7 +551,22 @@ func (c Config) validate() error {
 	if c.Chat.TurnTimeout.Duration < 0 {
 		return fmt.Errorf("config: chat turn_timeout %v must not be negative", c.Chat.TurnTimeout.Duration)
 	}
+	if _, err := c.AlwaysRedactPattern(); err != nil {
+		return err
+	}
 	return nil
+}
+
+// AlwaysRedactPattern compiles AlwaysRedact, or returns nil when it is blank.
+func (c Config) AlwaysRedactPattern() (*regexp.Regexp, error) {
+	if strings.TrimSpace(c.AlwaysRedact) == "" {
+		return nil, nil
+	}
+	re, err := regexp.Compile(c.AlwaysRedact)
+	if err != nil {
+		return nil, fmt.Errorf("config: always_redact (or ALWAYS_REDACT) does not compile: %w", err)
+	}
+	return re, nil
 }
 
 func checkURL(key, raw string) error {

@@ -292,6 +292,13 @@ func (s *Server) chatTurn(ctx context.Context, w http.ResponseWriter, r *http.Re
 	}
 	// The chat span records what the model said; the root, below, what left the proxy.
 	chatSpan.SetAttributes(s.outputMessages(reply)...)
+	// The always-on redaction first, whatever the guards say (#1092). It never sets guarded and stamps no
+	// decision: both say a toggleable guard acted, and the leaderboard reads output_redacted as the output
+	// guard being on.
+	if out := s.redact(reply); out != reply {
+		reply = out
+		s.log.InfoContext(ctx, "always-on redaction modified response content", "event", "always_redact")
+	}
 	isGuarded := false
 	if g.Output && reply != "" {
 		out, err := s.llmGuard.ScanOutput(ctx, reply)

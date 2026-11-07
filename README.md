@@ -164,13 +164,22 @@ provides it.
 Everything is set through environment variables:
 
 ```
-AGENT_URL  BLOCK_LIST  BUDGET_CAP_USD  BUDGET_GUARD  CONSOLE_ORIGIN  COST_CAP_USD  COST_PER_1K_IN
+AGENT_URL  ALWAYS_REDACT  BLOCK_LIST  BUDGET_CAP_USD  BUDGET_GUARD  CONSOLE_ORIGIN  COST_CAP_USD  COST_PER_1K_IN
 COST_PER_1K_OUT  INPUT_BLOCKLIST  INPUT_CLASSIFIER  INPUT_GUARD  K8S_API_URL  K8S_TOKEN_PATH
 LLM_GUARD_TOKEN  LLM_GUARD_URL  MODEL_NAME  MODEL_TIER
 OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT  OUTPUT_GUARD  PEER_SERVICE  PROFANITY_LIST
 PROXY_FAIL_CLOSED  PROXY_TIMEOUT  RATE_LIMIT_RPM  RATE_LIMIT_SESSION_RPM  STREAM_PROMPTS
 TOPIC_GUARD  TOPIC_OFF_LIST  TOPIC_ON_LIST  TOPIC_REFUSAL  TURN_TIMEOUT  WIB_PUBLIC_HOST
 ```
+
+`ALWAYS_REDACT` is one regular expression, and every non-empty match of it in every agent-authored reply
+text, on `/chat` and on the A2A path, is replaced with `[REDACTED]` whatever the guard toggles say. It is
+for data no guard state may show in the chat: the workshop sets it to the marketing intel of its Challenge 2
+send (Unleash_an_Agent_Watch_It_Burn#1092). It runs in-process, before the output guard, with no LLM Guard
+call. A redaction by it alone leaves `guarded` false, stamps no `witb.guard.decision` and logs event
+`always_redact`. Unset or blank, nothing is redacted; a pattern that does not compile stops startup. The Go
+build compiles it as RE2, so lookarounds and backreferences are refused there, and `\w`, `\d` and `\s`
+are ASCII.
 
 `PROXY_TIMEOUT` bounds each upstream call. A `POST /chat` turn can make up to seven in a row: the
 injection classifier, the topic classifier, the forward, the three self-heal retries and the output

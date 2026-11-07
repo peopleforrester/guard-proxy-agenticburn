@@ -771,3 +771,30 @@ Choices the issue left open:
 Conformance in `test_toggle_log.py`, against both builds; Go's `TestToggleLogsEachChangeWithPeerAndCaller`
 and the refused-store assertion in `TestToggleCostCapTheStoreRefusedChangesNothing`; mutants in
 `mutation_check.py`.
+
+## 2026-11-07: ALWAYS_REDACT redacts one pattern from every reply whatever the toggles say
+
+The workshop's Challenge 2 send carries marketing intel that must never reach the chat
+(Unleash_an_Agent_Watch_It_Burn#1002), and the public bot starts with every guard off, when only the agent's
+prompt stood in the way; a run there leaked it in 2 of 20 replies (#1092 there). Both builds now read
+`ALWAYS_REDACT`, one regular expression, and replace each non-empty match in every agent-authored `/chat` and
+A2A reply text with `[REDACTED]` before the output guard, whatever the toggles say
+(guard-proxy-agenticburn#71). The change is the one the issue carries, applied as written, with these choices:
+
+- **No toggleable guard acted**, so a redaction by it alone leaves `guarded` false, stamps no
+  `witb.guard.decision` and logs event `always_redact`; the leaderboard reads `output_redacted` as "the output
+  guard is on".
+- **In-process, no LLM Guard call**, so a wide-open turn gains no upstream call and no fail-closed path. The
+  Go build's only failure is re-encoding a changed A2A reply, which answers 502 rather than send it unredacted.
+- **An empty match is left alone**, so a pattern that can match nothing never puts the marker between letters.
+- **Python `re` in proxy.py, RE2 in Go**: lookarounds and backreferences stop the Go build's startup, and
+  `\w`, `\d`, `\s` are ASCII there. The README says so.
+- **The chat span keeps what the model said**, as it does for the output guard; the root span, the reply
+  and the A2A body carry what left the proxy.
+- **The A2A walk is shared** with the output scrub (`_agent_text_parts` in proxy.py, `eachAgentText` in Go),
+  and since it now runs with every guard off, proxy.py skips a field of an unexpected shape instead of
+  raising on it.
+
+Conformance in `test_always_redact.py`, against both builds; Go's `TestAlwaysRedact`. `mutation_check.py`'s
+two A2A-walk mutants now target the shared walk, and six more hold the redaction: its A2A and `/chat` calls,
+its order before the output guard, its log line, the empty match and a blank value.

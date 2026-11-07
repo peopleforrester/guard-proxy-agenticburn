@@ -17,6 +17,8 @@ import (
 const (
 	classifierBlocked = "Request blocked by input guardrail (prompt injection detected)."
 	outputBlocked     = "[BLOCKED BY OUTPUT GUARDRAIL]"
+	// redacted replaces each match of the always-on pattern (#1092), the marker LLM Guard's Regex scanner writes.
+	redacted = "[REDACTED]"
 )
 
 type rpcError struct {
@@ -143,6 +145,55 @@ func (s *Server) guardError(ctx context.Context, stage string, err error) {
 // artifacts, the agent's turns in the history, and the status message. A reply the guard leaves
 // alone is returned byte for byte.
 func (s *Server) scrubReply(ctx context.Context, body []byte) ([]byte, error) {
+	return eachAgentText(body, func(text string) string {
+		out, err := s.llmGuard.ScanOutput(ctx, text)
+		if err != nil {
+			s.guardError(ctx, "output guard", err)
+			out = text
+			if s.failClosed {
+				out = outputBlocked
+			}
+		}
+		if out != text {
+			s.log.InfoContext(ctx, "output guardrail modified response content", "event", "output_scrub")
+		}
+		return out
+	})
+}
+
+// redactReply applies the always-on redaction (#1092) to the same parts scrubReply reads, whatever the
+// guards say. A reply it leaves alone is returned byte for byte.
+func (s *Server) redactReply(ctx context.Context, body []byte) ([]byte, error) {
+	if s.alwaysRedact == nil {
+		return body, nil
+	}
+	return eachAgentText(body, func(text string) string {
+		out := s.redact(text)
+		if out != text {
+			s.log.InfoContext(ctx, "always-on redaction modified response content", "event", "always_redact")
+		}
+		return out
+	})
+}
+
+// redact replaces every non-empty match of the always-on pattern with [REDACTED]. An empty match is left
+// alone, so a pattern that can match nothing never sprinkles the marker between letters.
+func (s *Server) redact(text string) string {
+	if s.alwaysRedact == nil || text == "" {
+		return text
+	}
+	return s.alwaysRedact.ReplaceAllStringFunc(text, func(m string) string {
+		if m == "" {
+			return m
+		}
+		return redacted
+	})
+}
+
+// eachAgentText hands every agent-authored text part of an A2A reply (the artifacts, the agent's turns in
+// the history, and the status message) to fn and puts back what it returns. A reply fn changes nothing in
+// is returned byte for byte.
+func eachAgentText(body []byte, fn func(string) string) ([]byte, error) {
 	dec := json.NewDecoder(bytes.NewReader(body))
 	dec.UseNumber() // integers past 2^53 must survive the round trip
 	var resp map[string]any
@@ -154,7 +205,7 @@ func (s *Server) scrubReply(ctx context.Context, body []byte) ([]byte, error) {
 		return body, nil
 	}
 	changed := false
-	scrub := func(parts any) {
+	each := func(parts any) {
 		list, _ := parts.([]any)
 		for _, p := range list {
 			m, ok := p.(map[string]any)
@@ -165,30 +216,21 @@ func (s *Server) scrubReply(ctx context.Context, body []byte) ([]byte, error) {
 			if text == "" {
 				continue
 			}
-			out, err := s.llmGuard.ScanOutput(ctx, text)
-			if err != nil {
-				s.guardError(ctx, "output guard", err)
-				out = text
-				if s.failClosed {
-					out = outputBlocked
-				}
-			}
-			if out != text {
-				s.log.InfoContext(ctx, "output guardrail modified response content", "event", "output_scrub")
+			if out := fn(text); out != text {
 				m["text"] = out
 				changed = true
 			}
 		}
 	}
 	for _, a := range asList(result["artifacts"]) {
-		scrub(field(a, "parts"))
+		each(field(a, "parts"))
 	}
 	for _, h := range asList(result["history"]) {
 		if field(h, "role") == "agent" {
-			scrub(field(h, "parts"))
+			each(field(h, "parts"))
 		}
 	}
-	scrub(field(field(result["status"], "message"), "parts"))
+	each(field(field(result["status"], "message"), "parts"))
 	if !changed {
 		return body, nil
 	}
