@@ -150,6 +150,13 @@ build spans a GET; a failed GET passthrough now logs `forward_error` at ERROR in
 nothing at INFO or above before). The Go `/toggle` 500 already logs `spend_store_error`. Decision
 recorded 2026-11-05; conformance in `test_logging.py` and `test_telemetry.py`, one new mutant.
 
+### Agent-task #59: GET /prompts carries each prompt's witch name in `witches`
+Asked by Unleash_an_Agent_Watch_It_Burn#921 for the prompt wall (prompts-agenticburn#16). Both builds
+answer `{"enabled", "prompts", "witches"}`: `prompts` unchanged, `witches[i]` the sender of `prompts[i]`,
+`""` for none, for every A2A prompt and for a name moderation would change. Built from the diff Unleash
+run 17641 tested on c5f71f3. Decision recorded 2026-11-07. The workshop then repins
+`gitops/ai-layer/guard-proxy` and its `checksum/proxy-py`.
+
 ### Agent-task #63: the kitchen note after a session's recon question
 Asked by Unleash_an_Agent_Watch_It_Burn#968 for its recipe rule. Once a /chat message that reaches the agent
 asks what files or folders the bot can see, both builds mark the browser session and add
@@ -198,3 +205,4 @@ _(append-only. Each phase transition adds one line, oldest first.)_
 - 2026-11-05 #56 implemented and verified locally (2.3) on agent/56-17341: test-only fix, go vet and go test ./... green, proxy.py and Go suites 411/411; with span export slowed to 1500 ms the old test passes on one chat span and the fixed test waits for and checks both
 - 2026-10-31 #29 live check passed on watch-it-burn-private (runtime go, one replica, run cancelled); recorded in decisions.md
 - 2026-11-05 #29 deployed proxy's own task_cancel seen live after a 120 s /chat forward; Bedrock and tool spans end at the cancel
+- 2026-11-07 #59 implemented and verified locally (2.3) on agent/59-18086: go vet and go test ./... green, proxy.py and Go suites 425/425, mutation check 69/69 caught

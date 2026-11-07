@@ -108,7 +108,7 @@ func (s *Server) chatTurn(ctx context.Context, w http.ResponseWriter, r *http.Re
 		send(w, http.StatusBadRequest, chatReply{Reply: emptyPrompt})
 		return nil
 	}
-	s.feed.Record(prompt)
+	s.feed.Record(prompt, witch)
 	g := s.guardState()
 
 	// The input guards and the topic guard, then the limits and the caps. A blocked turn spends nothing.

@@ -95,9 +95,9 @@ func TestEmptyProfanityListMasksNothing(t *testing.T) {
 func TestFeedKeepsTheLatest50AndSkipsProbes(t *testing.T) {
 	f := New(true, moderator(""))
 	for i := 0; i < 55; i++ {
-		f.Record(fmt.Sprintf("order %d", i))
+		f.Record(fmt.Sprintf("order %d", i), "")
 	}
-	f.Record("smoke " + ProbeMarker)
+	f.Record("smoke "+ProbeMarker, "Agatha the Banshee")
 	got := f.Prompts()
 	if len(got) != 50 || got[0] != "order 5" || got[49] != "order 54" {
 		t.Errorf("Prompts = %v", got)
@@ -106,8 +106,56 @@ func TestFeedKeepsTheLatest50AndSkipsProbes(t *testing.T) {
 
 func TestDisabledFeedRecordsNothing(t *testing.T) {
 	f := New(false, moderator(""))
-	f.Record("one burrito")
+	f.Record("one burrito", "Agatha the Banshee")
 	if got := f.Prompts(); !reflect.DeepEqual(got, []string{}) || f.Enabled() {
 		t.Errorf("Prompts = %v, Enabled = %v", got, f.Enabled())
+	}
+}
+
+func TestFeedCarriesEachPromptsWitchNameAtItsIndex(t *testing.T) {
+	f := New(true, moderator(""))
+	f.Record("one burrito", "Agatha the Banshee")
+	f.Record("no name here", "")
+	f.Record("call 555 123 4567", "Hazel the Ghoul")
+	prompts, witches := f.Snapshot()
+	if !reflect.DeepEqual(prompts, []string{"one burrito", "no name here", "call [redacted]"}) {
+		t.Errorf("prompts = %v", prompts)
+	}
+	if !reflect.DeepEqual(witches, []string{"Agatha the Banshee", "", "Hazel the Ghoul"}) {
+		t.Errorf("witches = %q", witches)
+	}
+}
+
+func TestFeedDropsAWitchNameModerationWouldMask(t *testing.T) {
+	f := New(true, moderator(config.DefaultProfanity))
+	f.Record("one burrito", "Shit the Ghoul")
+	f.Record("two burritos", "Delete the Witch")
+	if _, witches := f.Snapshot(); !reflect.DeepEqual(witches, []string{"", ""}) {
+		t.Errorf("witches = %q", witches)
+	}
+}
+
+func TestFeedWitchesKeepTheLatest50InStepWithPrompts(t *testing.T) {
+	f := New(true, moderator(""))
+	for i := 0; i < 55; i++ {
+		f.Record(fmt.Sprintf("order %d", i), fmt.Sprintf("Witch the %s", strings.Repeat("o", i%15+1)))
+	}
+	prompts, witches := f.Snapshot()
+	if len(prompts) != 50 || len(witches) != 50 {
+		t.Fatalf("kept %d prompts, %d witches", len(prompts), len(witches))
+	}
+	for i := range prompts {
+		n := i + 5
+		if prompts[i] != fmt.Sprintf("order %d", n) || witches[i] != "Witch the "+strings.Repeat("o", n%15+1) {
+			t.Errorf("index %d: %q by %q", i, prompts[i], witches[i])
+		}
+	}
+}
+
+func TestDisabledFeedRecordsNoWitchName(t *testing.T) {
+	f := New(false, moderator(""))
+	f.Record("one burrito", "Agatha the Banshee")
+	if prompts, witches := f.Snapshot(); len(prompts) != 0 || len(witches) != 0 {
+		t.Errorf("prompts = %v, witches = %q", prompts, witches)
 	}
 }

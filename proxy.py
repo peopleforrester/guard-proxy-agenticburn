@@ -809,7 +809,7 @@ _PII_PATTERNS = (
     ),
 )
 _stream_lock = threading.Lock()
-_prompts = collections.deque(maxlen=50)  # recent MODERATED prompts for the display
+_prompts = collections.deque(maxlen=50)  # recent (MODERATED prompt, witch name or "") pairs for the display
 
 # Automated probes must not land in the side-screen feed. verify/browser-smoke.py sends a prompt to every
 # cluster on every run, and with capture on those accumulate in the deque above and merge across 13
@@ -843,6 +843,33 @@ def moderate(text):
     if _PROFANITY_RE is not None:
         masked = _PROFANITY_RE.sub("[redacted]", masked)
     return masked[:280]
+
+
+def feed_witch(witch):
+    """The name a feed entry carries: the shaped /chat name as given, or "" when there is none or when
+    moderation would mask any of it. A name is a label on a projected screen, so a half-masked one is
+    dropped whole rather than shown as "[redacted] the Ghoul"."""
+    return witch if witch and moderate(witch) == witch else ""
+
+
+def record_prompt(text, witch=""):
+    """Keep one moderated prompt and its sender's witch name for the side-screen feed."""
+    if not STREAM_ENABLED or not text or _is_probe(text):
+        return
+    entry = (moderate(text), feed_witch(witch))
+    with _stream_lock:
+        _prompts.append(entry)
+
+
+def feed_payload():
+    """GET /prompts. `prompts` stays the bare moderated texts every reader already parses as strings, and
+    `witches` is each one's witch name at the same index ("" for none, and always "" on the A2A path). Names
+    ride beside the texts rather than with a second copy of them: lab-platform refuses a body over 256 KiB
+    whole, and fifty 280-character prompts of escaped emoji are already about 168 KB."""
+    with _stream_lock:
+        kept = list(_prompts)
+    return {"enabled": STREAM_ENABLED, "prompts": [text for text, _ in kept],
+            "witches": [witch for _, witch in kept]}
 
 
 def record_usage(resp, session=""):
@@ -1157,8 +1184,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         if self.path == "/prompts":
             # Side-screen feed: MODERATED prompts only, and only if capture is enabled.
-            with _stream_lock:
-                self._send(200, {"enabled": STREAM_ENABLED, "prompts": list(_prompts)})
+            self._send(200, feed_payload())
             return
         # NOTE: the old custom Prometheus /metrics cost endpoint is REMOVED. Cost is now the
         # OTLP metric `gen_ai.client.cost` (registered above, under the standard gen_ai namespace), and
@@ -1268,9 +1294,7 @@ class Handler(BaseHTTPRequestHandler):
         text = ""
         if isinstance(payload, dict):
             text = extract_text(payload.get("params", {}).get("message", {}).get("parts", []))
-        if STREAM_ENABLED and text and not _is_probe(text):
-            with _stream_lock:
-                _prompts.append(moderate(text))  # moderated; side-screen feed only
+        record_prompt(text)  # moderated; side-screen feed only. The A2A path carries no witch name.
 
         # The `sanitize` INTERNAL child span wraps the guard decision + the forward (PRD #22 M1).
         # gen_ai.operation.name="chat" so Datadog classifies it as an llm-kind span and renders the
@@ -1461,8 +1485,9 @@ class Handler(BaseHTTPRequestHandler):
         # otherwise crash the per-session cost lookup and drop the connection.
         if not isinstance(session, str):
             session = ""
-        # The name is context for the agent, not part of the prompt: no guard scans it, the feed does not
-        # show it, and a blank or non-string one is no name, so the message is exactly the prompt.
+        # The name is context for the agent, not part of the prompt: no guard scans it, the feed carries it
+        # beside the prompt's text and never in it, and a blank or non-string one is no name, so the message
+        # is exactly the prompt.
         witch = witch.strip() if isinstance(witch, str) else ""
         if witch and not _WITCH_NAME_RE.fullmatch(witch):
             log.info("chat witch name dropped: %d characters, not shaped <First> the <Creature>", len(witch),
@@ -1474,9 +1499,7 @@ class Handler(BaseHTTPRequestHandler):
             self._send(400, {"reply": "Tell BurritoBot what you'd like.", "guarded": False,
                              "input_tokens": 0, "output_tokens": 0})
             return
-        if STREAM_ENABLED and not _is_probe(prompt):
-            with _stream_lock:
-                _prompts.append(moderate(prompt))
+        record_prompt(prompt, witch)
         # Input guards and the topic guard (same toggles as the A2A path), then rate/cost cap. A blocked
         # request spends 0 tokens.
         if GUARDS["input_blocklist"]:
