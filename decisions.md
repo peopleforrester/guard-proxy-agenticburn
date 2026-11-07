@@ -679,6 +679,35 @@ it once (guard-proxy-agenticburn#62). Choices the issue left open:
 - Logged as `model_error_retry`. Conformance in `test_chat_path.py`, both attempts metered in
   `test_spend.py` and on the `chat` span in `test_telemetry.py`; the mutation check holds the retry and
   its two-phrase match.
+
+## 2026-11-07: wall-clock margins in the turn and cancel conformance tests
+
+On the shared hecaton host, which swaps and runs other suites at load 18 to 40 on 16 cores, the Go E2E
+suite failed a different timing assertion in `test_turn_deadline.py` or `test_task_cancel.py` on about two
+runs in three (guard-proxy-agenticburn#66). The margins were half a second: a 1 s call had to fit a 1.5 s
+turn, and two had to overrun it. CPU load alone did not reproduce it (16 parallel copies at load 44 all
+passed); stopping this worktree's proxy and pytest processes at random with SIGSTOP and SIGCONT, as a
+swapping host does, did. The margins are now set as follows.
+
+- **Both sides of a turn get 1.5 s.** `SLOW` is 3 s and `TURN_TIMEOUT` 4.5 s, so one call fits with 1.5 s
+  to spare, which a stalled fake or proxy eats, and two overrun by 1.5 s. The overrun side matters too: a
+  proxy stopped across the deadline reads a reply that arrived while it was stopped, and answers 200.
+- **Each time bound is the deadline plus `SLACK` (5 s), and stays below the soonest the wrong behaviour can
+  answer.** A loaded host only makes things slower, and a fake's `delay` is a floor, so the wrong answer's
+  earliest time is known exactly. `PROXY_TIMEOUT` is 20 s and a hanging upstream answers at 12 s, past
+  the bound, so a call given `PROXY_TIMEOUT` instead of what was left of the turn still fails the test.
+  The slow cancel answers after 8 s, past the 6 s bound on its 1 s turn.
+- **Waits for a log line that follows the answer are 10 s.** A cancel that never comes costs the whole
+  wait, and only on a failing run.
+- The cost is about 40 s more per suite run, out of about 9 minutes.
+
+Measured with 8 parallel copies of the two files against the Go build, 32 runs each, the injector
+stopping each process for up to the given time at random intervals. The base build failed 4 runs of 32
+at 0.8 s stalls and 32 of 32 at 2 s. The change failed 4 of 32 at 2 s, where stops of two seconds stacked
+inside one 3 s call ate the 1.5 s to spare, and none of 32 at 0.8 s with the narrower SLOW 2.5 s and
+TURN 4 s it was tuned through. The host's own failures overran by about half a second inside a call and
+2.4 to 4.1 s outside the turn, which these margins cover; widening further would double the tests' time
+again.
 ## 2026-11-07: /chat sends X-Pantry-Shut on a turn whose chat may not have the recipe card
 
 BurritoBot gave Challenge 2's recipe card away in the same chat where it had just named its folders
@@ -742,31 +771,3 @@ Choices the issue left open:
 Conformance in `test_toggle_log.py`, against both builds; Go's `TestToggleLogsEachChangeWithPeerAndCaller`
 and the refused-store assertion in `TestToggleCostCapTheStoreRefusedChangesNothing`; mutants in
 `mutation_check.py`.
-
-## 2026-11-07: wall-clock margins in the turn and cancel conformance tests
-
-On the shared hecaton host, which swaps and runs other suites at load 18 to 40 on 16 cores, the Go E2E
-suite failed a different timing assertion in `test_turn_deadline.py` or `test_task_cancel.py` on about two
-runs in three (guard-proxy-agenticburn#66). The margins were half a second: a 1 s call had to fit a 1.5 s
-turn, and two had to overrun it. CPU load alone did not reproduce it (16 parallel copies at load 44 all
-passed); stopping this worktree's proxy and pytest processes at random with SIGSTOP and SIGCONT, as a
-swapping host does, did. The margins are now set as follows.
-
-- **Both sides of a turn get 1.5 s.** `SLOW` is 3 s and `TURN_TIMEOUT` 4.5 s, so one call fits with 1.5 s
-  to spare, which a stalled fake or proxy eats, and two overrun by 1.5 s. The overrun side matters too: a
-  proxy stopped across the deadline reads a reply that arrived while it was stopped, and answers 200.
-- **Each time bound is the deadline plus `SLACK` (5 s), and stays below the soonest the wrong behaviour can
-  answer.** A loaded host only makes things slower, and a fake's `delay` is a floor, so the wrong answer's
-  earliest time is known exactly. `PROXY_TIMEOUT` is 20 s and a hanging upstream answers at 12 s, past
-  the bound, so a call given `PROXY_TIMEOUT` instead of what was left of the turn still fails the test.
-  The slow cancel answers after 8 s, past the 6 s bound on its 1 s turn.
-- **Waits for a log line that follows the answer are 10 s.** A cancel that never comes costs the whole
-  wait, and only on a failing run.
-- The cost is about 40 s more per suite run, out of about 9 minutes.
-
-Measured with 8 parallel copies of the two files against the Go build, 32 runs each, the injector
-stopping each process for up to the given time at random intervals: base build, 4 runs of 32 failing at
-0.8 s stalls and 32 of 32 at 2 s; the change, 0 of 32 at 0.8 s (with a 1 s margin each side) and 4 of 32 at 2 s, where stops of two
-seconds stacked inside one 3 s call ate the 1.5 s to spare. The host's own failures overran by about
-half a second inside a call and 2.4 to 4.1 s outside the turn, which these margins cover; widening
-further would double the tests' time again.
