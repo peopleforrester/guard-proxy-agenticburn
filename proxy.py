@@ -1219,17 +1219,39 @@ def ask_user_questions(resp):
     return "\n".join(questions)
 
 
+def answered_steps(result):
+    """Each model step's text in an A2A task, in order, a blank line apart, when a step before the last wrote
+    something outside its scratchpad, else "".
+
+    kagent's artifact holds only the final model step, and the task history holds one agent message per step.
+    Nova sometimes writes its answer and then calls another tool, so the final step only talks about that tool
+    and the artifact alone loses the answer (Unleash_an_Agent_Watch_It_Burn#889, guard-proxy-agenticburn#74)."""
+    steps = []
+    for h in result.get("history") or []:
+        if isinstance(h, dict) and h.get("role") == "agent":
+            text = extract_text(h.get("parts")).strip()
+            if text:
+                steps.append(text)
+    if not any(not _is_thinking_only(s) for s in steps[:-1]):
+        return ""
+    return "\n\n".join(steps)
+
+
 def chat_reply_text(resp):
     """The AGENT's reply text from an A2A response. kagent echoes the SAME text into artifacts AND the
     agent-role history, so take ONE source (artifacts first, then agent history, then status) rather than
     concatenating all three, or the storefront reply comes back doubled. A task stopped on an ask_user
-    call answers with its questions, which carry what the model wrote for the guest."""
+    call answers with its questions, which carry what the model wrote for the guest, and a task that
+    answered in an earlier model step answers with every step's text."""
     result = resp.get("result") if isinstance(resp, dict) else None
     if not isinstance(result, dict):
         return ""
     asked = ask_user_questions(resp)
     if asked:
         return asked
+    steps = answered_steps(result)
+    if steps:
+        return steps
     art =" ".join(extract_text(a.get("parts")) for a in (result.get("artifacts") or [])).strip()
     if art:
         return art

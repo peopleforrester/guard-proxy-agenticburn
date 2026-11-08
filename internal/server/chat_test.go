@@ -67,6 +67,32 @@ func TestReplyTextOfAnAskUserTask(t *testing.T) {
 	}
 }
 
+// steppedTask is a completed task whose artifact is "art" and whose agent history has one message per
+// model step with the given texts, as kagent 0.10.1 answers (conformance/recorded/answer_then_tool_call.json).
+func steppedTask(texts ...string) string {
+	hist := `{"role": "user", "parts": [{"kind": "text", "text": "the guest"}]}`
+	for _, text := range texts {
+		hist += `, {"role": "agent", "parts": [{"kind": "text", "text": "` + text + `"}, {"kind": "data", "data": {"name": "t"}}]}`
+	}
+	return `{"result": {"status": {"state": "completed"}, "artifacts": [{"parts": [{"kind": "text", "text": "art"}]}], "history": [` + hist + `]}}`
+}
+
+func TestReplyTextOfATaskThatAnsweredBeforeItsLastStep(t *testing.T) {
+	for body, want := range map[string]string{
+		steppedTask("<thinking>p</thinking> The answer. ", "", "The tool."): "<thinking>p</thinking> The answer.\n\nThe tool.",
+		steppedTask("Aa", "B", "Cc"):                                        "Aa\n\nB\n\nCc",
+		steppedTask("<thinking>p</thinking>", "<thinking>q</thinking> x"):   "art",
+		steppedTask("<thinking>p</thinking>", "The answer."):                "art",
+		steppedTask("The answer only."):                                     "art",
+		steppedTask(" ", "<thinking>p</thinking> x"):                        "art",
+		steppedTask(): "art",
+	} {
+		if got := replyText(decode(t, body)); got != want {
+			t.Errorf("%s: replyText = %q, want %q", body, got, want)
+		}
+	}
+}
+
 func TestThinkingOnly(t *testing.T) {
 	for reply, want := range map[string]bool{
 		"<thinking>I should list the proteins.</thinking>":    true,

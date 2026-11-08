@@ -219,6 +219,13 @@ parts: the `ask_user` call and its pending response in the agent history, and th
 redaction and the output guard read each copy as they read a text part (#73). They read no other data part,
 so another tool's call or confirmation passes as the agent sent it.
 
+kagent's artifact holds only a turn's final model step, while its task history holds one agent message
+per step. Nova sometimes writes its answer and then calls another tool, and the final step then talks only
+about that tool (#74). So when a step before the last wrote anything outside its `<thinking>` block, the
+`/chat` reply is every step's text in order, a blank line apart, scratchpads included; the storefront folds
+each `<thinking>` block into its model reasoning. A turn whose earlier steps wrote only their plan replies
+with the artifact, as before.
+
 A `/chat` body can carry `witch`, the visitor's name the storefront assigns (#34). When it is shaped
 like a storefront name, `<First> the <Creature>` with each word capitalized and at most 16 letters (#35),
 the A2A message gets a second text part after the prompt, `The person chatting with you gave their name

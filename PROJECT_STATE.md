@@ -176,8 +176,15 @@ Follow-up of #72. On the A2A passthrough the always-on redaction and the output 
 four copies of an ask_user question kagent writes in data parts, in both builds; another tool's data
 parts pass as sent. Decision recorded 2026-11-08; conformance in `test_a2a_ask_user.py`.
 
+### Agent-task #74: a /chat turn that answered before calling another tool keeps its answer
+Found by Unleash_an_Agent_Watch_It_Burn#889 (1 of 19 live): kagent's artifact holds only the final model
+step. When a step before the last wrote text outside its scratchpad, both builds reply with every step's
+text from the agent history, in order, a blank line apart; otherwise the artifact as before. The shape is a
+task recorded live on watch-it-burn-community (`conformance/recorded/answer_then_tool_call.json`). Decision
+recorded 2026-11-08; conformance in `test_chat_answer_then_tool.py`.
+
 ## Branch & Tests
-- Branch: agent/73-18498 (#73)
+- Branch: agent/74-18512 (#74)
 - Working tree: clean
 - Last CI: green on 3407cef (staging and main)
 
@@ -226,3 +233,4 @@ _(append-only. Each phase transition adds one line, oldest first.)_
 - 2026-11-07 #71 implemented and verified locally (2.3) on agent/71-18372: ruff, gofmt, go vet and go test ./... green, proxy.py suite 520/520 and Go suite 520/520; mutation check 51/105 caught and none escaped, all eight that hold this change among them (42 in one stopped run, 9 in another), the other 54 unrun
 - 2026-11-08 #72 implemented and verified locally (2.3) on agent/72-18471: ruff, gofmt, go vet and go test ./... green, proxy.py suite 527/527 and Go suite 527/527; the five new mutants and the re-targeted one caught against test_chat_ask_user.py and test_task_cancel.py, the full mutation check not run
 - 2026-11-08 #73 implemented and verified locally (2.3) on agent/73-18498: ruff, gofmt, go vet and go test ./... green, proxy.py suite 539/539 and Go suite 539/539; the new conformance tests fail against both base builds, and the five new mutants and the re-targeted one are caught against test_a2a_ask_user.py and test_always_redact.py, the full mutation check not run
+- 2026-11-08 #74 implemented and verified locally (2.3) on agent/74-18512: ruff, gofmt, go vet and go test ./... green, proxy.py suite 546/546 and Go suite 546/546; five of the seven new conformance tests fail against both base builds, and the four new mutants are caught against test_chat_answer_then_tool.py, the full mutation check not run

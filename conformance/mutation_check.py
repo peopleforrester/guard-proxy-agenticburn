@@ -398,6 +398,26 @@ MUTANTS: list[tuple[str, str, str]] = [
         "                            threading.Thread(target=lambda *a: None, daemon=True, args=(",
     ),
     (
+        "an earlier step's answer lost to the last step",
+        "    steps = answered_steps(result)\n    if steps:\n        return steps\n",
+        "",
+    ),
+    (
+        "an earlier scratchpad read as an answer",
+        "    if not any(not _is_thinking_only(s) for s in steps[:-1]):",
+        "    if not steps[:-1]:",
+    ),
+    (
+        "the last step read as an earlier answer",
+        "    if not any(not _is_thinking_only(s) for s in steps[:-1]):",
+        "    if not any(not _is_thinking_only(s) for s in steps):",
+    ),
+    (
+        "model steps joined on one line",
+        '    return "\\n\\n".join(steps)',
+        '    return " ".join(steps)',
+    ),
+    (
         "an ask_user reply not logged",
         '                        log.info("the agent asked the guest through ask_user; replying with its question",\n'
         '                                 extra={"event": "ask_user_reply"})\n',

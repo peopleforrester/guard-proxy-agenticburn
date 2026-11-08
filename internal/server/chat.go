@@ -696,10 +696,34 @@ func askUserQuestions(resp any) string {
 	return strings.Join(questions, "\n")
 }
 
+// answeredSteps is each model step's text in an A2A task, in order, a blank line apart, when a step before
+// the last wrote something outside its scratchpad, or "".
+//
+// kagent's artifact holds only the final model step, and the task history holds one agent message per step.
+// Nova sometimes writes its answer and then calls another tool, so the final step only talks about that tool
+// and the artifact alone loses the answer (Unleash_an_Agent_Watch_It_Burn#889, guard-proxy-agenticburn#74).
+func answeredSteps(result map[string]any) string {
+	var steps []string
+	for _, h := range asList(result["history"]) {
+		if field(h, "role") == "agent" {
+			if text := strings.TrimSpace(textOf(asList(field(h, "parts")))); text != "" {
+				steps = append(steps, text)
+			}
+		}
+	}
+	for i := 0; i < len(steps)-1; i++ {
+		if !isThinkingOnly(steps[i]) {
+			return strings.Join(steps, "\n\n")
+		}
+	}
+	return ""
+}
+
 // replyText is the agent's reply from an A2A response. kagent echoes the same text into artifacts and the
 // agent-role history, so it takes one source, artifacts first, then agent history, then the status
 // message, rather than joining them and doubling the reply. A task stopped on an ask_user call answers
-// with its questions, which carry what the model wrote for the guest.
+// with its questions, which carry what the model wrote for the guest, and a task that answered in an
+// earlier model step answers with every step's text.
 func replyText(resp any) string {
 	result, ok := field(resp, "result").(map[string]any)
 	if !ok {
@@ -707,6 +731,9 @@ func replyText(resp any) string {
 	}
 	if asked := askUserQuestions(resp); asked != "" {
 		return asked
+	}
+	if steps := answeredSteps(result); steps != "" {
+		return steps
 	}
 	var art []string
 	for _, a := range asList(result["artifacts"]) {

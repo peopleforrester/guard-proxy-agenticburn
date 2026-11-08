@@ -857,3 +857,33 @@ question. The choices:
 
 Conformance in `test_a2a_ask_user.py`, against both builds; Go's `TestEachAgentText*`; five new mutants and
 one re-targeted in `mutation_check.py`.
+
+## 2026-11-08: a /chat turn that answered in an earlier model step replies with every step's text
+
+Unleash_an_Agent_Watch_It_Burn#889 saw Nova write the linked-list answer and then call `apply_optimization`
+once in 19 live tasks. kagent's artifact holds only the final model step, which talked about the tool, so
+the `/chat` reply was that last text and the guest lost the answer (guard-proxy-agenticburn#74). #72 fixed
+only the ask_user shape. The choices:
+
+- **The shape is recorded, not assumed.** `conformance/recorded/answer_then_tool_call.json` is the
+  `tasks/get` answer from watch-it-burn-community's workshop-agent (kagent 0.10.1, `runtime: go`) on
+  2026-11-08, sent over an agentgateway port-forward with a prompt asking for the linked-list answer and then
+  one `apply_optimization` call. The history holds one agent message per model step: the first has the
+  scratchpad, the answer and the `function_call` part, the second the `function_response`, the third the final
+  text, which is also the whole artifact. A second message in the same contextId ran as a new task whose
+  history held that task's messages alone, so the history is the turn's. `apps` was unchanged after both.
+- **Which earlier text is the answer: any step before the last that wrote something outside its
+  `<thinking>` block**, read with the same rule as the scratchpad-only retry (under two characters left is
+  nothing). A step that wrote only its plan before a tool call, the common tool turn, did not answer, so
+  those turns keep the artifact reply byte for byte.
+- **Every step's text, in order, a blank line apart, scratchpads included**, not the earlier step alone. The
+  final step can be the real answer after a preamble ("let me check the menu"), and nothing tells the two
+  apart, so the reply drops neither, as kagent's own UI shows each step. The storefront's `splitThinking`
+  folds every `<thinking>` block wherever it sits into the model reasoning, so the guest reads the visible
+  text only.
+- **The joined text is the reply everywhere the turn reads one**, so a turn whose answer came first and
+  whose last step is scratchpad only is not retried, and the always-on redaction and the output guard read
+  the whole of it. The A2A passthrough already hands the client the whole task and is unchanged.
+
+Conformance in `test_chat_answer_then_tool.py`, against both builds; Go's
+`TestReplyTextOfATaskThatAnsweredBeforeItsLastStep`; four new mutants in `mutation_check.py`.
