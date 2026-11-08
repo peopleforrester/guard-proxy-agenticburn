@@ -661,6 +661,16 @@ MUTANTS: list[tuple[str, str, str]] = [
         '    out["agency_scoped"] = None if role is None else',
         '    out["agency_scoped"] = False if role is None else',
     ),
+    (
+        "tasks/get polls keep the sampled traceparent",
+        "headers=poll_headers if poll else fwd_headers,",
+        "headers=fwd_headers,",
+    ),
+    (
+        "tasks/get polls leave urllib's instrumentation on",
+        "if poll and _OTEL_AVAILABLE else None)",
+        "if False else None)",
+    ),
 ]
 
 

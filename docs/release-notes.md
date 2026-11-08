@@ -3,6 +3,21 @@
 What each guard-proxy build a consumer can pin changes, newest first, naming its commit. The workshop
 repo repins its `gitops/ai-layer/guard-proxy` submodule from these entries.
 
+## 2026-11-08: /chat's tasks/get polls go out unsampled and leave no spans
+
+Both builds (guard-proxy-agenticburn#77, found by Unleash_an_Agent_Watch_It_Burn#877). Repin the workshop's
+`gitops/ai-layer/guard-proxy` submodule and its `checksum/proxy-py` to this entry's commit (or a later one)
+to pick it up.
+
+- Each `tasks/get` poll carries `traceparent: 00-<turn trace>-<agent.forward span>-00`: the sampled flag
+  cleared, so agentgateway v1.7.0's TraceSampler and kagent's otelhttp server record nothing for it.
+- `proxy.py` suppresses urllib's auto-instrumentation for each poll, so the poll has no urllib CLIENT span
+  and urllib does not replace that `traceparent` with its own. The Go build's client is not instrumented.
+- The `message/send` is unchanged: it carries the turn's sampled context, and the agent's spans still hang
+  from it. `tasks/cancel` and the A2A passthrough are unchanged too.
+- Check after the repin: a blocked `run_shell` turn's trace in Tempo has no `tasks/get` spans, and
+  `verify/one_root_probe.py` still passes.
+
 ## 2026-11-07: every /toggle that changes a guard logs a guard_toggle line
 
 Both builds (guard-proxy-agenticburn#67, asked by Unleash_an_Agent_Watch_It_Burn#1024). Repin the workshop's

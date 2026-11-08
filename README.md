@@ -205,6 +205,11 @@ time with a task still running, the turn answers its 502 and guard-proxy then se
 cannot be reached. kagent runs a turn detached from the request, so without the cancel a turn nobody
 is waiting for keeps calling tools and the model.
 
+Each `tasks/get` poll carries the `agent.forward` span's `traceparent` with its flags `00`, unsampled, and
+`proxy.py` suppresses urllib's instrumentation for it (#77). agentgateway and kagent record no span under
+an unsampled parent, so a tool that runs for twenty seconds no longer leaves about twenty polls of four
+spans each in the turn's trace. The `message/send` keeps the sampled context the agent's spans hang from.
+
 kagent 0.10.1 gives every agent its built-in `ask_user` tool, and a turn that calls it ends
 `input-required` with no artifact: the question is only in the status message's
 `adk_request_confirmation` part, and the agent history holds the scratchpad alone (#72). The chat

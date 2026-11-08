@@ -330,6 +330,50 @@ def test_chat_joins_the_upstream_trace_and_passes_it_on(traced, agent):
     assert _header(agent.calls()[0], "traceparent") == f"00-{UPSTREAM_TRACE}-{fwd['span_id']}-01"
 
 
+def _polled_twice():
+    """An agent that accepts the turn as a running task, still runs it at the first tasks/get, and has
+    finished it at the second."""
+    running = {"jsonrpc": "2.0", "id": "chat", "result": {
+        "kind": "task", "id": "task-7", "contextId": "ctx-1", "status": {"state": "working"}}}
+    done = a2a_result("Here is your burrito.")
+    done["result"]["id"] = "task-7"
+    answers = [running, running, done]
+
+    def respond(req):
+        return Reply(body=answers.pop(0))
+
+    return respond
+
+
+def test_chat_polls_go_out_unsampled_and_leave_no_spans(traced, agent):
+    # While a tool runs the forward polls once a second, and each poll left a span at every hop of the
+    # turn's trace (guard-proxy-agenticburn#77). A poll goes out under an unsampled traceparent, which
+    # agentgateway and kagent do not record under, with urllib's own instrumentation suppressed; the
+    # send keeps the turn's sampled context, so the agent's work still hangs from the forward.
+    agent.respond = _polled_twice()
+    p, collector = traced(CONFORMANCE_URLLIB_INSTRUMENTATION="on")
+    assert _post_with_traceparent(p, "/chat", {"prompt": "one burrito"}) == 200
+    spans = _by_name(collector, {"POST /chat", "chat", "agent.forward"})
+    fwd = spans["agent.forward"]
+    send, *polls = agent.calls()
+    assert [c.json()["method"] for c in (send, *polls)] == ["message/send", "tasks/get", "tasks/get"]
+    for poll in polls:
+        assert _header(poll, "traceparent") == f"00-{UPSTREAM_TRACE}-{fwd['span_id']}-00"
+    version, trace_id, send_parent, flags = _header(send, "traceparent").split("-")
+    assert (version, trace_id, flags) == ("00", UPSTREAM_TRACE, "01")
+    # Between agent.forward and the agent, only the send's own HTTP client span, where the implementation
+    # instruments its client, and no span for either poll.
+    to_agent = [
+        s for s in collector.spans()
+        if s["name"] != "agent.forward" and agent.url + "/" in s["attributes"].values()
+    ]
+    if send_parent == fwd["span_id"]:
+        assert to_agent == []
+    else:
+        (sent,) = to_agent
+        assert (sent["span_id"], sent["parent_span_id"]) == (send_parent, fwd["span_id"])
+
+
 def test_chat_message_content_is_opt_in(traced, agent):
     p, collector = traced(**CAPTURE)
     p.chat("one burrito")

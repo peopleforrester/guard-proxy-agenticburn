@@ -26,7 +26,10 @@ from urllib.parse import urlparse, parse_qs
 # OTel Operator injects the SDK at pod startup (PYTHONPATH). The try/except guard keeps this file runnable
 # with no OTel present (local dev, test clusters) as a no-op until the Operator's annotation is applied.
 try:
-    from opentelemetry import trace, metrics
+    from opentelemetry import context as otel_context, trace, metrics
+    # The key urllib's instrumentation reads to skip a request: no span, and no traceparent of its own.
+    # It is the API's, so suppressing needs no instrumentation package installed.
+    from opentelemetry.context import _SUPPRESS_HTTP_INSTRUMENTATION_KEY
     from opentelemetry.trace import SpanKind, Status, StatusCode
     from opentelemetry.metrics import Observation
     from opentelemetry.propagate import extract, inject
@@ -1887,13 +1890,19 @@ class Handler(BaseHTTPRequestHandler):
             if deadline is not None:
                 fwd_deadline = min(fwd_deadline, deadline)
 
-            def _call(body):
+            # The tasks/get polls' headers: the same, but under an unsampled traceparent once the span opens.
+            poll_headers = dict(fwd_headers)
+
+            def _call(body, poll=False):
                 left = fwd_deadline - time.monotonic()
                 if left <= 0:
                     _raise_if_expired(deadline)
                     raise TimeoutError(f"the {TIMEOUT:g}s forward deadline (PROXY_TIMEOUT) passed")
                 req = urllib.request.Request(AGENT_URL + "/", data=json.dumps(body).encode(),
-                                             headers=fwd_headers, method="POST")
+                                             headers=poll_headers if poll else fwd_headers, method="POST")
+                # A poll records no urllib span, and urllib's instrumentation leaves its traceparent alone.
+                token = (otel_context.attach(otel_context.set_value(_SUPPRESS_HTTP_INSTRUMENTATION_KEY, True))
+                         if poll and _OTEL_AVAILABLE else None)
                 try:
                     with urllib.request.urlopen(req, timeout=left) as r:
                         _record_status(r.status)
@@ -1901,6 +1910,9 @@ class Handler(BaseHTTPRequestHandler):
                 except urllib.error.HTTPError as exc:
                     _record_status(exc.code)
                     raise
+                finally:
+                    if token is not None:
+                        otel_context.detach(token)
 
             def _record_status(code):
                 # The span covers the send and every poll, so each answer overwrites the last: a forward
@@ -1916,6 +1928,15 @@ class Handler(BaseHTTPRequestHandler):
                     client_span.set_attribute("http.request.method", "POST")
                     client_span.set_attribute("url.full", AGENT_URL + "/")
                     inject(fwd_headers)
+                    # A tool can run for many seconds, polled once a second, and every poll would leave a span
+                    # at each hop under the forward (guard-proxy-agenticburn#77). A poll carries this span's
+                    # context with the sampled flag cleared, which agentgateway and kagent do not record
+                    # under; the send keeps the sampled context the agent's own spans hang from.
+                    sent = client_span.get_span_context()
+                    inject(poll_headers, context=trace.set_span_in_context(trace.NonRecordingSpan(
+                        trace.SpanContext(sent.trace_id, sent.span_id, is_remote=False,
+                                          trace_flags=trace.TraceFlags(trace.TraceFlags.DEFAULT),
+                                          trace_state=sent.trace_state))))
                 task_id = None
                 try:
                     # A TurnExpired from _call lands in the except below, as a timeout does.
@@ -1926,7 +1947,7 @@ class Handler(BaseHTTPRequestHandler):
                         time.sleep(max(0.0, min(wait, fwd_deadline - time.monotonic())))
                         wait = min(wait * 2, _POLL_MAX)
                         resp = _call({"jsonrpc": "2.0", "id": "chat", "method": "tasks/get",
-                                      "params": {"id": task_id}})
+                                      "params": {"id": task_id}}, poll=True)
                         if not isinstance(resp, dict) or not isinstance(resp.get("result"), dict):
                             raise ValueError(f"tasks/get answered no task: {json.dumps(resp)[:200]}")
                         if _running_task_id(resp) is None:

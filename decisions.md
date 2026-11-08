@@ -926,3 +926,19 @@ Conformance in `test_a2a_tool_payloads.py`, against both builds, replays the rec
 manifest response); `test_a2a_ask_user.py`'s other-tool and odd-shape tests now hold the redaction to every
 string and the output guard to the question. Go's `TestEachAgentTextEveryDataString*`; four new mutants in
 `mutation_check.py`.
+
+## 2026-11-08: opentelemetry-instrumentation-urllib 0.66b1 as a dev dependency
+
+guard-proxy-agenticburn#77 sends each `/chat` `tasks/get` poll under an unsampled `traceparent` with urllib's
+instrumentation suppressed. In the workshop the OTel Operator's auto-instrumentation (the
+`autoinstrumentation-python:0.63b1` image on watch-it-burn-community, read 2026-11-08) wraps urllib, giving
+each request its own CLIENT span and injecting that span's sampled `traceparent` over the one `proxy.py`
+set. Without that instrumentation in the suite, neither the extra span nor the overwrite can be seen, so a
+proxy.py that forgot to suppress it would pass. `conformance/launch_python.py` therefore installs
+`URLLibInstrumentor` when a test sets `CONFORMANCE_URLLIB_INSTRUMENTATION=on`; the other tests leave it off,
+so the `traceparent` they pin still names proxy.py's own `agent.forward` span.
+
+Pinned at `==0.66b1`, the contrib release that matches `opentelemetry-sdk==1.45.1`: the current 0.66b2
+(2026-10-29) requires `opentelemetry-semantic-conventions==0.66b2`, which the SDK pin excludes. Dev only;
+`proxy.py` reads the suppression key from `opentelemetry.context` in the API, so it needs no
+instrumentation package to run.

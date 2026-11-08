@@ -30,6 +30,13 @@ if os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT"):
     metrics.set_meter_provider(
         MeterProvider(metric_readers=[PeriodicExportingMetricReader(OTLPMetricExporter())])
     )
+    # The Operator's auto-instrumentation also wraps urllib, giving each outbound request its own CLIENT
+    # span and traceparent. A test that needs those, as the tasks/get polls' does, turns it on here; the
+    # rest leave it off, so the traceparent the agent sees names proxy.py's own agent.forward span.
+    if os.environ.get("CONFORMANCE_URLLIB_INSTRUMENTATION") == "on":
+        from opentelemetry.instrumentation.urllib import URLLibInstrumentor
+
+        URLLibInstrumentor().instrument()
 
 import proxy  # noqa: E402  (environment is read at import, so the path must be set first)
 

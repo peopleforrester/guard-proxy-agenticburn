@@ -392,7 +392,7 @@ func (s *Server) forwardChat(ctx context.Context, prompt, witch string, kitchenN
 		// So workshop-mcp keeps the recipe card shut in a chat that may not have it (#65).
 		header.Set(pantryHeader, pantry)
 	}
-	call := func(rpc map[string]any) (any, error) {
+	call := func(ctx context.Context, rpc map[string]any) (any, error) {
 		v, code, err := s.agentRPC(ctx, rpc, header)
 		if code != 0 {
 			status = code
@@ -420,7 +420,7 @@ func (s *Server) forwardChat(ctx context.Context, prompt, witch string, kitchenN
 	if contextID != "" {
 		msg["contextId"] = contextID
 	}
-	resp, err = call(map[string]any{"jsonrpc": "2.0", "id": "chat", "method": "message/send",
+	resp, err = call(ctx, map[string]any{"jsonrpc": "2.0", "id": "chat", "method": "message/send",
 		"params": map[string]any{"message": msg, "configuration": map[string]any{"blocking": false}}})
 	if err != nil {
 		return nil, "", err
@@ -428,13 +428,18 @@ func (s *Server) forwardChat(ctx context.Context, prompt, witch string, kitchenN
 	if running, err = runningTaskID(resp); err != nil {
 		return nil, "", err
 	}
+	// A tool can run for many seconds, polled once a second, and every poll would leave a span at each hop
+	// under the forward (guard-proxy-agenticburn#77). A poll carries this span's context with the sampled
+	// flag cleared, which agentgateway and kagent do not record under; the send keeps the sampled context
+	// the agent's own spans hang from.
+	pollCtx := trace.ContextWithSpanContext(ctx, span.SpanContext().WithTraceFlags(0))
 	for wait := pollFirst; running != ""; wait = min(wait*2, pollMax) {
 		select {
 		case <-ctx.Done():
 			return nil, running, fmt.Errorf("task %s still running when the forward's deadline passed: %w", running, ctx.Err())
 		case <-time.After(wait):
 		}
-		resp, err = call(map[string]any{"jsonrpc": "2.0", "id": "chat", "method": "tasks/get",
+		resp, err = call(pollCtx, map[string]any{"jsonrpc": "2.0", "id": "chat", "method": "tasks/get",
 			"params": map[string]any{"id": running}})
 		if err != nil {
 			return nil, running, err
