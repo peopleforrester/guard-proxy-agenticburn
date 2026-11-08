@@ -1581,9 +1581,10 @@ class Handler(BaseHTTPRequestHandler):
 
     @staticmethod
     def _agent_text_parts(resp):
-        """Every agent-authored text part of an A2A reply: the artifacts, the agent's turns in the history,
-        and the status message. It runs on every reply, guards off included, so a field of an unexpected
-        shape is skipped, never raised on."""
+        """Every agent-authored text of an A2A reply, as (container, key) pairs to read and write: the
+        artifacts, the agent's turns in the history, and the status message, each text part and each copy of
+        an ask_user question kagent carries in a data part. It runs on every reply, guards off included, so
+        a field of an unexpected shape is skipped, never raised on."""
 
         def field(obj, key):
             return obj.get(key) if isinstance(obj, dict) else None
@@ -1591,11 +1592,34 @@ class Handler(BaseHTTPRequestHandler):
         def items(v):
             return v if isinstance(v, list) else []
 
+        def string(obj, key):
+            if isinstance(field(obj, key), str) and obj[key]:
+                yield obj, key
+
+        def questions(call_args):
+            for q in items(field(call_args, "questions")):
+                yield from string(q, "question")
+
+        def asked(data):
+            # kagent 0.10.1 writes an ask_user question four times, all in data parts: the call and its
+            # pending response in the history, and the status message's adk_request_confirmation, in its
+            # originalFunctionCall and as its toolConfirmation hint (guard-proxy-agenticburn#73).
+            if field(data, "name") == "ask_user":
+                yield from questions(field(data, "args"))
+                yield from questions(field(data, "response"))
+            elif field(data, "name") == "adk_request_confirmation":
+                args = field(data, "args")
+                call = field(args, "originalFunctionCall")
+                if field(call, "name") == "ask_user":
+                    yield from questions(field(call, "args"))
+                    yield from string(field(args, "toolConfirmation"), "hint")
+
         def texts(parts):
             for p in items(parts):
-                if isinstance(p, dict) and p.get("kind") == "text" and isinstance(p.get("text"), str) \
-                        and p["text"]:
-                    yield p
+                if field(p, "kind") == "text":
+                    yield from string(p, "text")
+                elif field(p, "kind") == "data":
+                    yield from asked(p.get("data"))
 
         result = field(resp, "result")
         if not isinstance(result, dict):
@@ -1608,20 +1632,20 @@ class Handler(BaseHTTPRequestHandler):
         yield from texts(field(field(result.get("status"), "message"), "parts"))
 
     def _redact_response(self, resp):
-        for p in self._agent_text_parts(resp):
-            redacted = always_redact(p["text"])
-            if redacted != p["text"]:
+        for obj, key in self._agent_text_parts(resp):
+            redacted = always_redact(obj[key])
+            if redacted != obj[key]:
                 log.info("always-on redaction modified response content", extra={"event": "always_redact"})
-                p["text"] = redacted
+                obj[key] = redacted
         return resp
 
     def _scrub_response(self, resp):
-        for p in self._agent_text_parts(resp):
-            scrubbed = output_scrub(p["text"])
-            if scrubbed != p["text"]:
+        for obj, key in self._agent_text_parts(resp):
+            scrubbed = output_scrub(obj[key])
+            if scrubbed != obj[key]:
                 log.info("output guardrail modified response content",
                          extra={"event": "output_scrub"})
-            p["text"] = "[BLOCKED BY OUTPUT GUARDRAIL]" if scrubbed is None else scrubbed
+            obj[key] = "[BLOCKED BY OUTPUT GUARDRAIL]" if scrubbed is None else scrubbed
         return resp
 
     def _handle_chat(self):

@@ -91,8 +91,33 @@ MUTANTS: list[tuple[str, str, str]] = [
     ),
     (
         "A2A always-on redaction dropped",
-        '                p["text"] = redacted\n',
+        "                obj[key] = redacted\n",
         "                pass\n",
+    ),
+    (
+        "A2A walk skips data parts",
+        '                elif field(p, "kind") == "data":\n                    yield from asked(p.get("data"))\n',
+        "",
+    ),
+    (
+        "A2A walk skips the ask_user response",
+        '                yield from questions(field(data, "response"))\n',
+        "",
+    ),
+    (
+        "A2A walk skips the confirmation hint",
+        '                    yield from string(field(args, "toolConfirmation"), "hint")\n',
+        "",
+    ),
+    (
+        "A2A walk reads another tool's call",
+        '            if field(data, "name") == "ask_user":\n',
+        '            if field(data, "name") != "adk_request_confirmation":\n',
+    ),
+    (
+        "A2A walk reads another tool's confirmation",
+        '                if field(call, "name") == "ask_user":\n',
+        "                if True:\n",
     ),
     ("chat always-on redaction dropped", "            redacted = always_redact(reply)\n", "            redacted = reply\n"),
     (

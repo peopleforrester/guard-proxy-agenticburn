@@ -1,5 +1,5 @@
 // ABOUTME: The guards on the A2A path: reading a message's text, the two input stages and the on-topic
-// ABOUTME: guard with their fail-closed policy, and the output guard's scrub of every agent-authored part.
+// ABOUTME: guard with their fail-closed policy, and the output guard's scrub of every agent-authored text.
 // SPDX-License-Identifier: Apache-2.0
 package server
 
@@ -190,9 +190,9 @@ func (s *Server) redact(text string) string {
 	})
 }
 
-// eachAgentText hands every agent-authored text part of an A2A reply (the artifacts, the agent's turns in
-// the history, and the status message) to fn and puts back what it returns. A reply fn changes nothing in
-// is returned byte for byte.
+// eachAgentText hands every agent-authored text of an A2A reply (the artifacts, the agent's turns in the
+// history, and the status message, each text part and each copy of an ask_user question kagent carries in a
+// data part) to fn and puts back what it returns. A reply fn changes nothing in is returned byte for byte.
 func eachAgentText(body []byte, fn func(string) string) ([]byte, error) {
 	dec := json.NewDecoder(bytes.NewReader(body))
 	dec.UseNumber() // integers past 2^53 must survive the round trip
@@ -205,20 +205,45 @@ func eachAgentText(body []byte, fn func(string) string) ([]byte, error) {
 		return body, nil
 	}
 	changed := false
+	str := func(v any, key string) {
+		m, _ := v.(map[string]any)
+		text, _ := m[key].(string)
+		if text == "" {
+			return
+		}
+		if out := fn(text); out != text {
+			m[key] = out
+			changed = true
+		}
+	}
+	questions := func(callArgs any) {
+		for _, q := range asList(field(callArgs, "questions")) {
+			str(q, "question")
+		}
+	}
+	// kagent 0.10.1 writes an ask_user question four times, all in data parts: the call and its pending
+	// response in the history, and the status message's adk_request_confirmation, in its
+	// originalFunctionCall and as its toolConfirmation hint (guard-proxy-agenticburn#73).
+	asked := func(data any) {
+		switch field(data, "name") {
+		case "ask_user":
+			questions(field(data, "args"))
+			questions(field(data, "response"))
+		case "adk_request_confirmation":
+			args := field(data, "args")
+			if call := field(args, "originalFunctionCall"); field(call, "name") == "ask_user" {
+				questions(field(call, "args"))
+				str(field(args, "toolConfirmation"), "hint")
+			}
+		}
+	}
 	each := func(parts any) {
-		list, _ := parts.([]any)
-		for _, p := range list {
-			m, ok := p.(map[string]any)
-			if !ok || m["kind"] != "text" {
-				continue
-			}
-			text, _ := m["text"].(string)
-			if text == "" {
-				continue
-			}
-			if out := fn(text); out != text {
-				m["text"] = out
-				changed = true
+		for _, p := range asList(parts) {
+			switch field(p, "kind") {
+			case "text":
+				str(p, "text")
+			case "data":
+				asked(field(p, "data"))
 			}
 		}
 	}

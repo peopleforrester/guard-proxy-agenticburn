@@ -171,8 +171,13 @@ status message's `adk_request_confirmation` part, one per line, log `ask_user_re
 (`conformance/recorded/ask_user_input_required.json`); the live cancel answered `canceled` and the next
 message in that context completed. Decision recorded 2026-11-08; conformance in `test_chat_ask_user.py`.
 
+### Agent-task #73: the A2A walk reads the ask_user question in data parts
+Follow-up of #72. On the A2A passthrough the always-on redaction and the output guard now read each of the
+four copies of an ask_user question kagent writes in data parts, in both builds; another tool's data
+parts pass as sent. Decision recorded 2026-11-08; conformance in `test_a2a_ask_user.py`.
+
 ## Branch & Tests
-- Branch: agent/72-18471 (#72)
+- Branch: agent/73-18498 (#73)
 - Working tree: clean
 - Last CI: green on 3407cef (staging and main)
 

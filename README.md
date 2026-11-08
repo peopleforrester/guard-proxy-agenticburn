@@ -213,6 +213,12 @@ logs `ask_user_reply`, and sends `tasks/cancel` for the task rather than leave i
 gets the always-on redaction and the output guard as any reply does. The guest's next message runs as
 a new task in the same conversation.
 
+On the A2A path the reply goes to the client whole, and kagent writes the question four times, all in data
+parts: the `ask_user` call and its pending response in the agent history, and the status message's
+`adk_request_confirmation`, in its `originalFunctionCall` and as its `toolConfirmation` hint. The always-on
+redaction and the output guard read each copy as they read a text part (#73). They read no other data part,
+so another tool's call or confirmation passes as the agent sent it.
+
 A `/chat` body can carry `witch`, the visitor's name the storefront assigns (#34). When it is shaped
 like a storefront name, `<First> the <Creature>` with each word capitalized and at most 16 letters (#35),
 the A2A message gets a second text part after the prompt, `The person chatting with you gave their name

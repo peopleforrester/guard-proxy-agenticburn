@@ -1,5 +1,5 @@
 // ABOUTME: Unit tests for the guards on the A2A path, for what the conformance suite cannot see: the
-// ABOUTME: guard_error log, malformed requests, and replies that must survive scrubbing byte for byte.
+// ABOUTME: guard_error log, malformed requests, replies that survive scrubbing byte for byte, and data parts.
 // SPDX-License-Identifier: Apache-2.0
 package server
 
@@ -10,6 +10,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -179,5 +181,39 @@ func TestGuardsOffNeverCallLLMGuard(t *testing.T) {
 	}
 	if n := len(g.seen()); n != 0 {
 		t.Errorf("LLM Guard called %d times", n)
+	}
+}
+
+func TestEachAgentTextReadsTheAskUserQuestionInDataParts(t *testing.T) {
+	body, err := os.ReadFile("../../conformance/recorded/ask_user_input_required.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const question = "Which tortilla would you like for your burrito: flour or corn?"
+	var seen []string
+	out, err := eachAgentText(body, func(text string) string {
+		seen = append(seen, text)
+		return strings.ReplaceAll(text, "flour", "[R]")
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The scratchpad text part, then the question four times: the ask_user call and its response in the
+	// history, the confirmation's originalFunctionCall and its hint.
+	if len(seen) != 5 || !strings.HasPrefix(seen[0], "<thinking>") || !slices.Equal(seen[1:], []string{question, question, question, question}) {
+		t.Errorf("texts handed to fn = %q", seen)
+	}
+	if n := bytes.Count(out, []byte(strings.ReplaceAll(question, "flour", "[R]"))); n != 4 || bytes.Contains(out, []byte("burrito: flour")) {
+		t.Errorf("rewritten reply holds %d scrubbed copies: %s", n, out)
+	}
+}
+
+func TestEachAgentTextLeavesAnotherToolsDataPartsAlone(t *testing.T) {
+	body := []byte(`{"result":{"history":[{"role":"agent","parts":[{"kind":"data","data":{"name":"run_shell","args":{"questions":[{"question":"q"}]}}}]}],` +
+		`"status":{"message":{"parts":[{"kind":"data","data":{"name":"adk_request_confirmation","args":{"originalFunctionCall":{"name":"run_shell","args":{"questions":[{"question":"q"}]}},"toolConfirmation":{"hint":"q"}}}},` +
+		`{"kind":"data","data":"q"},{"kind":"data","data":{"name":"ask_user","args":{"questions":["q",null,{"question":3}]}}}]}}}}`)
+	out, err := eachAgentText(body, func(string) string { t.Error("fn called"); return "" })
+	if err != nil || !bytes.Equal(out, body) {
+		t.Errorf("got %s, %v", out, err)
 	}
 }

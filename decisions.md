@@ -830,3 +830,30 @@ Conformance in `test_chat_ask_user.py`, against both builds; Go's `TestReplyText
 mutants and one re-targeted in `mutation_check.py`. The A2A passthrough is unchanged: its output scrub and
 the always-on redaction walk text parts only, so an ask_user question there passes neither, filed as a
 follow-up.
+
+## 2026-11-08: the A2A walk reads every copy of an ask_user question in data parts
+
+On the A2A passthrough the always-on redaction and the output guard read text parts only, and kagent 0.10.1
+writes an ask_user question in data parts alone, so the question, which can hold Nova's whole answer,
+reached an A2A client with neither applied (guard-proxy-agenticburn#73, found in #72). The shared walk
+(`_agent_text_parts` in proxy.py, `eachAgentText` in Go) now also hands both stages each copy of the
+question. The choices:
+
+- **Every copy, from the recorded task.** `conformance/recorded/ask_user_input_required.json` holds the
+  question four times: the `ask_user` call's `args.questions[].question` and its function response's
+  `response.questions[].question` in the agent history, and in the status message's
+  `adk_request_confirmation`, `args.originalFunctionCall.args.questions[].question` and
+  `args.toolConfirmation.hint`. Scrubbing one and leaving another would still send it, so all four are read.
+- **Only the ask_user question.** Both criteria name it. Another tool's call arguments and responses, and a
+  confirmation of another tool's call, are left as the agent sent them: walking every string in a data part
+  would also put ids and tool names through the output guard, where a fail-closed block or an Anonymize
+  rewrite breaks the protocol a client reads, and send each tool response to LLM Guard. That wider
+  question is filed as a follow-up.
+- **The same walk, the same places.** Data parts are read where text parts are: artifacts, the agent's turns
+  in the history, and the status message, never the guest's own turns. Each copy is scanned on its own, as
+  each text part is, so an ask_user reply makes four more output-guard calls with the guard on.
+- **Odd shapes pass.** The walk runs with every guard off, so a data part of an unexpected shape is
+  skipped, never raised on.
+
+Conformance in `test_a2a_ask_user.py`, against both builds; Go's `TestEachAgentText*`; five new mutants and
+one re-targeted in `mutation_check.py`.
