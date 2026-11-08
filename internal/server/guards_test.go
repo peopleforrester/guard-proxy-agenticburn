@@ -191,7 +191,7 @@ func TestEachAgentTextReadsTheAskUserQuestionInDataParts(t *testing.T) {
 	}
 	const question = "Which tortilla would you like for your burrito: flour or corn?"
 	var seen []string
-	out, err := eachAgentText(body, func(text string) string {
+	out, err := eachAgentText(body, askUserOnly, func(text string) string {
 		seen = append(seen, text)
 		return strings.ReplaceAll(text, "flour", "[R]")
 	})
@@ -212,7 +212,40 @@ func TestEachAgentTextLeavesAnotherToolsDataPartsAlone(t *testing.T) {
 	body := []byte(`{"result":{"history":[{"role":"agent","parts":[{"kind":"data","data":{"name":"run_shell","args":{"questions":[{"question":"q"}]}}}]}],` +
 		`"status":{"message":{"parts":[{"kind":"data","data":{"name":"adk_request_confirmation","args":{"originalFunctionCall":{"name":"run_shell","args":{"questions":[{"question":"q"}]}},"toolConfirmation":{"hint":"q"}}}},` +
 		`{"kind":"data","data":"q"},{"kind":"data","data":{"name":"ask_user","args":{"questions":["q",null,{"question":3}]}}}]}}}}`)
-	out, err := eachAgentText(body, func(string) string { t.Error("fn called"); return "" })
+	out, err := eachAgentText(body, askUserOnly, func(string) string { t.Error("fn called"); return "" })
+	if err != nil || !bytes.Equal(out, body) {
+		t.Errorf("got %s, %v", out, err)
+	}
+}
+
+func TestEachAgentTextEveryDataStringReadsAToolsCallAndResponse(t *testing.T) {
+	body, err := os.ReadFile("../../conformance/recorded/answer_then_tool_call.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var seen []string
+	out, err := eachAgentText(body, everyDataString, func(text string) string {
+		seen = append(seen, text)
+		return strings.ReplaceAll(text, "name: clownfile-optimizer, namespace: apps", "[R]")
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The call's id and name, the response's id, name and result, and the three agent text parts; the
+	// guest's turns and every metadata string are not read.
+	const id = "tooluse_SJrxw3UZw97JNjjuogU6EM"
+	if len(seen) != 8 || slices.Index(seen, id) < 0 || slices.Contains(seen, "function_call") || slices.Contains(seen, "workshop_agent") {
+		t.Errorf("texts handed to fn = %q", seen)
+	}
+	if !bytes.Contains(out, []byte("metadata: { [R] }")) || bytes.Count(out, []byte(id)) != 2 {
+		t.Errorf("rewritten reply: %s", out)
+	}
+}
+
+func TestEachAgentTextEveryDataStringSkipsNonStrings(t *testing.T) {
+	body := []byte(`{"result":{"history":[{"role":"agent","parts":[{"kind":"data"},{"kind":"data","data":null},` +
+		`{"kind":"data","data":{"n":12345678901234567890,"b":true,"z":null,"e":"","l":[1,{"k":[]}]}}]}]}}`)
+	out, err := eachAgentText(body, everyDataString, func(string) string { t.Error("fn called"); return "" })
 	if err != nil || !bytes.Equal(out, body) {
 		t.Errorf("got %s, %v", out, err)
 	}

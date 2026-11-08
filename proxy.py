@@ -1602,11 +1602,12 @@ class Handler(BaseHTTPRequestHandler):
         self._send(200, resp)
 
     @staticmethod
-    def _agent_text_parts(resp):
+    def _agent_text_parts(resp, every_data_string=False):
         """Every agent-authored text of an A2A reply, as (container, key) pairs to read and write: the
         artifacts, the agent's turns in the history, and the status message, each text part and each copy of
-        an ask_user question kagent carries in a data part. It runs on every reply, guards off included, so
-        a field of an unexpected shape is skipped, never raised on."""
+        an ask_user question kagent carries in a data part. With every_data_string, each non-empty string
+        anywhere in a data part's data instead, whichever tool wrote it (guard-proxy-agenticburn#75). It runs
+        on every reply, guards off included, so a field of an unexpected shape is skipped, never raised on."""
 
         def field(obj, key):
             return obj.get(key) if isinstance(obj, dict) else None
@@ -1636,10 +1637,26 @@ class Handler(BaseHTTPRequestHandler):
                     yield from questions(field(call, "args"))
                     yield from string(field(args, "toolConfirmation"), "hint")
 
+        def strings(obj, key):
+            # Every non-empty string in obj[key], at any depth and inside lists; keys, numbers and nulls stay.
+            v = obj[key]
+            if isinstance(v, str):
+                if v:
+                    yield obj, key
+            elif isinstance(v, dict):
+                for k in list(v):
+                    yield from strings(v, k)
+            elif isinstance(v, list):
+                for i in range(len(v)):
+                    yield from strings(v, i)
+
         def texts(parts):
             for p in items(parts):
                 if field(p, "kind") == "text":
                     yield from string(p, "text")
+                elif field(p, "kind") == "data" and every_data_string:
+                    if "data" in p:
+                        yield from strings(p, "data")
                 elif field(p, "kind") == "data":
                     yield from asked(p.get("data"))
 
@@ -1654,7 +1671,9 @@ class Handler(BaseHTTPRequestHandler):
         yield from texts(field(field(result.get("status"), "message"), "parts"))
 
     def _redact_response(self, resp):
-        for obj, key in self._agent_text_parts(resp):
+        # Every string in a tool's call or response too: the redaction is in-process and rewrites only what
+        # the pattern matches, so it calls no LLM Guard and has no fail-closed block to break an id with (#75).
+        for obj, key in self._agent_text_parts(resp, every_data_string=True):
             redacted = always_redact(obj[key])
             if redacted != obj[key]:
                 log.info("always-on redaction modified response content", extra={"event": "always_redact"})

@@ -216,8 +216,10 @@ a new task in the same conversation.
 On the A2A path the reply goes to the client whole, and kagent writes the question four times, all in data
 parts: the `ask_user` call and its pending response in the agent history, and the status message's
 `adk_request_confirmation`, in its `originalFunctionCall` and as its `toolConfirmation` hint. The always-on
-redaction and the output guard read each copy as they read a text part (#73). They read no other data part,
-so another tool's call or confirmation passes as the agent sent it.
+redaction and the output guard read each copy as they read a text part (#73). The always-on redaction also
+reads every other string in an agent-authored data part, at any depth: another tool's call arguments, its
+response and a confirmation of its call (#75). The output guard reads no other data part, so with it on, or
+failing closed, a tool's ids, names and payload pass as the agent sent them.
 
 kagent's artifact holds only a turn's final model step, while its task history holds one agent message
 per step. Nova sometimes writes its answer and then calls another tool, and the final step then talks only

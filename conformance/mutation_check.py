@@ -119,6 +119,27 @@ MUTANTS: list[tuple[str, str, str]] = [
         '                if field(call, "name") == "ask_user":\n',
         "                if True:\n",
     ),
+    (
+        "A2A always-on redaction reads only the ask_user question in data parts",
+        "        for obj, key in self._agent_text_parts(resp, every_data_string=True):\n",
+        "        for obj, key in self._agent_text_parts(resp):\n",
+    ),
+    (
+        "A2A output guard reads every string in data parts",
+        "        for obj, key in self._agent_text_parts(resp):\n            scrubbed = output_scrub(obj[key])\n",
+        "        for obj, key in self._agent_text_parts(resp, every_data_string=True):\n"
+        "            scrubbed = output_scrub(obj[key])\n",
+    ),
+    (
+        "A2A always-on redaction skips lists in data parts",
+        "                for i in range(len(v)):\n                    yield from strings(v, i)\n",
+        "                pass\n",
+    ),
+    (
+        "A2A always-on redaction skips nested objects in data parts",
+        "                for k in list(v):\n                    yield from strings(v, k)\n",
+        "                pass\n",
+    ),
     ("chat always-on redaction dropped", "            redacted = always_redact(reply)\n", "            redacted = reply\n"),
     (
         "chat always-on redaction not logged",

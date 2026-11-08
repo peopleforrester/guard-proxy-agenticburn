@@ -183,8 +183,13 @@ text from the agent history, in order, a blank line apart; otherwise the artifac
 task recorded live on watch-it-burn-community (`conformance/recorded/answer_then_tool_call.json`). Decision
 recorded 2026-11-08; conformance in `test_chat_answer_then_tool.py`.
 
+### Agent-task #75: the always-on redaction reads every string in an A2A reply's data parts
+Follow-up of #73. On the A2A passthrough the always-on redaction now reads every string in an agent-authored
+data part, whichever tool wrote it; the output guard still reads text parts and the ask_user question only.
+Decision recorded 2026-11-08; conformance in `test_a2a_tool_payloads.py` against the recorded tool-call task.
+
 ## Branch & Tests
-- Branch: agent/74-18512 (#74)
+- Branch: agent/75-18534 (#75)
 - Working tree: clean
 - Last CI: green on 3407cef (staging and main)
 
@@ -234,3 +239,4 @@ _(append-only. Each phase transition adds one line, oldest first.)_
 - 2026-11-08 #72 implemented and verified locally (2.3) on agent/72-18471: ruff, gofmt, go vet and go test ./... green, proxy.py suite 527/527 and Go suite 527/527; the five new mutants and the re-targeted one caught against test_chat_ask_user.py and test_task_cancel.py, the full mutation check not run
 - 2026-11-08 #73 implemented and verified locally (2.3) on agent/73-18498: ruff, gofmt, go vet and go test ./... green, proxy.py suite 539/539 and Go suite 539/539; the new conformance tests fail against both base builds, and the five new mutants and the re-targeted one are caught against test_a2a_ask_user.py and test_always_redact.py, the full mutation check not run
 - 2026-11-08 #74 implemented and verified locally (2.3) on agent/74-18512: ruff, gofmt, go vet and go test ./... green, proxy.py suite 546/546 and Go suite 546/546; five of the seven new conformance tests fail against both base builds, and the four new mutants are caught against test_chat_answer_then_tool.py, the full mutation check not run
+- 2026-11-08 #75 implemented and verified locally (2.3) on agent/75-18534: ruff, gofmt, go vet and go test ./... green, proxy.py suite 559/559 and Go suite 559/559; the new redaction tests fail against both base builds, and the four new mutants and the eight existing A2A-walk mutants are caught against test_a2a_tool_payloads.py, test_a2a_ask_user.py and test_always_redact.py, the full mutation check not run

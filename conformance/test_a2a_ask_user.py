@@ -1,5 +1,5 @@
 # ABOUTME: Conformance for an A2A reply carrying kagent's ask_user question in data parts: the always-on
-# ABOUTME: redaction and the output guard read every copy of it (guard-proxy-agenticburn#73).
+# ABOUTME: redaction and the output guard read every copy of it (guard-proxy-agenticburn#73, #75).
 from __future__ import annotations
 
 import copy
@@ -92,37 +92,52 @@ def test_the_output_guard_down_blocks_every_copy_of_the_question(start_proxy, ag
     assert p.a2a("which tortilla?").json() == expected
 
 
-def test_another_tools_call_and_confirmation_pass_verbatim(start_proxy, agent, guard):
-    """Only the ask_user question is read from a data part: another tool's arguments, and a confirmation
-    of another tool's call, are left as the agent sent them."""
+def test_the_output_guard_reads_no_other_tools_call_or_confirmation(start_proxy, agent):
+    """The output guard reads only the ask_user question from a data part: another tool's arguments,
+    response and confirmation are left as the agent sent them, even failing closed. The always-on
+    redaction reads every string in them (test_a2a_tool_payloads.py)."""
     task = copy.deepcopy(RECORDED)
     history = task["result"]["history"]
     history[2]["parts"][1]["data"]["name"] = "order_burrito"
     history[3]["parts"][0]["data"]["name"] = "order_burrito"
     task["result"]["status"]["message"]["parts"][0]["data"]["args"]["originalFunctionCall"]["name"] = "order_burrito"
     agent.respond = lambda req: Reply(body=task)
-    p = start_proxy(ALWAYS_REDACT="flour")
-    assert p.a2a("which tortilla?").json() == task
-    assert "always_redact" not in p.events()
+    p = start_proxy(OUTPUT_GUARD="on", LLM_GUARD_URL=unreachable_url())
+    expected = copy.deepcopy(task)
+    expected["result"]["history"][2]["parts"][0]["text"] = "[BLOCKED BY OUTPUT GUARDRAIL]"
+    assert p.a2a("which tortilla?").json() == expected
 
 
-@pytest.mark.parametrize(
-    "parts",
-    [
-        [{"kind": "data"}, {"kind": "data", "data": "flour"}, {"kind": "data", "data": {"name": "ask_user"}}],
-        [{"kind": "data", "data": {"name": "ask_user", "args": "flour", "response": ["flour"]}}],
-        [{"kind": "data", "data": {"name": "ask_user", "args": {"questions": "flour"}}}],
-        [{"kind": "data", "data": {"name": "ask_user", "args": {"questions": [None, "flour", {"question": 3}]}}}],
-        [{"kind": "data", "data": {"name": "adk_request_confirmation", "args": ["flour"]}}],
-        [{"kind": "data", "data": {"name": "adk_request_confirmation", "args": {
-            "originalFunctionCall": {"name": "ask_user", "args": {"questions": [{}]}},
-            "toolConfirmation": "flour"}}}],
-    ],
-)
-def test_odd_data_parts_pass_through_with_every_guard_off(start_proxy, agent, parts):
-    body = {"jsonrpc": "2.0", "id": "req-1", "result": {
+ODD_DATA_PARTS = [
+    [{"kind": "data"}, {"kind": "data", "data": "flour"}, {"kind": "data", "data": {"name": "ask_user"}}],
+    [{"kind": "data", "data": {"name": "ask_user", "args": "flour", "response": ["flour"]}}],
+    [{"kind": "data", "data": {"name": "ask_user", "args": {"questions": "flour"}}}],
+    [{"kind": "data", "data": {"name": "ask_user", "args": {"questions": [None, "flour", {"question": 3}]}}}],
+    [{"kind": "data", "data": {"name": "adk_request_confirmation", "args": ["flour"]}}],
+    [{"kind": "data", "data": {"name": "adk_request_confirmation", "args": {
+        "originalFunctionCall": {"name": "ask_user", "args": {"questions": [{}]}},
+        "toolConfirmation": "flour"}}}],
+]
+
+
+def _odd_reply(parts: list) -> dict:
+    return {"jsonrpc": "2.0", "id": "req-1", "result": {
         "history": [{"role": "agent", "parts": parts}], "status": {"message": {"parts": parts}}}}
+
+
+@pytest.mark.parametrize("parts", ODD_DATA_PARTS)
+def test_odd_data_parts_get_the_always_on_redaction_in_every_string(start_proxy, agent, parts):
+    body = _odd_reply(parts)
     agent.respond = lambda req: Reply(body=body)
     r = start_proxy(ALWAYS_REDACT="flour").a2a("hi")
+    assert r.status == 200
+    assert r.json() == json.loads(json.dumps(body).replace("flour", "[REDACTED]"))
+
+
+@pytest.mark.parametrize("parts", ODD_DATA_PARTS)
+def test_odd_data_parts_pass_the_output_guard_untouched(start_proxy, agent, parts):
+    body = _odd_reply(parts)
+    agent.respond = lambda req: Reply(body=body)
+    r = start_proxy(OUTPUT_GUARD="on", LLM_GUARD_URL=unreachable_url()).a2a("hi")
     assert r.status == 200
     assert r.json() == body

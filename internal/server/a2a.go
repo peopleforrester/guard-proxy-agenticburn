@@ -145,7 +145,7 @@ func (s *Server) guardError(ctx context.Context, stage string, err error) {
 // artifacts, the agent's turns in the history, and the status message. A reply the guard leaves
 // alone is returned byte for byte.
 func (s *Server) scrubReply(ctx context.Context, body []byte) ([]byte, error) {
-	return eachAgentText(body, func(text string) string {
+	return eachAgentText(body, askUserOnly, func(text string) string {
 		out, err := s.llmGuard.ScanOutput(ctx, text)
 		if err != nil {
 			s.guardError(ctx, "output guard", err)
@@ -161,13 +161,15 @@ func (s *Server) scrubReply(ctx context.Context, body []byte) ([]byte, error) {
 	})
 }
 
-// redactReply applies the always-on redaction (#1092) to the same parts scrubReply reads, whatever the
-// guards say. A reply it leaves alone is returned byte for byte.
+// redactReply applies the always-on redaction (#1092) to the parts scrubReply reads and to every string in
+// an agent-authored data part, whatever the guards say: it is in-process and rewrites only what the pattern
+// matches, so a tool's call or response costs no LLM Guard call and no fail-closed block breaks an id (#75).
+// A reply it leaves alone is returned byte for byte.
 func (s *Server) redactReply(ctx context.Context, body []byte) ([]byte, error) {
 	if s.alwaysRedact == nil {
 		return body, nil
 	}
-	return eachAgentText(body, func(text string) string {
+	return eachAgentText(body, everyDataString, func(text string) string {
 		out := s.redact(text)
 		if out != text {
 			s.log.InfoContext(ctx, "always-on redaction modified response content", "event", "always_redact")
@@ -190,10 +192,21 @@ func (s *Server) redact(text string) string {
 	})
 }
 
+// dataWalk is what eachAgentText reads in a data part.
+type dataWalk bool
+
+const (
+	// askUserOnly reads each copy of an ask_user question and nothing else in a data part (#73).
+	askUserOnly dataWalk = false
+	// everyDataString reads every non-empty string in a data part's data, at any depth, whichever tool wrote
+	// it (#75); keys, numbers and nulls are left alone.
+	everyDataString dataWalk = true
+)
+
 // eachAgentText hands every agent-authored text of an A2A reply (the artifacts, the agent's turns in the
-// history, and the status message, each text part and each copy of an ask_user question kagent carries in a
-// data part) to fn and puts back what it returns. A reply fn changes nothing in is returned byte for byte.
-func eachAgentText(body []byte, fn func(string) string) ([]byte, error) {
+// history, and the status message, each text part and what walk reads in each data part) to fn and puts
+// back what it returns. A reply fn changes nothing in is returned byte for byte.
+func eachAgentText(body []byte, walk dataWalk, fn func(string) string) ([]byte, error) {
 	dec := json.NewDecoder(bytes.NewReader(body))
 	dec.UseNumber() // integers past 2^53 must survive the round trip
 	var resp map[string]any
@@ -237,13 +250,38 @@ func eachAgentText(body []byte, fn func(string) string) ([]byte, error) {
 			}
 		}
 	}
+	var leaves func(v any) any
+	leaves = func(v any) any {
+		switch x := v.(type) {
+		case string:
+			if x != "" {
+				if out := fn(x); out != x {
+					changed = true
+					return out
+				}
+			}
+		case map[string]any:
+			for k, e := range x {
+				x[k] = leaves(e)
+			}
+		case []any:
+			for i, e := range x {
+				x[i] = leaves(e)
+			}
+		}
+		return v
+	}
 	each := func(parts any) {
 		for _, p := range asList(parts) {
 			switch field(p, "kind") {
 			case "text":
 				str(p, "text")
 			case "data":
-				asked(field(p, "data"))
+				if walk == askUserOnly {
+					asked(field(p, "data"))
+				} else if m := p.(map[string]any); m["data"] != nil {
+					m["data"] = leaves(m["data"])
+				}
 			}
 		}
 	}

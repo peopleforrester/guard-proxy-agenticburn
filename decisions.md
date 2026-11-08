@@ -887,3 +887,42 @@ only the ask_user shape. The choices:
 
 Conformance in `test_chat_answer_then_tool.py`, against both builds; Go's
 `TestReplyTextOfATaskThatAnsweredBeforeItsLastStep`; four new mutants in `mutation_check.py`.
+
+## 2026-11-08: the always-on redaction reads every string in an A2A reply's data parts; the output guard does not
+
+Since #73 the A2A walk read kagent's ask_user question in data parts and nothing else there, so another tool's
+`function_call` arguments and `function_response` payload, such as an MCP tool that reads a file holding the
+Challenge 2 marketing intel, reached an A2A client with neither the always-on redaction nor the output guard
+applied (guard-proxy-agenticburn#75). The decision, from #71's and #73's own reasons:
+
+- **The always-on redaction reads every non-empty string anywhere in an agent-authored data part's `data`**,
+  at any depth and inside lists, whichever tool wrote it: a call's arguments, a response's payload, a
+  confirmation's original call and hint, and an ask_user question's choices. #71 made `ALWAYS_REDACT` the
+  one control for data no guard state may show, and a tool response is where that data first appears. #73
+  kept to the question because a wider walk would put ids and tool names through the output guard; the
+  redaction has neither of the costs that named: it is in-process, so no tool response goes to LLM Guard,
+  and it rewrites only what the pattern matches, with no fail-closed block or Anonymize rewrite, so an id or
+  a tool name is changed only by a pattern written to match it. Keys, numbers, booleans and nulls are left
+  alone, and part and message `metadata` are not read.
+- **The output guard reads what it read after #73**: text parts and the four copies of an ask_user question,
+  not its choices and no other data part. The objections #73 recorded hold for it: fail-closed would replace
+  every id and name with the block marker, Anonymize rewrites what it does not understand, and each tool
+  response would be one more LLM Guard call. The output guard is the workshop's toggle for what the bot
+  says, and the bot speaks in text parts; a tool response's secret reaches the guest only as text the model
+  wrote, which the guard reads.
+- **Not leaving tool payloads as they are.** The A2A client is not only the instructor console: no
+  NetworkPolicy restricts ingress to guard-proxy's port (Unleash_an_Agent_Watch_It_Burn's
+  `chat-path-ingress.yaml` covers agentgateway and workshop-agent, and its agent-namespace policies say the
+  rest of the namespace stays reachable), so any pod that can reach `guard-proxy:8080` gets the whole task.
+- **Not naming fields per tool.** Each workshop tool's argument and response shape would need its own entry,
+  and a tool the list missed, or a new one, would leak by default.
+- **The same places as before**: artifacts, the agent's turns in the history, and the status message, never
+  the guest's own turns. Each changed string logs `always_redact`, as a text part does.
+- **The `/chat` reply is unchanged.** It is built from text parts and the ask_user question, which the
+  redaction already read; no tool payload reaches it.
+
+Conformance in `test_a2a_tool_payloads.py`, against both builds, replays the recorded tool-call task
+`conformance/recorded/answer_then_tool_call.json` (#74's recording: an `apply_optimization` call and its
+manifest response); `test_a2a_ask_user.py`'s other-tool and odd-shape tests now hold the redaction to every
+string and the output guard to the question. Go's `TestEachAgentTextEveryDataString*`; four new mutants in
+`mutation_check.py`.
