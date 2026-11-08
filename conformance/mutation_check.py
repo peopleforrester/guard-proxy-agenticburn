@@ -341,7 +341,8 @@ MUTANTS: list[tuple[str, str, str]] = [
     ),
     (
         "a failed chat forward leaves its task running",
-        "                        threading.Thread(target=_cancel_task, args=(task_id, str(exc)), daemon=True).start()",
+        "                        threading.Thread(target=_cancel_task, args=(task_id, f\"the chat forward failed: {exc}\"),\n"
+        "                                         daemon=True).start()",
         "                        pass",
     ),
     (
@@ -350,6 +351,32 @@ MUTANTS: list[tuple[str, str, str]] = [
         "                    if task_id:\n                        _cancel_task(task_id, str(exc))\n"
         "                        task_id = None\n"
         "                    if not optional:\n                        # The turn fails with the forward",
+    ),
+    (
+        "an ask_user turn replies with the scratchpad",
+        "    asked = ask_user_questions(resp)\n    if asked:\n        return asked\n",
+        "",
+    ),
+    (
+        "ask_user questions read from a task that is not input-required",
+        '    if not isinstance(status, dict) or status.get("state") != "input-required":',
+        "    if not isinstance(status, dict):",
+    ),
+    (
+        "ask_user questions joined on one line",
+        '    return "\\n".join(questions)',
+        '    return " ".join(questions)',
+    ),
+    (
+        "an ask_user task left pending",
+        "                            threading.Thread(target=_cancel_task, daemon=True, args=(",
+        "                            threading.Thread(target=lambda *a: None, daemon=True, args=(",
+    ),
+    (
+        "an ask_user reply not logged",
+        '                        log.info("the agent asked the guest through ask_user; replying with its question",\n'
+        '                                 extra={"event": "ask_user_reply"})\n',
+        "",
     ),
     (
         "the chat poll ignores PROXY_TIMEOUT",

@@ -1,0 +1,166 @@
+{
+ "jsonrpc": "2.0",
+ "id": "chat",
+ "result": {
+  "kind": "task",
+  "id": "01a1b8b1-6dbf-7a60-b235-cb7531de0b34",
+  "contextId": "rec72-edb04090",
+  "history": [
+   {
+    "kind": "message",
+    "messageId": "rec-d219db09",
+    "contextId": "rec72-edb04090",
+    "parts": [
+     {
+      "kind": "text",
+      "text": "Before you take my order, use your ask_user tool to ask me which tortilla I want: flour or corn."
+     }
+    ],
+    "role": "user"
+   },
+   {
+    "kind": "message",
+    "messageId": "rec-d219db09",
+    "contextId": "rec72-edb04090",
+    "parts": [
+     {
+      "kind": "text",
+      "text": "Before you take my order, use your ask_user tool to ask me which tortilla I want: flour or corn."
+     }
+    ],
+    "role": "user"
+   },
+   {
+    "kind": "message",
+    "messageId": "01a1b8b1-73b2-7355-bbc6-5998f73c0652",
+    "contextId": "rec72-edb04090",
+    "metadata": {
+     "adk_app_name": "agent__NS__workshop_agent",
+     "adk_author": "workshop_agent",
+     "adk_invocation_id": "e-b8506a96-5d6f-4f2a-b239-aeb8c0de3ddc",
+     "adk_session_id": "rec72-edb04090",
+     "adk_usage_metadata": {
+      "candidatesTokenCount": 81,
+      "promptTokenCount": 10193,
+      "totalTokenCount": 10274
+     },
+     "adk_user_id": "A2A_USER_rec72-edb04090"
+    },
+    "parts": [
+     {
+      "kind": "text",
+      "text": "<thinking> The user has requested that I use the `ask_user` tool to ask them about their tortilla preference before taking their order. I will create a question to ask the user about their tortilla preference. </thinking>\n"
+     },
+     {
+      "kind": "data",
+      "data": {
+       "args": {
+        "questions": [
+         {
+          "question": "Which tortilla would you like for your burrito: flour or corn?"
+         }
+        ]
+       },
+       "id": "tooluse_Rw8QyILag2nfHnwZroLYUX",
+       "name": "ask_user"
+      },
+      "metadata": {
+       "adk_is_long_running": false,
+       "adk_type": "function_call"
+      }
+     }
+    ],
+    "role": "agent",
+    "taskId": "01a1b8b1-6dbf-7a60-b235-cb7531de0b34"
+   },
+   {
+    "kind": "message",
+    "messageId": "01a1b8b1-73b6-7d64-b053-7234530b2284",
+    "contextId": "rec72-edb04090",
+    "metadata": {
+     "adk_app_name": "agent__NS__workshop_agent",
+     "adk_author": "workshop_agent",
+     "adk_invocation_id": "e-b8506a96-5d6f-4f2a-b239-aeb8c0de3ddc",
+     "adk_session_id": "rec72-edb04090",
+     "adk_user_id": "A2A_USER_rec72-edb04090"
+    },
+    "parts": [
+     {
+      "kind": "data",
+      "data": {
+       "id": "tooluse_Rw8QyILag2nfHnwZroLYUX",
+       "name": "ask_user",
+       "response": {
+        "questions": [
+         {
+          "question": "Which tortilla would you like for your burrito: flour or corn?"
+         }
+        ],
+        "status": "pending"
+       }
+      },
+      "metadata": {
+       "adk_type": "function_response"
+      }
+     }
+    ],
+    "role": "agent",
+    "taskId": "01a1b8b1-6dbf-7a60-b235-cb7531de0b34"
+   }
+  ],
+  "metadata": {
+   "adk_app_name": "agent__NS__workshop_agent",
+   "adk_author": "workshop_agent",
+   "adk_invocation_id": "e-b8506a96-5d6f-4f2a-b239-aeb8c0de3ddc",
+   "adk_session_id": "rec72-edb04090",
+   "adk_usage_metadata": {
+    "candidatesTokenCount": 81,
+    "promptTokenCount": 10193,
+    "totalTokenCount": 10274
+   },
+   "adk_user_id": "A2A_USER_rec72-edb04090"
+  },
+  "status": {
+   "message": {
+    "kind": "message",
+    "messageId": "01a1b8b1-73bb-72bf-9e16-72384c0bd863",
+    "contextId": "rec72-edb04090",
+    "parts": [
+     {
+      "kind": "data",
+      "data": {
+       "args": {
+        "originalFunctionCall": {
+         "args": {
+          "questions": [
+           {
+            "question": "Which tortilla would you like for your burrito: flour or corn?"
+           }
+          ]
+         },
+         "id": "tooluse_Rw8QyILag2nfHnwZroLYUX",
+         "name": "ask_user"
+        },
+        "toolConfirmation": {
+         "confirmed": false,
+         "hint": "Which tortilla would you like for your burrito: flour or corn?",
+         "payload": null
+        }
+       },
+       "id": "adk-a5b5707b-7e7a-4514-89ee-2cb1cf71d880",
+       "name": "adk_request_confirmation"
+      },
+      "metadata": {
+       "adk_is_long_running": true,
+       "adk_type": "function_call"
+      }
+     }
+    ],
+    "role": "agent",
+    "taskId": "01a1b8b1-6dbf-7a60-b235-cb7531de0b34"
+   },
+   "state": "input-required",
+   "timestamp": "2026-11-08T01:06:39.675180938Z"
+  }
+ }
+}

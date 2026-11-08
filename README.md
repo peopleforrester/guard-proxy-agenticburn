@@ -205,6 +205,14 @@ time with a task still running, the turn answers its 502 and guard-proxy then se
 cannot be reached. kagent runs a turn detached from the request, so without the cancel a turn nobody
 is waiting for keeps calling tools and the model.
 
+kagent 0.10.1 gives every agent its built-in `ask_user` tool, and a turn that calls it ends
+`input-required` with no artifact: the question is only in the status message's
+`adk_request_confirmation` part, and the agent history holds the scratchpad alone (#72). The chat
+page cannot show or answer that question, so the turn replies with it, each question on its own line,
+logs `ask_user_reply`, and sends `tasks/cancel` for the task rather than leave it pending. The question
+gets the always-on redaction and the output guard as any reply does. The guest's next message runs as
+a new task in the same conversation.
+
 A `/chat` body can carry `witch`, the visitor's name the storefront assigns (#34). When it is shaped
 like a storefront name, `<First> the <Creature>` with each word capitalized and at most 16 letters (#35),
 the A2A message gets a second text part after the prompt, `The person chatting with you gave their name

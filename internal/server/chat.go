@@ -220,7 +220,7 @@ func (s *Server) chatTurn(ctx context.Context, w http.ResponseWriter, r *http.Re
 				send(w, http.StatusBadGateway, chatReply{Reply: kitchenDown})
 			}
 			if running != "" {
-				go s.cancelTask(context.WithoutCancel(ctx), running, err.Error())
+				go s.cancelTask(context.WithoutCancel(ctx), running, "the chat forward failed: "+err.Error())
 			}
 			return nil, false
 		}
@@ -236,6 +236,17 @@ func (s *Server) chatTurn(ctx context.Context, w http.ResponseWriter, r *http.Re
 			spent.In += u.In
 			spent.Out += u.Out
 			spentUSD += usd
+		}
+		// A task stopped on an ask_user call waits for an answer the chat page has no way to send, so the
+		// turn replies with its question and the task is cancelled rather than left pending
+		// (guard-proxy-agenticburn#72). The guest's next message runs as a new task.
+		if askUserQuestions(resp) != "" {
+			s.log.InfoContext(ctx, "the agent asked the guest through ask_user; replying with its question", "event", "ask_user_reply")
+			if id, _ := field(field(resp, "result"), "id").(string); id != "" {
+				go s.cancelTask(context.WithoutCancel(ctx), id, "it waits on an ask_user answer the chat page cannot send")
+			} else {
+				s.log.ErrorContext(ctx, "the agent's ask_user task has no id to cancel", "event", "task_cancel_failed")
+			}
 		}
 		return resp, true
 	}
@@ -478,8 +489,9 @@ func runningTaskID(resp any) (string, error) {
 	return "", errors.New("the agent answered a running task with no id")
 }
 
-// cancelTask sends the agent tasks/cancel for a /chat task the forward gave up on, so the agent stops
-// working on a turn nobody is waiting for. It runs after the turn has answered, and logs either way.
+// cancelTask sends the agent tasks/cancel for a /chat task the forward gave up on, or one waiting on a
+// guest who cannot answer it, so the agent stops on a turn nobody is waiting for. It runs on its own
+// goroutine, so the turn's answer never waits on it, and logs either way; reason says why.
 func (s *Server) cancelTask(ctx context.Context, taskID, reason string) {
 	ctx, cancel := context.WithTimeout(ctx, s.agentTimeout)
 	defer cancel()
@@ -498,7 +510,7 @@ func (s *Server) cancelTask(ctx context.Context, taskID, reason string) {
 		s.log.ErrorContext(ctx, fmt.Sprintf("the agent did not cancel task %s: %s", taskID, truncate(errBody, 200)), "event", "task_cancel_failed")
 		return
 	}
-	s.log.InfoContext(ctx, fmt.Sprintf("cancelled the agent's task %s (state %v) after the chat forward failed: %s",
+	s.log.InfoContext(ctx, fmt.Sprintf("cancelled the agent's task %s (state %v): %s",
 		taskID, field(result["status"], "state"), reason), "event", "task_cancel")
 }
 
@@ -653,13 +665,48 @@ func (s *Server) rotateContext(session string) int {
 	return s.ctxGen[session]
 }
 
+// askUserQuestions is the questions of the ask_user call an A2A task stopped on, one per line, or "".
+//
+// kagent 0.10.1 gives every agent its built-in ask_user tool, with no setting to turn it off, and Nova
+// sometimes puts its whole answer in the question (Unleash_an_Agent_Watch_It_Burn#889). The task then stops
+// at input-required with no artifact: the question is only in status.message, in the
+// adk_request_confirmation data part's args.originalFunctionCall, and the agent history holds the
+// scratchpad alone (guard-proxy-agenticburn#72).
+func askUserQuestions(resp any) string {
+	status := field(field(resp, "result"), "status")
+	if field(status, "state") != "input-required" {
+		return ""
+	}
+	var questions []string
+	for _, part := range asList(field(field(status, "message"), "parts")) {
+		if field(part, "kind") != "data" {
+			continue
+		}
+		data := field(part, "data")
+		call := field(field(data, "args"), "originalFunctionCall")
+		if field(data, "name") != "adk_request_confirmation" || field(call, "name") != "ask_user" {
+			continue
+		}
+		for _, q := range asList(field(field(call, "args"), "questions")) {
+			if text, _ := field(q, "question").(string); strings.TrimSpace(text) != "" {
+				questions = append(questions, strings.TrimSpace(text))
+			}
+		}
+	}
+	return strings.Join(questions, "\n")
+}
+
 // replyText is the agent's reply from an A2A response. kagent echoes the same text into artifacts and the
 // agent-role history, so it takes one source, artifacts first, then agent history, then the status
-// message, rather than joining them and doubling the reply.
+// message, rather than joining them and doubling the reply. A task stopped on an ask_user call answers
+// with its questions, which carry what the model wrote for the guest.
 func replyText(resp any) string {
 	result, ok := field(resp, "result").(map[string]any)
 	if !ok {
 		return ""
+	}
+	if asked := askUserQuestions(resp); asked != "" {
+		return asked
 	}
 	var art []string
 	for _, a := range asList(result["artifacts"]) {

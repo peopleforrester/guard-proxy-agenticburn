@@ -199,8 +199,9 @@ def _running_task_id(resp):
 
 
 def _cancel_task(task_id, reason):
-    """Send the agent tasks/cancel for a /chat task the forward gave up on, so the agent stops working on
-    a turn nobody is waiting for. Runs on its own thread, after the turn has answered, and logs either way."""
+    """Send the agent tasks/cancel for a /chat task the forward gave up on, or one waiting on a guest who
+    cannot answer it, so the agent stops on a turn nobody is waiting for. Runs on its own thread, so the
+    turn's answer never waits on it, and logs either way; reason says why the task is cancelled."""
     body = {"jsonrpc": "2.0", "id": "cancel", "method": "tasks/cancel", "params": {"id": task_id}}
     try:
         req = urllib.request.Request(AGENT_URL + "/", data=json.dumps(body).encode(),
@@ -218,8 +219,8 @@ def _cancel_task(task_id, reason):
                   extra={"event": "task_cancel_failed"})
         return
     state = result.get("status", {}).get("state") if isinstance(result.get("status"), dict) else None
-    log.info("cancelled the agent's task %s (state %s) after the chat forward failed: %s", task_id, state,
-             reason, extra={"event": "task_cancel"})
+    log.info("cancelled the agent's task %s (state %s): %s", task_id, state, reason,
+             extra={"event": "task_cancel"})
 
 # --- Infra-control state for the badge strip (#197/#209) -------------------------------------------
 # The AI guards above are guard-proxy's own in-memory state. The badges for C1-C3 and C7 report the
@@ -1188,14 +1189,48 @@ def pantry_read(session, reply):
             flags[1] = True
 
 
+def ask_user_questions(resp):
+    """The questions of the ask_user call an A2A task stopped on, one per line, else "".
+
+    kagent 0.10.1 gives every agent its built-in ask_user tool, with no setting to turn it off, and Nova
+    sometimes puts its whole answer in the question (Unleash_an_Agent_Watch_It_Burn#889). The task then
+    stops at input-required with no artifact: the question is only in status.message, in the
+    adk_request_confirmation data part's args.originalFunctionCall, and the agent history holds the
+    scratchpad alone (guard-proxy-agenticburn#72)."""
+    result = resp.get("result") if isinstance(resp, dict) else None
+    status = result.get("status") if isinstance(result, dict) else None
+    if not isinstance(status, dict) or status.get("state") != "input-required":
+        return ""
+    message = status.get("message")
+    questions = []
+    for part in (message.get("parts") if isinstance(message, dict) else None) or []:
+        data = part.get("data") if isinstance(part, dict) and part.get("kind") == "data" else None
+        if not isinstance(data, dict) or data.get("name") != "adk_request_confirmation":
+            continue
+        args = data.get("args")
+        call = args.get("originalFunctionCall") if isinstance(args, dict) else None
+        if not isinstance(call, dict) or call.get("name") != "ask_user":
+            continue
+        call_args = call.get("args")
+        for q in (call_args.get("questions") if isinstance(call_args, dict) else None) or []:
+            text = q.get("question") if isinstance(q, dict) else None
+            if isinstance(text, str) and text.strip():
+                questions.append(text.strip())
+    return "\n".join(questions)
+
+
 def chat_reply_text(resp):
     """The AGENT's reply text from an A2A response. kagent echoes the SAME text into artifacts AND the
     agent-role history, so take ONE source (artifacts first, then agent history, then status) rather than
-    concatenating all three, or the storefront reply comes back doubled."""
+    concatenating all three, or the storefront reply comes back doubled. A task stopped on an ask_user
+    call answers with its questions, which carry what the model wrote for the guest."""
     result = resp.get("result") if isinstance(resp, dict) else None
     if not isinstance(result, dict):
         return ""
-    art = " ".join(extract_text(a.get("parts")) for a in (result.get("artifacts") or [])).strip()
+    asked = ask_user_questions(resp)
+    if asked:
+        return asked
+    art =" ".join(extract_text(a.get("parts")) for a in (result.get("artifacts") or [])).strip()
     if art:
         return art
     hist = " ".join(extract_text(h.get("parts")) for h in (result.get("history") or [])
@@ -1808,7 +1843,8 @@ class Handler(BaseHTTPRequestHandler):
                                          "guarded": False, "input_tokens": 0, "output_tokens": 0},
                                    error=str(exc))
                     if task_id:
-                        threading.Thread(target=_cancel_task, args=(task_id, str(exc)), daemon=True).start()
+                        threading.Thread(target=_cancel_task, args=(task_id, f"the chat forward failed: {exc}"),
+                                         daemon=True).start()
                     return None
 
         # Annotate the outer HTTP span, this proxy's own SERVER span opened in do_POST, with gen_ai
@@ -1851,6 +1887,19 @@ class Handler(BaseHTTPRequestHandler):
                     tin, tout = chat_usage_tokens(r)
                     spent[0] += tin
                     spent[1] += tout
+                    # A task stopped on an ask_user call waits for an answer the chat page has no way to
+                    # send, so the turn replies with its question and the task is cancelled rather than
+                    # left pending (guard-proxy-agenticburn#72). The guest's next message runs as a new task.
+                    if ask_user_questions(r):
+                        log.info("the agent asked the guest through ask_user; replying with its question",
+                                 extra={"event": "ask_user_reply"})
+                        asked_id = r["result"].get("id")
+                        if isinstance(asked_id, str) and asked_id:
+                            threading.Thread(target=_cancel_task, daemon=True, args=(
+                                asked_id, "it waits on an ask_user answer the chat page cannot send")).start()
+                        else:
+                            log.error("the agent's ask_user task has no id to cancel",
+                                      extra={"event": "task_cancel_failed"})
                 return r
 
             resp = _attempt()

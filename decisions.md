@@ -798,3 +798,35 @@ A2A reply text with `[REDACTED]` before the output guard, whatever the toggles s
 Conformance in `test_always_redact.py`, against both builds; Go's `TestAlwaysRedact`. `mutation_check.py`'s
 two A2A-walk mutants now target the shared walk, and six more hold the redaction: its A2A and `/chat` calls,
 its order before the output guard, its log line, the empty match and a blank value.
+
+## 2026-11-08: a /chat turn stopped on ask_user replies with its question and cancels the task
+
+kagent 0.10.1 adds its built-in `ask_user` tool to every agent, with no setting to turn it off, and Nova
+sometimes puts its whole answer in the question (Unleash_an_Agent_Watch_It_Burn#889: 6 of 19 live linked-list
+tasks). The task then stops at `input-required` with no artifact, so the reply fell back to the agent history,
+the scratchpad alone, and the guest saw the plan (guard-proxy-agenticburn#72). Both builds now read the
+questions of an `ask_user` call from the status message and reply with them, then send `tasks/cancel`, as the
+issue proposes. The choices:
+
+- **The shape is recorded, not assumed.** `conformance/recorded/ask_user_input_required.json` is the
+  `tasks/get` answer from watch-it-burn-community's workshop-agent (kagent 0.10.1, `runtime: go`) on
+  2026-11-08, asked over an agentgateway port-forward to use its ask_user tool. The question sits in
+  `status.message.parts[].data` named `adk_request_confirmation`, at
+  `args.originalFunctionCall` = `{"name": "ask_user", "args": {"questions": [{"question": ...}]}}`; kagent's
+  UI (`ui/src/lib/messageHandlers.ts`) and both runtimes read the same place. Only that call's questions
+  are read: a confirmation of any other tool, or a task in another state, is read as before.
+- **Questions one per line**, trimmed, blanks dropped. Choices are not added; the issue names the question
+  text only.
+- **The question is the reply everywhere the turn reads one**, so it is not thinking-only and no retry
+  is sent, and it gets the always-on redaction and the output guard.
+- **Cancelled on its own thread or goroutine** as the forward that ended on it returns, logging
+  `ask_user_reply` and then `task_cancel`, so the reply never waits on the cancel. Live, the workshop-agent
+  answered that cancel `canceled`, and a next message in the same contextId ran as a new task and completed.
+- **Only ask_user is cancelled.** A tool-approval `input-required` task is outside #72 and is left as it was.
+- **The cancel log line names its reason** in both builds: `cancelled the agent's task <id> (state <s>):
+  <reason>`, where a failed forward's reason now reads `the chat forward failed: <error>`.
+
+Conformance in `test_chat_ask_user.py`, against both builds; Go's `TestReplyTextOfAnAskUserTask`; five new
+mutants and one re-targeted in `mutation_check.py`. The A2A passthrough is unchanged: its output scrub and
+the always-on redaction walk text parts only, so an ask_user question there passes neither, filed as a
+follow-up.

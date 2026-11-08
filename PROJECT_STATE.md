@@ -163,8 +163,16 @@ Asked by Unleash_an_Agent_Watch_It_Burn#995 so deploys are credited from the req
 none on tasks/cancel or the A2A passthrough. Decision recorded 2026-11-07; conformance in
 `test_chat_witch_header.py`. The workshop then repins `gitops/ai-layer/guard-proxy` and runs the live check.
 
+### Agent-task #72: a /chat turn stopped on ask_user replies with its question
+Found by Unleash_an_Agent_Watch_It_Burn#889: kagent 0.10.1's built-in ask_user ends the task input-required
+with no artifact, and the guest saw the scratchpad. Both builds reply with the ask_user questions from the
+status message's `adk_request_confirmation` part, one per line, log `ask_user_reply`, and send
+`tasks/cancel` for the task. The shape is a task recorded live on watch-it-burn-community
+(`conformance/recorded/ask_user_input_required.json`); the live cancel answered `canceled` and the next
+message in that context completed. Decision recorded 2026-11-08; conformance in `test_chat_ask_user.py`.
+
 ## Branch & Tests
-- Branch: agent/64-18112 (#64)
+- Branch: agent/72-18471 (#72)
 - Working tree: clean
 - Last CI: green on 3407cef (staging and main)
 
@@ -211,3 +219,4 @@ _(append-only. Each phase transition adds one line, oldest first.)_
 - 2026-11-07 #67 implemented and verified locally (2.3) on agent/67-18166: go vet and go test ./... green, proxy.py suite and Go suite green, mutation check 98/98 caught (across two interrupted runs and one for the rest)
 - 2026-11-07 #66 verified locally (2.3) on agent/66-18159: test-only change, proxy.py suite 467/467, go vet and go test ./... green, Go suite 467/467; under injected stalls the two files fail 4/32 runs (base 32/32) at 2 s, and 0/32 (base 4/32) at 0.8 s with the narrower SLOW 2.5 s, TURN 4 s; mutation check 81/81 caught (36 across two interrupted runs, 45 in one for the rest)
 - 2026-11-07 #71 implemented and verified locally (2.3) on agent/71-18372: ruff, gofmt, go vet and go test ./... green, proxy.py suite 520/520 and Go suite 520/520; mutation check 51/105 caught and none escaped, all eight that hold this change among them (42 in one stopped run, 9 in another), the other 54 unrun
+- 2026-11-08 #72 implemented and verified locally (2.3) on agent/72-18471: ruff, gofmt, go vet and go test ./... green, proxy.py suite 527/527 and Go suite 527/527; the five new mutants and the re-targeted one caught against test_chat_ask_user.py and test_task_cancel.py, the full mutation check not run

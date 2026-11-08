@@ -42,6 +42,31 @@ func TestReplyTextTakesOneSource(t *testing.T) {
 	}
 }
 
+// askUserTask is an input-required task stopped on a confirmation of the named tool, in the shape kagent
+// 0.10.1 answers (conformance/recorded/ask_user_input_required.json), with the scratchpad in its history.
+func askUserTask(state, tool, questions string) string {
+	return `{"result": {"id": "t1", "status": {"state": "` + state + `", "message": {"role": "agent", "parts": [` +
+		`{"kind": "text", "text": "status text"},` +
+		`{"kind": "data", "data": {"name": "adk_request_confirmation", "args": {"originalFunctionCall": ` +
+		`{"name": "` + tool + `", "args": {"questions": ` + questions + `}}}}}]}}, ` +
+		`"history": [{"role": "agent", "parts": [{"kind": "text", "text": "<thinking>plan</thinking>"}]}]}}`
+}
+
+func TestReplyTextOfAnAskUserTask(t *testing.T) {
+	for body, want := range map[string]string{
+		askUserTask("input-required", "ask_user", `[{"question": "Flour or corn?"}]`):                                                                                             "Flour or corn?",
+		askUserTask("input-required", "ask_user", `[{"question": " One? "}, {"question": " "}, {}, "x", {"question": "Two?"}]`):                                                   "One?\nTwo?",
+		askUserTask("input-required", "ask_user", `[]`):                                                                                                                           "<thinking>plan</thinking>",
+		askUserTask("input-required", "run_shell", `[{"question": "Flour or corn?"}]`):                                                                                            "<thinking>plan</thinking>",
+		askUserTask("completed", "ask_user", `[{"question": "Flour or corn?"}]`):                                                                                                  "<thinking>plan</thinking>",
+		`{"result": {"status": {"state": "input-required", "message": {"parts": [{"kind": "data", "data": {"name": "ask_user", "args": {"questions": [{"question": "q"}]}}}]}}}}`: "",
+	} {
+		if got := replyText(decode(t, body)); got != want {
+			t.Errorf("%s: replyText = %q, want %q", body, got, want)
+		}
+	}
+}
+
 func TestThinkingOnly(t *testing.T) {
 	for reply, want := range map[string]bool{
 		"<thinking>I should list the proteins.</thinking>":    true,
