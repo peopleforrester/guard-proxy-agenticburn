@@ -342,7 +342,7 @@ rewrite.
 | `GET /cost` | Current spend against the active cap |
 | `GET /prompts` | The live prompt feed, with each prompt's witch name in `witches` |
 | `GET /guards` | Which guards are on |
-| `GET /controls` | The state of each workshop challenge's control |
+| `GET /controls` | The state of each workshop challenge's control; `infra.agency_scoped` is Challenge 3's least privilege (the agent's Role grants no create or patch on Deployments or Pods) |
 | `GET /toggle` | Switches a guard, or sets the cost cap, live without a restart |
 
 ## Conformance suite
@@ -392,8 +392,9 @@ pass.
   the workshop repo) still needs a cluster.
 - **`/controls` against a cluster API, for C1, C3 KubeArmor and C8.** `K8S_API_URL` and
   `K8S_TOKEN_PATH` point `proxy.py` at a fake API server, and the C2 Kyverno ValidatingPolicy, C3
-  Falco DaemonSet and C7 badges are tested that way. The C1 NetworkPolicy, C3 KubeArmor and C8
-  `rbac_scoped` badges are tested only in the no-credentials case.
+  Falco DaemonSet, C7 and `agency_scoped` badges are tested that way. The C1 NetworkPolicy and C3
+  KubeArmor badges are tested only in the no-credentials case, and C8 `rbac_scoped` only on the
+  workshop's c5 scoped Role.
 
 **Known defects are pinned, not hidden.** A test whose name ends in `_today` asserts current behavior
 that is wrong, and names the issue that tracks it (#1 through #4). Fixing one changes `proxy.py` and

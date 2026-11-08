@@ -333,8 +333,33 @@ def _c7_allowlist_narrowed():
     return not (rogue & present)
 
 
+_WORKLOAD_WRITES = {("apps", "deployments"), ("", "pods")}
+
+
+def _role_grants_workload_writes(role):
+    """True when a rule of `role` grants create or patch on Deployments or Pods. A Role whose rules
+    cannot be read as a list of rules is treated as granting them: the access cannot be ruled out."""
+    try:
+        for r in role.get("rules", []):
+            groups = r.get("apiGroups", [])
+            res = r.get("resources", [])
+            verbs = r.get("verbs", [])
+            if not ({"create", "patch", "*"} & set(verbs)):
+                continue
+            for group, resource in _WORKLOAD_WRITES:
+                if (group in groups or "*" in groups) and (resource in res or "*" in res):
+                    return True
+    except (AttributeError, TypeError):
+        return True
+    return False
+
+
 def read_controls():
-    """Live state of the cluster-object controls behind the C1/C2/C3/C7 badges, plus Falco.
+    """Live state of the cluster-object controls behind the C1/C2/C3/C7/C8 badges, plus Falco.
+
+    The infra fields are networkpolicy, kyverno, kubearmor, falco, tool_allowlist, rbac_scoped (the
+    agent's Role no longer grants broad Secrets access) and agency_scoped (the agent's Role grants no
+    create or patch on Deployments or Pods: Challenge 3's least privilege at KubeCon).
 
     Cached for a few seconds so the badge poll does not hit the API server on every request. Each field
     is True (installed / enforcing), False (measured absent), or None (could not read)."""
@@ -409,6 +434,11 @@ def read_controls():
         except (AttributeError, TypeError):
             broad = True
         out["rbac_scoped"] = not broad
+
+    # Challenge 3 at KubeCon (#76): least privilege is on once guard-agency-on's Role leaves agent-sa
+    # unable to create or patch Deployments (apiGroup apps) or Pods (the core group). The same Role read
+    # as rbac_scoped; a wildcard group, resource or verb grants as surely as naming it.
+    out["agency_scoped"] = None if role is None else not _role_grants_workload_writes(role)
 
     with _controls_lock:
         _controls_cache["ts"] = now

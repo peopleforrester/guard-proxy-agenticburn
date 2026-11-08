@@ -45,6 +45,9 @@ type Infra struct {
 	ToolAllowlist *bool `json:"tool_allowlist"`
 	// RBACScoped is C8: the agent's Role no longer grants broad secrets access.
 	RBACScoped *bool `json:"rbac_scoped"`
+	// AgencyScoped is Challenge 3's least privilege at KubeCon: the agent's Role grants no create or
+	// patch on Deployments or Pods.
+	AgencyScoped *bool `json:"agency_scoped"`
 }
 
 // Reader reads the badges. It is safe for concurrent use.
@@ -97,7 +100,9 @@ func (r *Reader) Read() Infra {
 	case isFalse(gateway) && isFalse(allowlist):
 		out.ToolAllowlist = ptr(false)
 	}
-	out.RBACScoped = rbacScoped(get("/apis/rbac.authorization.k8s.io/v1/namespaces/agent/roles/workshop-agent"))
+	role := get("/apis/rbac.authorization.k8s.io/v1/namespaces/agent/roles/workshop-agent")
+	out.RBACScoped = rbacScoped(role)
+	out.AgencyScoped = agencyScoped(role)
 
 	r.mu.Lock()
 	r.at, r.cached = now, &out
@@ -278,6 +283,43 @@ func rbacScoped(role any) *bool {
 		names, _ := r["resourceNames"].([]any)
 		if contains(r["verbs"], "list") || (contains(r["verbs"], "get") && len(names) == 0) {
 			return ptr(false)
+		}
+	}
+	return ptr(true)
+}
+
+// workloadWrites are the apiGroup and resource pairs whose create or patch lets the agent run a workload.
+var workloadWrites = [][2]string{{"apps", "deployments"}, {"", "pods"}}
+
+// agencyScoped is true once no rule grants create or patch on Deployments or Pods. A wildcard group,
+// resource or verb grants as surely as naming it. A Role whose rules cannot be read is not scoped.
+func agencyScoped(role any) *bool {
+	if role == nil {
+		return nil
+	}
+	m, ok := role.(map[string]any)
+	if !ok {
+		return ptr(false)
+	}
+	rules := []any{}
+	if raw, present := m["rules"]; present {
+		if rules, ok = raw.([]any); !ok {
+			return ptr(false)
+		}
+	}
+	for _, raw := range rules {
+		r, ok := raw.(map[string]any)
+		if !ok {
+			return ptr(false)
+		}
+		if !contains(r["verbs"], "create") && !contains(r["verbs"], "patch") && !contains(r["verbs"], "*") {
+			continue
+		}
+		for _, w := range workloadWrites {
+			if (contains(r["apiGroups"], w[0]) || contains(r["apiGroups"], "*")) &&
+				(contains(r["resources"], w[1]) || contains(r["resources"], "*")) {
+				return ptr(false)
+			}
 		}
 	}
 	return ptr(true)

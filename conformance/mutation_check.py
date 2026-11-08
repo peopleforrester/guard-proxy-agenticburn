@@ -626,6 +626,41 @@ MUTANTS: list[tuple[str, str, str]] = [
         '                log.info("guard %s set to %s by %s"',
         '                log.warning("guard %s set to %s by %s"',
     ),
+    (
+        "agency_scoped ignores patch",
+        '            if not ({"create", "patch", "*"} & set(verbs)):',
+        '            if not ({"create", "*"} & set(verbs)):',
+    ),
+    (
+        "agency_scoped ignores a wildcard verb",
+        '            if not ({"create", "patch", "*"} & set(verbs)):',
+        '            if not ({"create", "patch"} & set(verbs)):',
+    ),
+    (
+        "agency_scoped ignores a wildcard resource",
+        '(resource in res or "*" in res)',
+        "(resource in res)",
+    ),
+    (
+        "agency_scoped ignores a wildcard group",
+        '(group in groups or "*" in groups)',
+        "(group in groups)",
+    ),
+    (
+        "agency_scoped ignores the apiGroup",
+        '(group in groups or "*" in groups) and',
+        "True and",
+    ),
+    (
+        "agency_scoped ignores pods",
+        '_WORKLOAD_WRITES = {("apps", "deployments"), ("", "pods")}',
+        '_WORKLOAD_WRITES = {("apps", "deployments")}',
+    ),
+    (
+        "agency_scoped false without the Role",
+        '    out["agency_scoped"] = None if role is None else',
+        '    out["agency_scoped"] = False if role is None else',
+    ),
 ]
 
 

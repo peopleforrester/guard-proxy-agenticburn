@@ -55,7 +55,7 @@ func TestWithoutATokenEveryReadIsUnknown(t *testing.T) {
 	if got != want {
 		t.Errorf("Read = %+v, want %+v", got, want)
 	}
-	if b, _ := json.Marshal(got); string(b) != `{"networkpolicy":false,"kyverno":false,"kubearmor":false,"falco":false,"tool_allowlist":null,"rbac_scoped":null}` {
+	if b, _ := json.Marshal(got); string(b) != `{"networkpolicy":false,"kyverno":false,"kubearmor":false,"falco":false,"tool_allowlist":null,"rbac_scoped":null,"agency_scoped":null}` {
 		t.Errorf("JSON = %s", b)
 	}
 }
@@ -164,6 +164,44 @@ func TestRBACScoped(t *testing.T) {
 		if got == nil || *got != *want {
 			t.Errorf("%s: RBACScoped = %v, want %v", body, deref(got), *want)
 		}
+	}
+}
+
+func TestAgencyScoped(t *testing.T) {
+	// c5-scoped-role.yaml and c6-least-privilege-role.yaml from Unleash_an_Agent_Watch_It_Burn's
+	// gitops/ai-layer/resources.yaml: guard-agency-off and guard-agency-on.
+	c5 := `{"rules": [{"apiGroups": ["apps"], "resources": ["deployments"], "verbs": ["create", "get", "list", "patch"]},
+		{"apiGroups": ["apps"], "resources": ["deployments/scale"], "verbs": ["patch"]},
+		{"apiGroups": [""], "resources": ["pods", "configmaps", "services"], "verbs": ["create", "get", "list", "patch"]},
+		{"apiGroups": [""], "resources": ["secrets"], "resourceNames": ["workshop-agent"], "verbs": ["get"]}]}`
+	c6 := `{"rules": [{"apiGroups": ["apps"], "resources": ["deployments"], "verbs": ["get", "list"]},
+		{"apiGroups": ["apps"], "resources": ["deployments/scale"], "verbs": ["patch"]},
+		{"apiGroups": [""], "resources": ["pods"], "verbs": ["get", "list"]},
+		{"apiGroups": [""], "resources": ["configmaps", "services"], "verbs": ["create", "get", "list", "patch"]},
+		{"apiGroups": [""], "resources": ["secrets"], "resourceNames": ["workshop-agent"], "verbs": ["get"]}]}`
+	yes, no := true, false
+	for body, want := range map[string]*bool{
+		c6: &yes,
+		c5: &no,
+		`{"rules": [{"apiGroups": [""], "resources": ["pods"], "verbs": ["patch"]}]}`:          &no,
+		`{"rules": [{"apiGroups": ["*"], "resources": ["deployments"], "verbs": ["create"]}]}`: &no,
+		`{"rules": [{"apiGroups": [""], "resources": ["*"], "verbs": ["create"]}]}`:            &no,
+		`{"rules": [{"apiGroups": ["apps"], "resources": ["deployments"], "verbs": ["*"]}]}`:   &no,
+		`{"rules": [{"apiGroups": [""], "resources": ["deployments"], "verbs": ["create"]}]}`:  &yes,
+		`{"rules": [{"apiGroups": ["apps"], "resources": ["pods"], "verbs": ["patch"]}]}`:      &yes,
+		`{}`:                      &yes,
+		`{"rules": "nonsense"}`:   &no,
+		`{"rules": ["nonsense"]}`: &no,
+	} {
+		_, url := newAPI(t, map[string]string{rolePath: body})
+		got := reader(t, url).Read().AgencyScoped
+		if got == nil || *got != *want {
+			t.Errorf("%s: AgencyScoped = %v, want %v", body, deref(got), *want)
+		}
+	}
+	_, url := newAPI(t, nil)
+	if got := reader(t, url).Read().AgencyScoped; got != nil {
+		t.Errorf("without the Role: AgencyScoped = %v, want nil", *got)
 	}
 }
 

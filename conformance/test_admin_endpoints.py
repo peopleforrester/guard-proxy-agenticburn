@@ -227,6 +227,7 @@ def test_controls_without_cluster_credentials(start_proxy):
             "falco": False,
             "tool_allowlist": None,
             "rbac_scoped": None,
+            "agency_scoped": None,
         },
         "host": "michael-student.agenticburn.com",
     }
@@ -352,6 +353,103 @@ def test_controls_reads_the_cluster_with_the_service_account_token(start_proxy, 
         [call] = kube_api.calls(path)
         assert call.method == "GET"
         assert call.headers["Authorization"] == f"Bearer {SA_TOKEN}"
+
+
+# --- /controls Challenge 3 at KubeCon: least privilege on the agent's Role -------------------------
+# guard-agency-on applies c6-least-privilege-role.yaml to agent/workshop-agent, so agent-sa can no longer
+# create or patch Deployments or Pods; guard-agency-off applies c5-scoped-role.yaml to put those verbs
+# back. The two Roles below are copied from Unleash_an_Agent_Watch_It_Burn's gitops/ai-layer/resources.yaml.
+# agency_scoped reads the same Role rbac_scoped does: True when no rule grants create or patch on either.
+
+WORKSHOP_ROLE = "/apis/rbac.authorization.k8s.io/v1/namespaces/agent/roles/workshop-agent"
+
+
+def workshop_role(rules: list[dict]) -> dict:
+    return {
+        "apiVersion": "rbac.authorization.k8s.io/v1",
+        "kind": "Role",
+        "metadata": {"name": "workshop-agent", "namespace": "agent"},
+        "rules": rules,
+    }
+
+
+C5_SCOPED_ROLE = workshop_role(
+    [
+        {"apiGroups": ["apps"], "resources": ["deployments"], "verbs": ["create", "get", "list", "patch"]},
+        {"apiGroups": ["apps"], "resources": ["deployments/scale"], "verbs": ["patch"]},
+        {"apiGroups": [""], "resources": ["pods", "configmaps", "services"], "verbs": ["create", "get", "list", "patch"]},
+        {"apiGroups": [""], "resources": ["secrets"], "resourceNames": ["workshop-agent"], "verbs": ["get"]},
+    ]
+)
+C6_LEAST_PRIVILEGE_ROLE = workshop_role(
+    [
+        {"apiGroups": ["apps"], "resources": ["deployments"], "verbs": ["get", "list"]},
+        # The reaper still scales a Joker to zero: the scale subresource is not the Deployment.
+        {"apiGroups": ["apps"], "resources": ["deployments/scale"], "verbs": ["patch"]},
+        {"apiGroups": [""], "resources": ["pods"], "verbs": ["get", "list"]},
+        {"apiGroups": [""], "resources": ["configmaps", "services"], "verbs": ["create", "get", "list", "patch"]},
+        {"apiGroups": [""], "resources": ["secrets"], "resourceNames": ["workshop-agent"], "verbs": ["get"]},
+    ]
+)
+
+
+def test_controls_agency_scoped_on_the_least_privilege_role(start_proxy, kube_api):
+    kube_api.objects[WORKSHOP_ROLE] = C6_LEAST_PRIVILEGE_ROLE
+    assert start_proxy(**kube_api.env).get("/controls").json()["infra"]["agency_scoped"] is True
+
+
+def test_controls_agency_not_scoped_on_the_c5_role(start_proxy, kube_api):
+    """guard-agency-off's Role scopes the Secrets but still lets agent-sa create Deployments and Pods."""
+    kube_api.objects[WORKSHOP_ROLE] = C5_SCOPED_ROLE
+    infra = start_proxy(**kube_api.env).get("/controls").json()["infra"]
+    assert infra["agency_scoped"] is False
+    assert infra["rbac_scoped"] is True
+
+
+def test_controls_agency_unknown_without_the_role(start_proxy, kube_api):
+    assert start_proxy(**kube_api.env).get("/controls").json()["infra"]["agency_scoped"] is None
+
+
+@pytest.mark.parametrize(
+    "rule",
+    [
+        {"apiGroups": ["apps"], "resources": ["deployments"], "verbs": ["create"]},
+        {"apiGroups": ["apps"], "resources": ["deployments"], "verbs": ["patch"]},
+        {"apiGroups": [""], "resources": ["pods"], "verbs": ["create"]},
+        {"apiGroups": [""], "resources": ["pods"], "verbs": ["patch"]},
+        # A wildcard grants the verb, the resource or the group as surely as naming it.
+        {"apiGroups": ["apps"], "resources": ["deployments"], "verbs": ["*"]},
+        {"apiGroups": [""], "resources": ["*"], "verbs": ["create"]},
+        {"apiGroups": ["*"], "resources": ["deployments"], "verbs": ["patch"]},
+    ],
+)
+def test_controls_agency_not_scoped_when_a_rule_grants_a_workload_write(start_proxy, kube_api, rule):
+    kube_api.objects[WORKSHOP_ROLE] = workshop_role([rule])
+    assert start_proxy(**kube_api.env).get("/controls").json()["infra"]["agency_scoped"] is False
+
+
+@pytest.mark.parametrize(
+    "rule",
+    [
+        # Pods live in the core group and Deployments in apps; the other pairing grants neither.
+        {"apiGroups": [""], "resources": ["deployments"], "verbs": ["create", "patch"]},
+        {"apiGroups": ["apps"], "resources": ["pods"], "verbs": ["create", "patch"]},
+        {"apiGroups": [""], "resources": ["pods/exec"], "verbs": ["create"]},
+        {"apiGroups": ["apps"], "resources": ["deployments"], "verbs": ["get", "list", "watch", "delete"]},
+    ],
+)
+def test_controls_agency_scoped_when_no_rule_grants_a_workload_write(start_proxy, kube_api, rule):
+    kube_api.objects[WORKSHOP_ROLE] = workshop_role([rule])
+    assert start_proxy(**kube_api.env).get("/controls").json()["infra"]["agency_scoped"] is True
+
+
+def test_controls_agency_reads_the_role_once_with_the_service_account_token(start_proxy, kube_api):
+    """agency_scoped and rbac_scoped share one GET of the Role guard-proxy-reader is granted by name."""
+    kube_api.objects[WORKSHOP_ROLE] = C6_LEAST_PRIVILEGE_ROLE
+    start_proxy(**kube_api.env).get("/controls")
+    [call] = kube_api.calls(WORKSHOP_ROLE)
+    assert call.method == "GET"
+    assert call.headers["Authorization"] == f"Bearer {SA_TOKEN}"
 
 
 # --- /controls C3 detection: Falco is on this cluster ----------------------------------------------
