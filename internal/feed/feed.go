@@ -19,6 +19,17 @@ const ProbeMarker = "[[wib-probe]]"
 // IsProbe reports whether text carries the probe marker.
 func IsProbe(text string) bool { return strings.Contains(text, ProbeMarker) }
 
+// WithoutProbe is a /chat prompt as a guest would send it: the marker is the feed's alone
+// (guard-proxy-agenticburn#70). Forwarded, the model read "wib-probe" as a support ticket id and called the
+// turn a probe, so a live probe tested a message no guest sends. A prompt without the marker is returned
+// exactly as typed.
+func WithoutProbe(text string) string {
+	if !IsProbe(text) {
+		return text
+	}
+	return strings.TrimSpace(strings.ReplaceAll(text, ProbeMarker, ""))
+}
+
 const (
 	redacted = "[redacted]"
 	maxChars = 280

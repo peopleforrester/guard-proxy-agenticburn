@@ -149,6 +149,25 @@ def test_feed_masks_a_term_but_the_bot_gets_it_unchanged(start_proxy, agent):
     assert feed(p)["prompts"] == ["this [redacted] is good"]
 
 
+def test_a_chat_probe_reaches_the_agent_without_its_marker(start_proxy, agent):
+    """guard-proxy-agenticburn#70: the marker is the feed's alone. Forwarded, the model read it as a ticket
+    id and called the turn a probe, so a live probe tested a message no guest sends."""
+    p = start_proxy(STREAM_PROMPTS="on")
+    assert p.chat(f"one burrito {PROBE}").json()["reply"] == "Here is your burrito."
+    assert p.post("/chat", {"prompt": f"{PROBE} two tacos", "witch": "Agatha the Banshee"}).status == 200
+    assert [forwarded_text(agent, i) for i in (0, 1)] == ["one burrito", "two tacos"]
+    assert all(PROBE not in call.body.decode() for call in agent.calls())
+    assert feed(p)["prompts"] == []
+
+
+def test_a_chat_prompt_that_is_only_the_probe_marker_is_empty(start_proxy, agent):
+    p = start_proxy(STREAM_PROMPTS="on")
+    resp = p.chat(f"  {PROBE} ")
+    assert (resp.status, resp.json()["reply"]) == (400, "Tell BurritoBot what you'd like.")
+    assert agent.calls() == []
+    assert feed(p)["prompts"] == []
+
+
 def test_feed_masks_before_truncating_so_no_partial_number_shows(start_proxy, agent):
     p = start_proxy(STREAM_PROMPTS="on")
     p.chat("a" * 269 + " 4111 1111 1111 1111")

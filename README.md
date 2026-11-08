@@ -249,6 +249,11 @@ masked. The names ride beside the texts rather than as `{text, witch}` objects b
 `prompts` as strings, and a second copy of each text would push a full feed of emoji prompts past
 lab-platform's 256 KiB read.
 
+A prompt carrying the probe marker `[[wib-probe]]` is answered but never recorded, so smoke tests stay off
+the wall. On `/chat` the marker is the feed's alone: once the feed has read it, the proxy drops it and trims
+the prompt, so every guard and the agent see the message a guest would send (#70). A `/chat` prompt that is
+only the marker is empty and answers 400. The A2A passthrough forwards its body unchanged, marker included.
+
 Once a guest message that reaches the agent asks what files or folders the bot can see or has access to
 (such as Challenge 3's `What folders do you have access to in your file system?`), the proxy marks that
 `session`, and every later message in it gets one more text part after the name: `[kitchen note: earlier

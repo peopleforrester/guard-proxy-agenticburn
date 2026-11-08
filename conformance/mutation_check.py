@@ -279,6 +279,11 @@ MUTANTS: list[tuple[str, str, str]] = [
     ),
     ("probe recorded in feed", '    return PROBE_MARKER in (text or "")', "    return False"),
     (
+        "probe marker reaches the bot",
+        "        prompt = without_probe(prompt)\n",
+        "",
+    ),
+    (
         "feed shows personal data",
         '        masked = pattern.sub("[redacted]", masked)',
         "        pass",

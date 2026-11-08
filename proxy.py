@@ -845,6 +845,15 @@ def _is_probe(text):
     return PROBE_MARKER in (text or "")
 
 
+def without_probe(text):
+    """The /chat prompt as a guest would send it: the marker is the feed's alone (guard-proxy-agenticburn#70).
+    Forwarded, the model read "wib-probe" as a support ticket id and called the turn a probe, so a live probe
+    tested a message no guest sends. A prompt without the marker is returned exactly as typed."""
+    if not _is_probe(text):
+        return text
+    return text.replace(PROBE_MARKER, "").strip()
+
+
 def moderate(text):
     """Mask personal data, block-listed and profane terms so the side-screen stays within the code of conduct.
 
@@ -1730,11 +1739,13 @@ class Handler(BaseHTTPRequestHandler):
             witch = ""
         if session:
             self._stamp("session.id", session)  # OTel semconv; joins one browser session's traces
-        if not isinstance(prompt, str) or not prompt.strip():
+        if not isinstance(prompt, str) or not without_probe(prompt).strip():
             self._send(400, {"reply": "Tell BurritoBot what you'd like.", "guarded": False,
                              "input_tokens": 0, "output_tokens": 0})
             return
         record_prompt(prompt, witch)
+        # The feed has read the marker; every guard, the telemetry and the agent see the guest's text.
+        prompt = without_probe(prompt)
         # Read before any guard: a message a guard blocks still shows the guest knew the card's folder.
         pantry = pantry_shut(session, prompt)
         # Input guards and the topic guard (same toggles as the A2A path), then rate/cost cap. A blocked

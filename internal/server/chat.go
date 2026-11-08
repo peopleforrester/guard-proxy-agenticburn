@@ -21,6 +21,7 @@ import (
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/trace"
 
+	"github.com/peopleforrester/guard-proxy-agenticburn/internal/feed"
 	"github.com/peopleforrester/guard-proxy-agenticburn/internal/spend"
 	"github.com/peopleforrester/guard-proxy-agenticburn/internal/telemetry/semconv"
 )
@@ -104,11 +105,13 @@ func (s *Server) chatTurn(ctx context.Context, w http.ResponseWriter, r *http.Re
 		witch = ""
 	}
 	prompt, ok := p.(string)
-	if !ok || strings.TrimSpace(prompt) == "" {
+	if !ok || strings.TrimSpace(feed.WithoutProbe(prompt)) == "" {
 		send(w, http.StatusBadRequest, chatReply{Reply: emptyPrompt})
 		return nil
 	}
 	s.feed.Record(prompt, witch)
+	// The feed has read the marker; every guard, the telemetry and the agent see the guest's text.
+	prompt = feed.WithoutProbe(prompt)
 	// Read before any guard: a message a guard blocks still shows the guest knew the card's folder.
 	pantry := s.pantryShut(session, prompt)
 	g := s.guardState()

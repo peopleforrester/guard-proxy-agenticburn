@@ -104,6 +104,19 @@ func TestFeedKeepsTheLatest50AndSkipsProbes(t *testing.T) {
 	}
 }
 
+func TestWithoutProbeDropsOnlyTheMarker(t *testing.T) {
+	for in, want := range map[string]string{
+		"one burrito " + ProbeMarker: "one burrito",
+		ProbeMarker + " two tacos":   "two tacos",
+		"  " + ProbeMarker + " ":     "",
+		"  one burrito, no marker\n": "  one burrito, no marker\n",
+	} {
+		if got := WithoutProbe(in); got != want {
+			t.Errorf("WithoutProbe(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
 func TestDisabledFeedRecordsNothing(t *testing.T) {
 	f := New(false, moderator(""))
 	f.Record("one burrito", "Agatha the Banshee")
