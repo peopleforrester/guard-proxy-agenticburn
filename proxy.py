@@ -8,7 +8,10 @@
 #
 # Verdict envelope (confirmed live 2026-06-17): /analyze/prompt and /analyze/output return
 # {"is_valid": bool, "scanners": {...}, "sanitized_prompt"|"sanitized_output": "..."}.
+import codecs
 import collections
+import hashlib
+import hmac
 import json
 import logging
 import math
@@ -16,11 +19,13 @@ import os
 import re
 import threading
 import time
+import unicodedata
 import urllib.error
 import urllib.request
 from contextlib import nullcontext
+from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import quote, urlparse, parse_qs
 
 # OTel instrumentation (PRD #22 M1 / issue #19). The stock python image carries no opentelemetry; the
 # OTel Operator injects the SDK at pod startup (PYTHONPATH). The try/except guard keeps this file runnable
@@ -815,26 +820,99 @@ def _origin_allowed(handler):
 # control is that attendees are TOLD their prompts may appear on the instructor screen (run-of-show and
 # lab step 0), which is what makes projecting them defensible at all.
 #
-# These terms match as whole words, plural included, as the topic phrases do, never inside another word.
-# Matched as substrings they masked the menu: "spicy" went up on the wall as "[redacted]y", and "cocktail",
-# "grapes" and "Dickens" lost their middles. Endings are not generated either, because "spic" plus "es" or
-# "ed" is "spices" and "spiced". So each inflected form and each compound that hides a term mid-word
-# (fucking, bullshit) is its own entry.
-_DEFAULT_PROFANITY = (
-    "fuck,fucks,fucked,fucker,fucking,fuckin,motherfucker,motherfucking,"
-    "shit,shitty,shitting,bullshit,shithead,cunt,bitch,bitches,bitching,bastard,"
-    "dick,dickhead,cock,pussy,asshole,dumbass,jackass,wanker,twat,"
-    "nigger,faggot,retard,retarded,tranny,slut,whore,rape,raped,rapist,kike,spic,chink"
+# These terms match as whole words, plural included, never inside another word. Matched as substrings they
+# masked the menu: "spicy" went up on the wall as "[redacted]y", and "cocktail", "grapes" and "Dickens" lost
+# their middles. Endings are not generated either, because "spic" plus "es" or "ed" is "spices" and "spiced".
+# So each inflected form and each compound that hides a term mid-word (fucking, bullshit) is its own entry.
+#
+# The default is the code-of-conduct spike's list (guard-proxy-agenticburn#81, from
+# Unleash_an_Agent_Watch_It_Burn#1267's docs/research/2026-11-09-coc-floor/terms-proposed.rot13): 144
+# expletives, slurs, sexual terms, threat and hate phrases, and the commonest expletives in Spanish, French,
+# German, Portuguese and Italian. Matched as below, it caught 111 of the spike's 155 abuse texts, where the 40
+# terms before it caught 37, and none of 5,198 stage texts or a week of /chat prompts and replies. It is kept
+# ROT13-encoded, as the spike keeps it, so the public tree does not display the terms; PROFANITY_LIST is read
+# as plain text. Go's config.DefaultProfanity is the same list.
+_DEFAULT_PROFANITY = codecs.decode(
+    # expletives
+    "shpx,shpxf,shpxrq,shpxre,shpxref,shpxvat,shpxva,shpxnoyr,shpxsnpr,shpxurnq,shpxjvg,spx,shx,shd,"
+    "sipx,cuhpx,zbgureshpxre,zbgureshpxvat,fuvg,fuvgf,fuvggl,fuvggvat,fuvggrq,fuvgurnq,fuvgsnpr,"
+    "ohyyfuvg,ubefrfuvg,qvcfuvg,phag,ovgpu,ovgpurf,ovgpuvat,ovngpu,onfgneq,qvpx,qvpxurnq,pbpx,"
+    "pbpxfhpxre,chffl,nffubyr,nefrubyr,qhzonff,wnpxnff,jnaxre,gjng,cevpx,fgsh,tgsb,jgs,"
+    # slurs
+    "avttre,avttn,snttbg,snt,qlxr,genaal,genaavr,furznyr,ergneq,ergneqrq,gneq,fcnm,zbatbybvq,xvxr,"
+    "fcvp,puvax,tbbx,jrgonpx,ornare,enturnq,gbjryurnq,cnxv,pbba,jbc,qntb,ubaxl,erqfxva,mvccreurnq,"
+    # sexual
+    "frk,cbea,cbeab,oybjwbo,unaqwbo,phz,phzfubg,qvyqb,ubeal,gvgf,gvggvrf,obbof,ahqrf,rebgvp,"
+    "guerrfbzr,nany frk,wrex bss,wnpx bss,anxrq obql,fyhg,juber,encr,encrq,encvfg,encvat,"
+    # threats and hate phrases
+    "xvyy lbhefrys,xvyy hefrys,xlf,unat lbhefrys,urvy uvgyre,fvrt urvy,juvgr cbjre,tnf gur wrjf,"
+    # Spanish
+    "craqrwb,craqrwn,zvreqn,chgn,chgb,pnoeba,puvatn,puvatnqn,znevpba,wbqre,pbñb,iretn,"
+    # French
+    "chgnva,zreqr,pbaaneq,fnybcr,raphyr,raphyre,chgr,"
+    # German
+    "fpurvffr,fpurvßr,uherafbua,sbgmr,jvpufre,svpx qvpu,fpuynzcr,"
+    # Portuguese
+    "pnenyub,cbeen,ivnqb,ohprgn,"
+    # Italian
+    "inssnaphyb,fgebamb,pnmmb,chggnan",
+    "rot13",
 )
 PROFANITY = [t.strip().lower() for t in os.environ.get("PROFANITY_LIST", _DEFAULT_PROFANITY).split(",") if t.strip()]
 
+# Each character of a text is folded on its own before the terms are matched, so a match maps back onto the
+# original text one to one: zero-width characters and soft hyphens are dropped, compatibility and accented
+# forms reduced to their base letter (fullwidth "ｆ" to "f", "ñ" to "n"), Cyrillic and Greek look-alikes mapped
+# to Latin, and the result lower-cased. A term then matches as a whole word with each letter repeatable
+# ("fuuuck"), each letter's leetspeak stand-ins below, "*" for any vowel ("f*ck"), or the whole term spelt out
+# with one separator between every letter ("f u c k", "c.u.n.t"); a separator between only some letters does
+# not count, so "put a" is not "puta". A phrase's words match with any run of separators between them. The
+# spike's floor.py is the reference this follows, and internal/guard/conduct.go is the same in RE2.
+_CONDUCT_LEET = {"a": "4@", "b": "8", "c": "(", "e": "3", "g": "9", "i": "1!|", "l": "1|", "o": "0", "s": "5$",
+                 "t": "7+"}
+_CONDUCT_VOWELS = frozenset("aeiou")
+_CONDUCT_SEP = r"[\s._*\-]"
+_CONDUCT_ZERO_WIDTH = frozenset("\u200b\u200c\u200d\u2060\ufeff\u00ad")
+# Cyrillic and Greek letters that render as Latin ones.
+_CONDUCT_HOMOGLYPH = str.maketrans("аеорсухіјѕԁԛԝкмтвнАЕОРСУХІЈЅКМТВНαοερτυνκιΑΒΕΖΗΙΚΜΝΟΡΤΥΧ",
+                                   "aeopcyxijsdqwkmtbhaeopcyxijskmtbhaoeptuvkiabezhikmnoptyx")
+
+
+def conduct_fold(text):
+    """text folded one character at a time, and for each folded character the index it came from."""
+    out, where = [], []
+    for i, ch in enumerate(text):
+        if ch in _CONDUCT_ZERO_WIDTH:
+            continue
+        base = "".join(c for c in unicodedata.normalize("NFKD", ch) if not unicodedata.combining(c)) or ch
+        out.append(base[0].translate(_CONDUCT_HOMOGLYPH).lower()[0])
+        where.append(i)
+    return "".join(out), where
+
+
+def _conduct_letter(ch):
+    alts = re.escape(ch) + "".join(re.escape(c) for c in _CONDUCT_LEET.get(ch, ""))
+    if ch in _CONDUCT_VOWELS:
+        alts += r"\*"
+    return "[" + alts + "]"
+
+
+def _conduct_term(term):
+    words = conduct_fold(term)[0].split()
+    joined = (_CONDUCT_SEP + "+").join("".join(_conduct_letter(c) + "+" for c in w) for w in words)
+    if len(words) == 1 and len(words[0]) >= 3:
+        return f"(?:{joined}|{_CONDUCT_SEP.join(_conduct_letter(c) for c in words[0])})"
+    return f"(?:{joined})"
+
 
 def _profanity_pattern(terms):
-    # An empty list matches nothing; joined as-is it would be an empty alternation that matches everywhere.
+    # An empty list matches nothing; joined as-is it would be an empty alternation that matches everywhere. A
+    # term that folds to nothing, zero-width characters alone, is no term for the same reason.
+    terms = [t for t in terms if conduct_fold(t)[0].split()]
     if not terms:
         return None
-    alternation = "|".join(sorted((re.escape(t) for t in terms), key=len, reverse=True))
-    return re.compile(r"\b(?:" + alternation + r")s?\b", re.IGNORECASE)
+    alternation = "|".join(_conduct_term(t) for t in sorted(terms, key=len, reverse=True))
+    return re.compile(r"(?<![a-z0-9])(?:" + alternation + r")s?(?![a-z0-9])")
 
 
 _PROFANITY_RE = _profanity_pattern(PROFANITY)
@@ -856,10 +934,12 @@ def conduct_matches(text):
 
     The check's one matcher: the refusal and the mask both read it, so a classifier (the research spike in
     Unleash_an_Agent_Watch_It_Burn#1267 weighs LLM Guard's Toxicity scanner and Bedrock Guardrails) replaces
-    the term list here alone. A classifier with no spans answers the whole text as one."""
+    the term list here alone. A classifier with no spans answers the whole text as one. The terms are matched
+    on the folded text, and each match is mapped back onto the characters it came from."""
     if _PROFANITY_RE is None or not text:
         return []
-    return [m.span() for m in _PROFANITY_RE.finditer(text)]
+    folded, where = conduct_fold(text)
+    return [(where[m.start()], where[m.end() - 1] + 1) for m in _PROFANITY_RE.finditer(folded)]
 
 
 def conduct_mask(text):
@@ -867,6 +947,117 @@ def conduct_mask(text):
     for start, end in reversed(conduct_matches(text)):
         text = text[:start] + "[redacted]" + text[end:]
     return text
+
+
+# A Bedrock guardrail on the /chat prompt (guard-proxy-agenticburn#81), for the abuse no term list sees: hate
+# speech without a slur, insults, threats. The spike (Unleash_an_Agent_Watch_It_Burn#1267) chose Amazon Bedrock
+# Guardrails, Standard tier; the guardrail and guard-proxy's IAM are Unleash_an_Agent_Watch_It_Burn#1279. With
+# CONDUCT_GUARDRAIL_ID set, a prompt the terms pass is sent to ApplyGuardrail (source INPUT) and refused with
+# CONDUCT_REFUSAL when the guardrail intervenes. It fails open: on any error, or once CONDUCT_GUARDRAIL_TIMEOUT
+# has passed, the prompt goes on, because the terms still hold. The spike measured 466 ms median per call from
+# outside the cluster, 327 ms of it Bedrock's. Credentials come from the environment or, as EKS Pod Identity
+# sets them up, from the container credentials endpoint; the endpoint is the SDKs' AWS_ENDPOINT_URL_* when
+# set, so the Go build (the AWS SDK) and this one reach the same place.
+CONDUCT_GUARDRAIL_ID = os.environ.get("CONDUCT_GUARDRAIL_ID", "").strip()
+CONDUCT_GUARDRAIL_VERSION = os.environ.get("CONDUCT_GUARDRAIL_VERSION", "").strip()
+CONDUCT_GUARDRAIL_TIMEOUT = 1.5
+_AWS_REGION = (os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION") or "").strip()
+if CONDUCT_GUARDRAIL_ID and not CONDUCT_GUARDRAIL_VERSION:
+    raise SystemExit("CONDUCT_GUARDRAIL_ID is set without CONDUCT_GUARDRAIL_VERSION: "
+                     "ApplyGuardrail needs both (a version number or DRAFT)")
+if CONDUCT_GUARDRAIL_ID and not _AWS_REGION:
+    raise SystemExit("CONDUCT_GUARDRAIL_ID is set without AWS_REGION or AWS_DEFAULT_REGION")
+_BEDROCK_URL = (os.environ.get("AWS_ENDPOINT_URL_BEDROCK_RUNTIME") or os.environ.get("AWS_ENDPOINT_URL")
+                or f"https://bedrock-runtime.{_AWS_REGION}.amazonaws.com").rstrip("/")
+_aws_creds_lock = threading.Lock()
+_aws_creds = {}
+
+
+def _aws_credentials(timeout):
+    """(access key id, secret access key, session token or "") from AWS_ACCESS_KEY_ID and
+    AWS_SECRET_ACCESS_KEY, else from the container credentials endpoint EKS Pod Identity sets up
+    (AWS_CONTAINER_CREDENTIALS_FULL_URI, its token in AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE), kept until
+    five minutes before they expire. Raises when neither is set."""
+    key, secret = os.environ.get("AWS_ACCESS_KEY_ID"), os.environ.get("AWS_SECRET_ACCESS_KEY")
+    if key and secret:
+        return key, secret, os.environ.get("AWS_SESSION_TOKEN", "")
+    uri = os.environ.get("AWS_CONTAINER_CREDENTIALS_FULL_URI")
+    if not uri:
+        raise RuntimeError("no AWS credentials: set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY, "
+                           "or AWS_CONTAINER_CREDENTIALS_FULL_URI (EKS Pod Identity)")
+    with _aws_creds_lock:
+        held = _aws_creds.get("held")
+        if held and held[3] - time.time() > 300:
+            return held[:3]
+    headers = {}
+    token_file = os.environ.get("AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE")
+    if token_file:
+        with open(token_file, encoding="utf-8") as f:
+            headers["Authorization"] = f.read().strip()
+    elif os.environ.get("AWS_CONTAINER_AUTHORIZATION_TOKEN"):
+        headers["Authorization"] = os.environ["AWS_CONTAINER_AUTHORIZATION_TOKEN"]
+    with urllib.request.urlopen(urllib.request.Request(uri, headers=headers), timeout=timeout) as r:
+        doc = json.loads(r.read())
+    expires = datetime.fromisoformat(doc["Expiration"].replace("Z", "+00:00")).timestamp()
+    held = (doc["AccessKeyId"], doc["SecretAccessKey"], doc.get("Token") or "", expires)
+    with _aws_creds_lock:
+        _aws_creds["held"] = held
+    return held[:3]
+
+
+def _sigv4(method, url, body, creds, region, service, now):
+    """The headers that sign one request with AWS Signature Version 4, as the AWS SDKs sign it."""
+    key, secret, token = creds
+    u = urlparse(url)
+    stamp = now.strftime("%Y%m%dT%H%M%SZ")
+    day = stamp[:8]
+    headers = {"content-type": "application/json", "host": u.netloc, "x-amz-date": stamp}
+    if token:
+        headers["x-amz-security-token"] = token
+    names = sorted(headers)
+    signed = ";".join(names)
+    # Every service but S3 signs the path encoded twice: once on the wire, once more here.
+    canonical = "\n".join([method, quote(u.path, safe="/-_.~"), u.query,
+                           *(f"{n}:{headers[n]}" for n in names), "", signed,
+                           hashlib.sha256(body).hexdigest()])
+    scope = f"{day}/{region}/{service}/aws4_request"
+    to_sign = "\n".join(["AWS4-HMAC-SHA256", stamp, scope, hashlib.sha256(canonical.encode()).hexdigest()])
+    k = ("AWS4" + secret).encode()
+    for part in (day, region, service, "aws4_request"):
+        k = hmac.new(k, part.encode(), hashlib.sha256).digest()
+    signature = hmac.new(k, to_sign.encode(), hashlib.sha256).hexdigest()
+    headers["authorization"] = (f"AWS4-HMAC-SHA256 Credential={key}/{scope}, SignedHeaders={signed}, "
+                                f"Signature={signature}")
+    return headers
+
+
+def conduct_guardrail_blocks(prompt, deadline):
+    """True when the configured Bedrock guardrail intervenes on prompt, sent as source INPUT. False when no
+    guardrail is configured, and False, logged, on any error or once CONDUCT_GUARDRAIL_TIMEOUT or the turn's
+    deadline has passed: the guardrail fails open, because the terms still hold."""
+    if not CONDUCT_GUARDRAIL_ID:
+        return False
+    end = time.monotonic() + CONDUCT_GUARDRAIL_TIMEOUT
+    if deadline is not None:
+        end = min(end, deadline)
+    try:
+        creds = _aws_credentials(max(0.001, end - time.monotonic()))
+        url = (f"{_BEDROCK_URL}/guardrail/{quote(CONDUCT_GUARDRAIL_ID, safe='')}"
+               f"/version/{quote(CONDUCT_GUARDRAIL_VERSION, safe='')}/apply")
+        body = json.dumps({"source": "INPUT", "content": [{"text": {"text": prompt}}]}).encode()
+        headers = _sigv4("POST", url, body, creds, _AWS_REGION, "bedrock", datetime.now(timezone.utc))
+        left = end - time.monotonic()
+        if left <= 0:
+            raise TimeoutError(f"the {CONDUCT_GUARDRAIL_TIMEOUT:g}s guardrail deadline passed")
+        req = urllib.request.Request(url, data=body, headers=headers, method="POST")
+        with urllib.request.urlopen(req, timeout=left) as r:
+            verdict = json.loads(r.read())
+        action = verdict["action"]
+    except Exception as exc:
+        log.warning("code-of-conduct guardrail gave no verdict; the prompt goes on: %s: %s",
+                    type(exc).__name__, exc, extra={"event": "conduct_guardrail_error"})
+        return False
+    return action == "GUARDRAIL_INTERVENED"
 
 # Personal data on the wall (Unleash_an_Agent_Watch_It_Burn#646). The wall is projected, so a prompt that
 # carries an email, a phone or card number, or a street address goes up redacted. The prompt itself still
@@ -930,8 +1121,8 @@ def moderate(text):
             # Case-insensitive: "Delete" or "DELETE" must be masked too, not only the lower and upper forms.
             masked = re.sub(re.escape(term), "[redacted]", masked, flags=re.IGNORECASE)
             low = masked.lower()
-    if _PROFANITY_RE is not None:
-        masked = _PROFANITY_RE.sub("[redacted]", masked)
+    # The code-of-conduct check's own matcher, so the wall and /chat agree on what a term is (#81).
+    masked = conduct_mask(masked)
     return masked[:280]
 
 
@@ -1383,6 +1574,24 @@ class Handler(BaseHTTPRequestHandler):
         if _sp is not None:
             _sp.set_attribute(key, value)
 
+    def _refuse_for_conduct(self, masked):
+        """Answer a /chat prompt the code-of-conduct check refused. The turn carries the gen_ai attributes and
+        the chat span a turn the agent answers does, so Agent Observability lists it beside the others, but the
+        prompt it records is masked (#81): the trace shown on stage never carries the term. The output is the
+        refusal the guest read."""
+        if _OTEL_AVAILABLE:
+            model = request_model(bound_tier())
+            root = trace.get_current_span()
+            with _tracer.start_as_current_span("chat", kind=SpanKind.INTERNAL) as chat_span:
+                for span in (root, chat_span):
+                    if span.is_recording():
+                        span.set_attribute("gen_ai.operation.name", "chat")
+                        span.set_attribute("gen_ai.request.model", model)
+                        if _CAPTURE_CONTENT:
+                            span.set_attribute("gen_ai.input.messages", _genai_messages(masked))
+                            span.set_attribute("gen_ai.output.messages", _genai_output(CONDUCT_REFUSAL))
+        self._send(200, {"reply": CONDUCT_REFUSAL, "guarded": False, "input_tokens": 0, "output_tokens": 0})
+
     def do_GET(self):
         if self.path == "/cost":
             # Expose the ACTIVE ceiling alongside the spend so the UI can say "$x of $y" instead of a bare
@@ -1813,9 +2022,15 @@ class Handler(BaseHTTPRequestHandler):
         prompt = without_probe(prompt)
         # The code-of-conduct check, whatever the toggles say (#78): the prompt reaches nothing past here, and
         # the refusal names no term. The feed above already holds it masked, and the wall drops a masked one.
+        # Then the Bedrock guardrail, when one is configured, on a prompt the terms pass (#81).
         if conduct_matches(prompt):
             log.info("chat input refused by the code-of-conduct check", extra={"event": "conduct_refused"})
-            self._send(200, {"reply": CONDUCT_REFUSAL, "guarded": False, "input_tokens": 0, "output_tokens": 0})
+            self._refuse_for_conduct(conduct_mask(prompt))
+            return
+        if conduct_guardrail_blocks(prompt, deadline):
+            log.info("chat input refused by the code-of-conduct guardrail", extra={"event": "conduct_refused"})
+            # The guardrail names no span, so the whole prompt is the span.
+            self._refuse_for_conduct("[redacted]")
             return
         # Read before any guard: a message a guard blocks still shows the guest knew the card's folder.
         pantry = pantry_shut(session, prompt)

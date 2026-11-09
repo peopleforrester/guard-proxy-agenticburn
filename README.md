@@ -77,8 +77,14 @@ Where it differs from `proxy.py` on purpose:
   arrives lowercase, as agentgateway sends it.
 - `error.type` on a failed forward, `/chat` or A2A, is the HTTP status code, `timeout`, or `_OTHER`,
   per the HTTP conventions. `proxy.py` records the Python exception's class name.
-- Whole-word matching in the profanity list and the topic phrases uses RE2's ASCII `\b`, where Python's
-  is Unicode-aware. A term next to a non-ASCII letter ("fuckñ") is masked in Go and not in `proxy.py`.
+- Whole-word matching in the topic phrases uses RE2's ASCII `\b`, where Python's is Unicode-aware. The
+  profanity list does not: both builds fold the text first and take `[a-z0-9]` as the word edge, so they
+  match the same spans (#81).
+- The code-of-conduct guardrail call (`CONDUCT_GUARDRAIL_ID`) goes through the AWS SDK, which reads the
+  region, credentials and endpoint from every source the SDK knows. `proxy.py` signs the call itself and
+  reads `AWS_REGION` or `AWS_DEFAULT_REGION`, `AWS_ENDPOINT_URL_BEDROCK_RUNTIME` or `AWS_ENDPOINT_URL`, and
+  credentials from `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` or EKS Pod Identity's container endpoint
+  only.
 - The cost tally, each session's spend and the `/toggle` cost cap are kept in a bbolt file at
   `SPEND_STORE_PATH` (`spend.store_path`), so a restart, a crash or an OOM kill does not reset spend.
   `proxy.py` keeps them in memory and a restart zeroes them. The path is required, and one the process
@@ -121,7 +127,10 @@ spend:
   store_path: /var/lib/guard-proxy/spend.db   # required (or SPEND_STORE_PATH); on the pod's volume
 feed:
   enabled: false           # default; GET /prompts records nothing until this is on
-  profanity: [cilantro]    # replaces the default list; whole words, plural included
+  profanity: [cilantro]    # replaces the default list; whole words, plural included, folded (#81)
+conduct:
+  guardrail_id: ""         # default, none; a Bedrock guardrail /chat prompts are also checked against
+  guardrail_version: ""    # required with guardrail_id: a version number or DRAFT
 topic:
   off: [karaoke, hot dog]  # refuses without a model call
   on: [menu, burrito]      # passes without a model call; anything else goes to BanTopics
@@ -164,7 +173,8 @@ provides it.
 Everything is set through environment variables:
 
 ```
-AGENT_URL  ALWAYS_REDACT  BLOCK_LIST  BUDGET_CAP_USD  BUDGET_GUARD  CONSOLE_ORIGIN  COST_CAP_USD  COST_PER_1K_IN
+AGENT_URL  ALWAYS_REDACT  BLOCK_LIST  BUDGET_CAP_USD  BUDGET_GUARD  CONDUCT_GUARDRAIL_ID
+CONDUCT_GUARDRAIL_VERSION  CONSOLE_ORIGIN  COST_CAP_USD  COST_PER_1K_IN
 COST_PER_1K_OUT  INPUT_BLOCKLIST  INPUT_CLASSIFIER  INPUT_GUARD  K8S_API_URL  K8S_TOKEN_PATH
 LLM_GUARD_TOKEN  LLM_GUARD_URL  MODEL_NAME  MODEL_TIER
 OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT  OUTPUT_GUARD  PEER_SERVICE  PROFANITY_LIST
@@ -189,6 +199,24 @@ replaced with `[redacted]` after `ALWAYS_REDACT` and before the output guard, lo
 `/toggle` key names it; `/controls` reports it as `always_on: {"code_of_conduct": true}`, apart from the
 `ai` guards, and false only when `PROFANITY_LIST` is set empty. Like `ALWAYS_REDACT` it leaves `guarded`
 false and stamps no `witb.guard.decision`. It runs in-process, and the A2A path does not run it.
+
+The default list and the matching are the code-of-conduct spike's (#81, from
+Unleash_an_Agent_Watch_It_Burn#1267): 144 entries, kept ROT13-encoded in the source, and each character
+of a text folded before matching (zero-width characters dropped, fullwidth and accented letters reduced,
+Cyrillic and Greek look-alikes mapped, lower case), with leetspeak stand-ins, repeatable letters, `*` for a
+vowel and fully spaced-out spellings ("f u c k"). The wall's `moderate()` masks with the same matcher.
+`conformance/coc_floor/` holds the spike's abuse set with the mask its reference gives each text, and the
+stage's own texts, which none of it matches. A refused turn records the `POST /chat` and `chat` spans a
+turn the agent answers does, with the prompt masked in `gen_ai.input.messages` and the refusal in
+`gen_ai.output.messages` (content capture on), so the trace shown on stage never carries the term.
+
+With `CONDUCT_GUARDRAIL_ID` and `CONDUCT_GUARDRAIL_VERSION` set, a prompt the terms pass is also sent to
+Amazon Bedrock's `ApplyGuardrail` (source `INPUT`), and refused with the same reply, logging
+`conduct_refused`, when the guardrail intervenes; its spans record the prompt as `[redacted]`. It fails
+open: an error, or no answer within 1.5 s, lets the prompt through and logs `conduct_guardrail_error`,
+because the terms still hold. `AWS_REGION` is required with it, and a guardrail id without a version stops
+startup. Credentials are the pod's (EKS Pod Identity in the workshop). The spike measured 466 ms median
+per call from outside the cluster.
 
 `PROXY_TIMEOUT` bounds each upstream call. A `POST /chat` turn can make up to seven in a row: the
 injection classifier, the topic classifier, the forward, the three self-heal retries and the output

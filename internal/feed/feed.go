@@ -61,17 +61,17 @@ var addressSuffixes = []string{"street", "st", "avenue", "ave", "road", "rd", "b
 // Moderator masks text for the feed.
 type Moderator struct {
 	blocklist []*regexp.Regexp
-	profanity *regexp.Regexp
+	conduct   guard.Conduct
 }
 
 // NewModerator masks the block-list's terms as case-insensitive substrings, in list order, and the
-// profanity terms as whole words with an optional plural "s". An empty profanity list masks nothing.
+// profanity terms as the code-of-conduct check matches them (#81), so the wall and /chat agree on what a
+// term is. An empty profanity list masks nothing.
 func NewModerator(blocklist guard.Blocklist, profanity []string) *Moderator {
-	m := &Moderator{}
+	m := &Moderator{conduct: guard.NewConduct(profanity)}
 	for _, t := range blocklist {
 		m.blocklist = append(m.blocklist, regexp.MustCompile(`(?i)`+regexp.QuoteMeta(t)))
 	}
-	m.profanity = guard.WholeWords(profanity)
 	return m
 }
 
@@ -84,9 +84,7 @@ func (m *Moderator) Moderate(text string) string {
 	for _, re := range m.blocklist {
 		masked = re.ReplaceAllLiteralString(masked, redacted)
 	}
-	if m.profanity != nil {
-		masked = m.profanity.ReplaceAllLiteralString(masked, redacted)
-	}
+	masked = m.conduct.Mask(masked)
 	if r := []rune(masked); len(r) > maxChars {
 		masked = string(r[:maxChars])
 	}

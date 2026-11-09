@@ -172,6 +172,63 @@ MUTANTS: list[tuple[str, str, str]] = [
         '"always_on": {"code_of_conduct": True},',
     ),
     (
+        "code-of-conduct terms matched unfolded",
+        "    folded, where = conduct_fold(text)\n",
+        "    folded, where = text.lower(), list(range(len(text)))\n",
+    ),
+    (
+        "code-of-conduct terms not matched spelt out",
+        "    if len(words) == 1 and len(words[0]) >= 3:\n",
+        "    if False:\n",
+    ),
+    (
+        "code-of-conduct terms without leetspeak",
+        '    alts = re.escape(ch) + "".join(re.escape(c) for c in _CONDUCT_LEET.get(ch, ""))\n',
+        "    alts = re.escape(ch)\n",
+    ),
+    (
+        "the wall skips the code-of-conduct mask",
+        "    masked = conduct_mask(masked)\n    return masked[:280]",
+        "    return masked[:280]",
+    ),
+    (
+        "a refused prompt's spans carry it unmasked",
+        "            self._refuse_for_conduct(conduct_mask(prompt))\n",
+        "            self._refuse_for_conduct(prompt)\n",
+    ),
+    (
+        "a refused prompt leaves no chat span",
+        '            with _tracer.start_as_current_span("chat", kind=SpanKind.INTERNAL) as chat_span:\n'
+        "                for span in (root, chat_span):",
+        "            with nullcontext(root) as chat_span:\n                for span in (root,):",
+    ),
+    ("guardrail verdict ignored", '    return action == "GUARDRAIL_INTERVENED"', "    return False"),
+    (
+        "guardrail fails closed",
+        "        return False\n    return action ==",
+        "        return True\n    return action ==",
+    ),
+    (
+        "guardrail waits past 1.5 s",
+        "    end = time.monotonic() + CONDUCT_GUARDRAIL_TIMEOUT\n",
+        "    end = time.monotonic() + 30\n",
+    ),
+    (
+        "guardrail asked about the reply's source",
+        '{"source": "INPUT", "content"',
+        '{"source": "OUTPUT", "content"',
+    ),
+    (
+        "guardrail call signed for the wrong service",
+        '_AWS_REGION, "bedrock", datetime.now(timezone.utc)',
+        '_AWS_REGION, "bedrock-runtime", datetime.now(timezone.utc)',
+    ),
+    (
+        "pod identity token not sent",
+        '            headers["Authorization"] = f.read().strip()\n',
+        "            pass\n",
+    ),
+    (
         "budget ignores session",
         "session_spend = _session_cost.get(session, 0.0) if session else spend",
         "session_spend = spend",

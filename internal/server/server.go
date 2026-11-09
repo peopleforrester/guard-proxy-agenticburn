@@ -49,6 +49,8 @@ type Server struct {
 	alwaysRedact *regexp.Regexp
 	// conduct is the code-of-conduct check every /chat prompt and reply gets whatever the guards say (#78).
 	conduct guard.Conduct
+	// guardrail is the Bedrock guardrail a /chat prompt the terms pass is checked against (#81); nil is none.
+	guardrail *guard.Guardrail
 
 	meter      *spend.Meter
 	limiter    *spend.Limiter
@@ -89,6 +91,10 @@ func New(cfg config.Config, log *slog.Logger, store *spend.Store) (*Server, erro
 	if err != nil {
 		return nil, err
 	}
+	guardrail, err := guard.NewGuardrail(context.Background(), cfg.Conduct.GuardrailID, cfg.Conduct.GuardrailVersion)
+	if err != nil {
+		return nil, err
+	}
 	blocklist := guard.Blocklist(cfg.Blocklist)
 	origins := map[string]bool{}
 	for _, o := range cfg.CORS.ConsoleOrigins {
@@ -109,6 +115,7 @@ func New(cfg config.Config, log *slog.Logger, store *spend.Store) (*Server, erro
 		turnTimeout:  cfg.Chat.TurnTimeout.Duration,
 		alwaysRedact: alwaysRedact,
 		conduct:      guard.NewConduct(cfg.Feed.Profanity),
+		guardrail:    guardrail,
 
 		meter:      meter,
 		limiter:    spend.NewLimiter(cfg.Spend.RateLimitRPM, cfg.Spend.RateLimitSessionRPM),

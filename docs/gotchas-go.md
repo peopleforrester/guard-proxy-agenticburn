@@ -89,8 +89,11 @@ checked. Read this before adding a dependency or changing how the proxy talks to
   (`addressAt`). Checked 2026-10-31 against `proxy.moderate()` on the cases in `feed_test.go`.
 - **`\w`, `\d`, `\s` and `\b` are ASCII in RE2 and Unicode in Python 3.** Where a pattern meets
   personal data the feed uses Unicode classes (`\p{L}\p{N}_`, `\p{Nd}`), so "josé@example.com" is
-  still masked. The whole-word matchers (profanity, topic phrases) keep RE2's ASCII `\b`, which the
-  README lists as a difference.
+  still masked. The topic phrases keep RE2's ASCII `\b`, which the README lists as a difference. The
+  code-of-conduct terms (`guard.Conduct`) need no `\b`: the text is folded first and `[a-z0-9]` is the
+  word edge, the left one checked by hand and the right one consumed after the capture group, which
+  leftmost-first matching resolves as Python's lookahead does. Python's `\s` (`str.isspace`) is written
+  out as `[\pZ\t\n\v\f\r\x{1c}-\x{1f}\x{85}]` there.
 - **A Python string slice counts characters; a Go string slice counts bytes.** The feed's 280-character
   cut slices `[]rune`.
 - **Go's `$` without `(?m)` matches only at the very end; Python's also matches before a final

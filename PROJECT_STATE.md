@@ -195,8 +195,15 @@ reports it under `always_on`. Decision recorded 2026-11-09; conformance in `test
 2026-11-09; the repin to a7a5a36 is asked on #1267 in
 https://github.com/peopleforrester/Unleash_an_Agent_Watch_It_Burn/issues/1267#issuecomment-6745014566.
 
+### Agent-task #81: the spike's folded term list, masked spans on a refused turn, an optional Bedrock guardrail
+From Unleash_an_Agent_Watch_It_Burn#1267's spike. Both builds match the spike's 144-entry folded list on the
+/chat refusal, the reply mask and the wall; a refused turn's spans carry the prompt masked; with
+`CONDUCT_GUARDRAIL_ID`/`_VERSION` set a prompt the terms pass goes to Bedrock ApplyGuardrail and fails open
+after 1.5 s or on error. Decision recorded 2026-11-09; conformance in `test_conduct_floor.py`. The guardrail
+and IAM are Unleash_an_Agent_Watch_It_Burn#1279; the repin is in docs/release-notes.md.
+
 ## Branch & Tests
-- Branch: agent/78-19586 (#78)
+- Branch: agent/81-19639 (#81)
 - Working tree: clean
 - Last CI: green on 3407cef (staging and main)
 
@@ -250,3 +257,4 @@ _(append-only. Each phase transition adds one line, oldest first.)_
 - 2026-11-08 #70 implemented and verified locally (2.3) on agent/70-18593: ruff, gofmt, go vet and go test ./... green, proxy.py suite 561/561 and Go suite 561/561; the two new conformance tests fail against the base proxy.py, and the new mutant and the two feed mutants beside it are caught against test_prompt_feed.py, the full mutation check stopped after 8/124 caught (its ETA was about two hours)
 - 2026-11-08 #76 implemented and verified locally (2.3) on agent/76-18682: ruff, gofmt, go vet and go test ./... green, proxy.py suite 576/576 and Go suite 576/576; /controls carries agency_scoped in both builds, the new conformance tests fail against the base proxy.py, and the seven new mutants are caught against test_admin_endpoints.py, the full mutation check not run; both live clusters read false (the shipped Role, least privilege off)
 - 2026-11-09 #78 implemented and verified locally (2.3) on agent/78-19586: ruff check, gofmt, go vet and go test ./... green; test_conduct.py, test_admin_endpoints.py and test_prompt_feed.py 164/164 against proxy.py and against the Go build; the new tests fail against the base proxy.py, and the six new mutants are caught against test_conduct.py and test_admin_endpoints.py, the full mutation check not run
+- 2026-11-09 #81 implemented and verified locally (2.3) on agent/81-19639: ruff check, gofmt, go vet and go test of the changed packages green; test_conduct_floor.py (27), test_conduct.py and test_prompt_feed.py green against proxy.py and against the Go build; the twelve new mutants are caught against test_conduct_floor.py alone, the full mutation check not run

@@ -976,3 +976,49 @@ The choices:
 
 Conformance in `test_conduct.py`, against both builds; Go's `TestConduct*`. `test_prompt_feed.py`'s
 "a term reaches the bot unchanged" now pins that it never reaches the bot. Six mutants in `mutation_check.py`.
+
+## 2026-11-09: the spike's folded term list, the masked prompt on a refused turn's spans, and a Bedrock guardrail
+
+guard-proxy-agenticburn#81, from Unleash_an_Agent_Watch_It_Burn#1267's spike
+(docs/research/2026-11-09-coc-floor/, read at Unleash staging c4bd356). The spike measured #78's 40 terms at
+37 of 155 abuse texts and its proposed floor at 111, with no match on 5,198 stage texts or a week of /chat
+prompts and replies. The choices:
+
+- **The spike's list and matcher, both builds.** `PROFANITY_LIST`'s default is the spike's 144 entries
+  (terms-proposed.rot13) and `conduct_matches()` / `guard.Conduct.Matches` follow its floor.py: each
+  character folded on its own, so a match maps back onto the original text; leetspeak, repeatable letters,
+  `*` for a vowel, fully spaced-out spellings. `moderate()` (the wall) masks with the same matcher, so the
+  wall and /chat agree. A plain `PROFANITY_LIST` replaces the list and is folded the same way.
+- **The list stays ROT13-encoded in the source**, as the spike keeps it, so the public tree does not display
+  144 slurs and expletives. Go's `config.DefaultProfanity` decodes the same string; a Go test pins it equal
+  to proxy.py's.
+- **Go without lookarounds.** The left word edge is checked by hand and the search resumes one character
+  later when it fails; the right edge is consumed after the capture group, which RE2's leftmost-first
+  matching resolves as Python's backtracking does. `conformance/coc_floor/abuse-set.rot13.tsv` holds each
+  abuse text with the mask the spike's own floor.py gives it, and both builds must produce exactly that on
+  /chat, the reply and the wall.
+- **A refused turn records its spans.** Before, a refused prompt ended before any gen_ai attribute, so Agent
+  Observability showed nothing. Now the root and a `chat` span carry `gen_ai.operation.name`, the model, the
+  prompt masked in `gen_ai.input.messages` and the refusal in `gen_ai.output.messages` (content capture on),
+  so the trace on stage shows the turn and never the term. A guardrail refusal has no span to mask, so its
+  prompt is recorded as `[redacted]` whole. The stage guards' refusals keep no chat span, as before.
+- **The Bedrock guardrail is optional and fails open.** `CONDUCT_GUARDRAIL_ID` and
+  `CONDUCT_GUARDRAIL_VERSION` (both, or startup stops), plus `AWS_REGION`. A prompt the terms pass is sent to
+  ApplyGuardrail with source INPUT; `action: GUARDRAIL_INTERVENED` refuses it with the same reply. Any
+  error, or no answer within 1.5 s (or the turn deadline, if sooner), lets the prompt through and logs
+  `conduct_guardrail_error`, because the terms still hold. One attempt, no retry: a retry inside 1.5 s would
+  mostly wait. The terms run first, so a prompt they refuse costs no Bedrock call.
+- **Credentials.** The live stage runs proxy.py under EKS Pod Identity: watch-it-burn-private has pod
+  identity associations and no IRSA role annotations, and its agentgateway pod carries
+  `AWS_CONTAINER_CREDENTIALS_FULL_URI` and `AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE` (read 2026-11-09).
+  proxy.py stays standard library only, so it signs SigV4 itself and reads static keys or that endpoint;
+  web identity (IRSA) is not read. Go uses the AWS SDK's default chain. Both honour
+  `AWS_ENDPOINT_URL_BEDROCK_RUNTIME`, which is how the conformance stub is reached; the stub checks the
+  signature against its own SigV4, which the SDK-signed Go build also passes.
+- **New Go modules, 2026-11-09:** `github.com/aws/aws-sdk-go-v2` v1.47.8, `.../config` v1.33.16 and
+  `.../service/bedrockruntime` v1.63.12, the latest releases, for ApplyGuardrail with the SDK's credential
+  chain and signing; `golang.org/x/text` v0.42.0, already in the graph, becomes direct for NFKD folding.
+
+Conformance in `test_conduct_floor.py` against both builds, with Bedrock stubbed; Go's `TestConduct*`,
+`TestNoGuardrailBlocksNothing`, `TestConductGuardrail` and `TestDefaultProfanityIsProxyPysList`. Twelve
+mutants in `mutation_check.py`.

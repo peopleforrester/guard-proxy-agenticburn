@@ -4,7 +4,11 @@
 package guard
 
 import (
+	"context"
+	"os"
 	"reflect"
+	"regexp"
+	"strings"
 	"testing"
 )
 
@@ -43,5 +47,116 @@ func TestConductWithAnEmptyListChecksNothing(t *testing.T) {
 	c := NewConduct(nil)
 	if c.On() || c.Matches("shit") != nil || c.Mask("shit") != "shit" {
 		t.Error("an empty list checked something")
+	}
+}
+
+// rot13 decodes the spike's fixtures, which keep their terms ROT13-encoded.
+func rot13(s string) string {
+	return strings.Map(func(r rune) rune {
+		switch {
+		case 'a' <= r && r <= 'z':
+			return 'a' + (r-'a'+13)%26
+		case 'A' <= r && r <= 'Z':
+			return 'A' + (r-'A'+13)%26
+		}
+		return r
+	}, s)
+}
+
+// spikeTerms is the default list as the spike's floor reads it, from the conformance fixture's own source:
+// config holds it, and config imports this package.
+func spikeTerms(t *testing.T) []string {
+	t.Helper()
+	raw, err := os.ReadFile("../../proxy.py")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := regexp.MustCompile(`(?s)_DEFAULT_PROFANITY = codecs\.decode\((.*?)"rot13",\n\)`).FindSubmatch(raw)
+	if m == nil {
+		t.Fatal("proxy.py holds no _DEFAULT_PROFANITY")
+	}
+	var b strings.Builder
+	for _, q := range regexp.MustCompile(`"([^"]*)"`).FindAllSubmatch(m[1], -1) {
+		b.Write(q[1])
+	}
+	return strings.Split(rot13(b.String()), ",")
+}
+
+func TestConductMatchesTheSpikesMaskOnTheAbuseSet(t *testing.T) {
+	c := NewConduct(spikeTerms(t))
+	raw, err := os.ReadFile("../../conformance/coc_floor/abuse-set.rot13.tsv")
+	if err != nil {
+		t.Fatal(err)
+	}
+	caught := 0
+	for _, line := range strings.Split(strings.TrimSpace(string(raw)), "\n") {
+		if strings.HasPrefix(line, "#") {
+			continue
+		}
+		f := strings.Split(line, "\t")
+		text, want := rot13(f[1]), rot13(f[2])
+		if got := c.Mask(text); got != want {
+			// ROT13-encoded, as the fixture keeps them, so a failure prints no term.
+			t.Errorf("%s: Mask = %q; want %q", f[0], rot13(got), f[2])
+		}
+		if want != text {
+			caught++
+		}
+	}
+	if caught != 111 {
+		t.Errorf("caught %d of the abuse set; the spike's floor catches 111", caught)
+	}
+}
+
+func TestConductFoldsEvasions(t *testing.T) {
+	c := NewConduct([]string{"fuck", "cunt", "puta", "kill yourself"})
+	for _, tc := range []struct{ text, want string }{
+		{"fuuuuck", "[redacted]"},
+		{"f*ck it", "[redacted] it"},
+		{"FUCK", "[redacted]"},
+		{"f u c k", "[redacted]"},
+		{"c.u.n.t!", "[redacted]!"},
+		{"fu\u200bck", "[redacted]"},
+		{"ｆｕｃｋ", "[redacted]"},
+		{"fúck", "[redacted]"},
+		{"fuсk", "[redacted]"}, // a Cyrillic "с"
+		{"kill   yourself", "[redacted]"},
+		{"k1ll y0urs3lf", "[redacted]"},
+		{"put a hat on", "put a hat on"},
+		{"fucks", "[redacted]"},
+		{"fuckx", "fuckx"},
+		{"xfuck fuck", "xfuck [redacted]"},
+		{"«fuck»", "«[redacted]»"},
+	} {
+		if got := c.Mask(tc.text); got != tc.want {
+			t.Errorf("Mask(%q) = %q; want %q", tc.text, got, tc.want)
+		}
+	}
+}
+
+func TestConductSpansAreTheOriginalBytes(t *testing.T) {
+	c := NewConduct([]string{"fuck"})
+	text := "é ｆｕ\u200bｃｋ!"
+	got := c.Matches(text)
+	want := [][]int{{3, len(text) - 1}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("Matches(%q) = %v; want %v", text, got, want)
+	}
+}
+
+func TestConductTermThatFoldsToNothingIsNoTerm(t *testing.T) {
+	c := NewConduct([]string{"\u200b", " "})
+	if c.On() || c.Matches("anything") != nil {
+		t.Error("a term of zero-width characters matched")
+	}
+}
+
+func TestNoGuardrailBlocksNothing(t *testing.T) {
+	g, err := NewGuardrail(context.Background(), "", "")
+	if g != nil || err != nil {
+		t.Fatalf("NewGuardrail with no id = %v, %v; want nil, nil", g, err)
+	}
+	if blocked, err := g.Blocks(context.Background(), "anything"); blocked || err != nil {
+		t.Errorf("a nil Guardrail: Blocks = %v, %v", blocked, err)
 	}
 }

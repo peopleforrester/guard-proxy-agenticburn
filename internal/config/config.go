@@ -30,6 +30,7 @@ type Config struct {
 	Chat     Chat     `yaml:"chat"`
 	Spend    Spend    `yaml:"spend"`
 	Feed     Feed     `yaml:"feed"`
+	Conduct  Conduct  `yaml:"conduct"`
 	Topic    Topic    `yaml:"topic"`
 	CORS     CORS     `yaml:"cors"`
 	Controls Controls `yaml:"controls"`
@@ -108,6 +109,17 @@ type Feed struct {
 	Profanity []string `yaml:"profanity"`
 }
 
+// Conduct is the code-of-conduct check's Bedrock guardrail on the /chat prompt (guard-proxy-agenticburn#81).
+// Its term list is Feed.Profanity, the wall's own.
+type Conduct struct {
+	// GuardrailID names the Bedrock guardrail that a /chat prompt the terms pass is sent to (ApplyGuardrail,
+	// source INPUT). Empty sends no prompt to Bedrock. The region and the credentials are the AWS SDK's own:
+	// AWS_REGION and, in the workshop, EKS Pod Identity.
+	GuardrailID string `yaml:"guardrail_id"`
+	// GuardrailVersion is the guardrail's version, a number or DRAFT, required with GuardrailID.
+	GuardrailVersion string `yaml:"guardrail_version"`
+}
+
 // Topic is the on-topic guard's phrase lists and refusal. Its on/off state is Guards.Topic.
 type Topic struct {
 	Off     []string `yaml:"off"`
@@ -160,12 +172,50 @@ var tierModelIDs = map[string]string{
 	"opus":   "us.anthropic.claude-opus-4-8",
 }
 
-// DefaultProfanity is the feed's default wordlist. Each inflected form and each compound that hides a
-// term mid-word is its own entry, because endings are not generated: "spic" plus "es" is "spices".
-const DefaultProfanity = "fuck,fucks,fucked,fucker,fucking,fuckin,motherfucker,motherfucking," +
-	"shit,shitty,shitting,bullshit,shithead,cunt,bitch,bitches,bitching,bastard," +
-	"dick,dickhead,cock,pussy,asshole,dumbass,jackass,wanker,twat," +
-	"nigger,faggot,retard,retarded,tranny,slut,whore,rape,raped,rapist,kike,spic,chink"
+// DefaultProfanity is the feed's and the code-of-conduct check's default list: the spike's 144 entries
+// (guard-proxy-agenticburn#81, from Unleash_an_Agent_Watch_It_Burn#1267's terms-proposed.rot13), the same
+// as proxy.py's _DEFAULT_PROFANITY. Each inflected form and each compound that hides a term mid-word is its
+// own entry, because endings are not generated: "spic" plus "es" is "spices". It is kept ROT13-encoded, as
+// the spike keeps it, so the public tree does not display the terms; PROFANITY_LIST is read as plain text.
+var DefaultProfanity = rot13(defaultProfanityROT13)
+
+const defaultProfanityROT13 = "" +
+	// expletives
+	"shpx,shpxf,shpxrq,shpxre,shpxref,shpxvat,shpxva,shpxnoyr,shpxsnpr,shpxurnq,shpxjvg,spx,shx,shd," +
+	"sipx,cuhpx,zbgureshpxre,zbgureshpxvat,fuvg,fuvgf,fuvggl,fuvggvat,fuvggrq,fuvgurnq,fuvgsnpr," +
+	"ohyyfuvg,ubefrfuvg,qvcfuvg,phag,ovgpu,ovgpurf,ovgpuvat,ovngpu,onfgneq,qvpx,qvpxurnq,pbpx," +
+	"pbpxfhpxre,chffl,nffubyr,nefrubyr,qhzonff,wnpxnff,jnaxre,gjng,cevpx,fgsh,tgsb,jgs," +
+	// slurs
+	"avttre,avttn,snttbg,snt,qlxr,genaal,genaavr,furznyr,ergneq,ergneqrq,gneq,fcnm,zbatbybvq,xvxr," +
+	"fcvp,puvax,tbbx,jrgonpx,ornare,enturnq,gbjryurnq,cnxv,pbba,jbc,qntb,ubaxl,erqfxva,mvccreurnq," +
+	// sexual
+	"frk,cbea,cbeab,oybjwbo,unaqwbo,phz,phzfubg,qvyqb,ubeal,gvgf,gvggvrf,obbof,ahqrf,rebgvp," +
+	"guerrfbzr,nany frk,wrex bss,wnpx bss,anxrq obql,fyhg,juber,encr,encrq,encvfg,encvat," +
+	// threats and hate phrases
+	"xvyy lbhefrys,xvyy hefrys,xlf,unat lbhefrys,urvy uvgyre,fvrt urvy,juvgr cbjre,tnf gur wrjf," +
+	// Spanish
+	"craqrwb,craqrwn,zvreqn,chgn,chgb,pnoeba,puvatn,puvatnqn,znevpba,wbqre,pbñb,iretn," +
+	// French
+	"chgnva,zreqr,pbaaneq,fnybcr,raphyr,raphyre,chgr," +
+	// German
+	"fpurvffr,fpurvßr,uherafbua,sbgmr,jvpufre,svpx qvpu,fpuynzcr," +
+	// Portuguese
+	"pnenyub,cbeen,ivnqb,ohprgn," +
+	// Italian
+	"inssnaphyb,fgebamb,pnmmb,chggnan"
+
+// rot13 rotates each ASCII letter thirteen places, as Python's "rot13" codec does, and leaves the rest.
+func rot13(s string) string {
+	return strings.Map(func(r rune) rune {
+		switch {
+		case 'a' <= r && r <= 'z':
+			return 'a' + (r-'a'+13)%26
+		case 'A' <= r && r <= 'Z':
+			return 'A' + (r-'A'+13)%26
+		}
+		return r
+	}, s)
+}
 
 // UnmarshalYAML records which prices the file set, so an unset one still defaults from the tier.
 func (s *Spend) UnmarshalYAML(n *yaml.Node) error {
@@ -243,6 +293,8 @@ func Load(path string, getenv func(string) (string, bool)) (Config, error) {
 	c.Blocklist = guard.Normalize(c.Blocklist)
 	c.Feed.Profanity = []string(guard.Normalize(c.Feed.Profanity))
 	c.Topic.Off, c.Topic.On = trimList(c.Topic.Off), trimList(c.Topic.On)
+	c.Conduct.GuardrailID = strings.TrimSpace(c.Conduct.GuardrailID)
+	c.Conduct.GuardrailVersion = strings.TrimSpace(c.Conduct.GuardrailVersion)
 	c.CORS.ConsoleOrigins = trimList(c.CORS.ConsoleOrigins)
 	c.Spend.resolve()
 	if err := c.validate(); err != nil {
@@ -317,6 +369,12 @@ func applyEnv(c *Config, getenv func(string) (string, bool)) error {
 	}
 	if v, ok := getenv("PROFANITY_LIST"); ok {
 		c.Feed.Profanity = SplitList(v)
+	}
+	if v, ok := getenv("CONDUCT_GUARDRAIL_ID"); ok {
+		c.Conduct.GuardrailID = v
+	}
+	if v, ok := getenv("CONDUCT_GUARDRAIL_VERSION"); ok {
+		c.Conduct.GuardrailVersion = v
 	}
 	if v, ok := getenv("TOPIC_OFF_LIST"); ok {
 		c.Topic.Off = SplitList(v)
@@ -547,6 +605,10 @@ func (c Config) validate() error {
 	}
 	if strings.TrimSpace(c.Spend.StorePath) == "" {
 		return errors.New("config: spend.store_path (or SPEND_STORE_PATH) is required: the spend tally is kept on disk")
+	}
+	if c.Conduct.GuardrailID != "" && c.Conduct.GuardrailVersion == "" {
+		return errors.New("config: conduct.guardrail_id (or CONDUCT_GUARDRAIL_ID) is set without " +
+			"conduct.guardrail_version (or CONDUCT_GUARDRAIL_VERSION): ApplyGuardrail needs both (a version number or DRAFT)")
 	}
 	if c.Chat.TurnTimeout.Duration < 0 {
 		return fmt.Errorf("config: chat turn_timeout %v must not be negative", c.Chat.TurnTimeout.Duration)

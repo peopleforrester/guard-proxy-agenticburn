@@ -296,3 +296,57 @@ func TestAlwaysRedact(t *testing.T) {
 		t.Fatalf("a pattern that does not compile: %q; want it named", msg)
 	}
 }
+
+func with(env map[string]string, more map[string]string) map[string]string {
+	out := map[string]string{}
+	for _, m := range []map[string]string{env, more} {
+		for k, v := range m {
+			out[k] = v
+		}
+	}
+	return out
+}
+
+func TestConductGuardrail(t *testing.T) {
+	if c := mustLoad(t, "", agentOnly); c.Conduct != (Conduct{}) {
+		t.Errorf("default Conduct = %+v; want no guardrail", c.Conduct)
+	}
+	c := mustLoad(t, "", with(agentOnly, map[string]string{
+		"CONDUCT_GUARDRAIL_ID": " gr-1 ", "CONDUCT_GUARDRAIL_VERSION": "DRAFT"}))
+	if c.Conduct != (Conduct{GuardrailID: "gr-1", GuardrailVersion: "DRAFT"}) {
+		t.Errorf("Conduct = %+v", c.Conduct)
+	}
+	c = mustLoad(t, writeFile(t, "conduct:\n  guardrail_id: gr-2\n  guardrail_version: \"4\"\n"), agentOnly)
+	if c.Conduct != (Conduct{GuardrailID: "gr-2", GuardrailVersion: "4"}) {
+		t.Errorf("Conduct from the file = %+v", c.Conduct)
+	}
+	if msg := loadErr(t, "", with(agentOnly, map[string]string{"CONDUCT_GUARDRAIL_ID": "gr-1"})); !strings.Contains(msg, "CONDUCT_GUARDRAIL_VERSION") {
+		t.Errorf("an id without a version: %q", msg)
+	}
+}
+
+func TestDefaultProfanityIsProxyPysList(t *testing.T) {
+	raw, err := os.ReadFile("../../proxy.py")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := string(raw)
+	start := strings.Index(src, "_DEFAULT_PROFANITY = codecs.decode(")
+	end := strings.Index(src[start:], `"rot13",`)
+	if start < 0 || end < 0 {
+		t.Fatal("proxy.py holds no _DEFAULT_PROFANITY")
+	}
+	var b strings.Builder
+	for _, line := range strings.Split(src[start:start+end], "\n") {
+		if line = strings.TrimSpace(line); strings.HasPrefix(line, `"`) {
+			b.WriteString(strings.Trim(strings.TrimSuffix(line, ","), `"`))
+		}
+	}
+	// Reported ROT13-encoded, so a failure prints no term.
+	if got := b.String(); got != defaultProfanityROT13 {
+		t.Errorf("DefaultProfanity differs from proxy.py's:\n%q\n%q", defaultProfanityROT13, got)
+	}
+	if n := len(SplitList(DefaultProfanity)); n != 144 {
+		t.Errorf("DefaultProfanity has %d terms; the spike's list has 144", n)
+	}
+}

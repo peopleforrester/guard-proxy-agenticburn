@@ -88,6 +88,19 @@ func chatRequest(raw []byte) (prompt any, session, witch string) {
 	return prompt, session, strings.TrimSpace(witch)
 }
 
+// refuseForConduct answers a /chat prompt the code-of-conduct check refused. The turn carries the gen_ai
+// attributes and the chat span a turn the agent answers does, so Agent Observability lists it beside the
+// others, but the prompt it records is masked (#81): the trace shown on stage never carries the term. The
+// output is the refusal the guest read.
+func (s *Server) refuseForConduct(ctx context.Context, w http.ResponseWriter, masked string) {
+	attrs := append(s.genAI(s.boundModel(ctx)), s.inputMessages(masked)...)
+	attrs = append(attrs, s.outputMessages(guard.ConductRefusal)...)
+	trace.SpanFromContext(ctx).SetAttributes(attrs...)
+	_, chatSpan := s.tracer.Start(ctx, "chat", trace.WithSpanKind(trace.SpanKindInternal), trace.WithAttributes(attrs...))
+	chatSpan.End()
+	send(w, http.StatusOK, chatReply{Reply: guard.ConductRefusal})
+}
+
 // chatTurn answers the turn, or returns errTurnExpired without answering when a guard stage ran out of
 // time. A forward the deadline cuts off answers the 502 itself.
 func (s *Server) chatTurn(ctx context.Context, w http.ResponseWriter, r *http.Request) error {
@@ -115,10 +128,20 @@ func (s *Server) chatTurn(ctx context.Context, w http.ResponseWriter, r *http.Re
 	prompt = feed.WithoutProbe(prompt)
 	// The code-of-conduct check, whatever the guards say (#78): the prompt reaches nothing past here, and the
 	// refusal names no term. The feed above already holds it masked, and the wall drops a masked one. Like
-	// the always-on redaction it never sets guarded and stamps no decision.
+	// the always-on redaction it never sets guarded and stamps no decision. Then the Bedrock guardrail, when
+	// one is configured, on a prompt the terms pass (#81); it fails open, because the terms still hold.
 	if len(s.conduct.Matches(prompt)) > 0 {
 		s.log.InfoContext(ctx, "chat input refused by the code-of-conduct check", "event", "conduct_refused")
-		send(w, http.StatusOK, chatReply{Reply: guard.ConductRefusal})
+		s.refuseForConduct(ctx, w, s.conduct.Mask(prompt))
+		return nil
+	}
+	if blocked, err := s.guardrail.Blocks(ctx, prompt); err != nil {
+		s.log.WarnContext(ctx, "code-of-conduct guardrail gave no verdict; the prompt goes on: "+err.Error(),
+			"event", "conduct_guardrail_error")
+	} else if blocked {
+		s.log.InfoContext(ctx, "chat input refused by the code-of-conduct guardrail", "event", "conduct_refused")
+		// The guardrail names no span, so the whole prompt is the span.
+		s.refuseForConduct(ctx, w, "[redacted]")
 		return nil
 	}
 	// Read before any guard: a message a guard blocks still shows the guest knew the card's folder.
