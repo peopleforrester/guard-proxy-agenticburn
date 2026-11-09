@@ -181,6 +181,15 @@ call. A redaction by it alone leaves `guarded` false, stamps no `witb.guard.deci
 build compiles it as RE2, so lookarounds and backreferences are refused there, and `\w`, `\d` and `\s`
 are ASCII.
 
+The code-of-conduct check runs on every `POST /chat` turn whatever the guard toggles say (#78). A prompt
+carrying a `PROFANITY_LIST` term (the prompt wall's list, whole words, plural included) reaches no guard,
+limit or agent: it is answered "Let's keep it kind: BurritoBot only answers within the event's code of
+conduct.", which names no term, and logs event `conduct_refused`. Every term in the agent's reply is
+replaced with `[redacted]` after `ALWAYS_REDACT` and before the output guard, logging `conduct_masked`. No
+`/toggle` key names it; `/controls` reports it as `always_on: {"code_of_conduct": true}`, apart from the
+`ai` guards, and false only when `PROFANITY_LIST` is set empty. Like `ALWAYS_REDACT` it leaves `guarded`
+false and stamps no `witb.guard.decision`. It runs in-process, and the A2A path does not run it.
+
 `PROXY_TIMEOUT` bounds each upstream call. A `POST /chat` turn can make up to seven in a row: the
 injection classifier, the topic classifier, the forward, the three self-heal retries and the output
 scrub. `TURN_TIMEOUT` (seconds, default `0` for none) is one deadline for the whole turn: each call

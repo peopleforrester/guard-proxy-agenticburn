@@ -942,3 +942,37 @@ Pinned at `==0.66b1`, the contrib release that matches `opentelemetry-sdk==1.45.
 (2026-10-29) requires `opentelemetry-semantic-conventions==0.66b2`, which the SDK pin excludes. Dev only;
 `proxy.py` reads the suppression key from `opentelemetry.context` in the API, so it needs no
 instrumentation package to run.
+
+## 2026-11-09: a code-of-conduct check on every /chat prompt and reply, whatever the toggles say
+
+Michael, 2026-11-09 (Unleash_an_Agent_Watch_It_Burn#1267): "Make sure that a lot of the negative keywords
+never show up in the system no matter what the state of the guardrails is." guard-proxy-agenticburn#78 asks
+for it on `/chat`. Both builds now refuse a prompt carrying a term before any guard, limit, cap or the agent
+sees it, answering "Let's keep it kind: BurritoBot only answers within the event's code of conduct.", and
+mask every term in the agent's reply with `[redacted]` after `ALWAYS_REDACT` and before the output guard.
+The choices:
+
+- **The wall's own list.** It reads `PROFANITY_LIST` (default `_DEFAULT_PROFANITY`, Go's
+  `config.DefaultProfanity`) through the same whole-word pattern, so the wall, the chat page's saved rail
+  and the chat agree on what a term is. The workshop sets no `PROFANITY_LIST` (gitops/ai-layer/resources.yaml
+  on Unleash staging, read 2026-11-09), so the default list applies. A list set empty turns the check off,
+  and `/controls` then says so rather than showing it on.
+- **One matcher.** `conduct_matches()` in proxy.py and `guard.Conduct.Matches` in Go return the spans; the
+  refusal and the mask both read only it, so the spike's choice of a classifier replaces it in one place.
+  `moderate()` keeps its own pass, so the feed's behaviour is unchanged.
+- **Not a stage guard.** No `/toggle` key names it, `/guards` and the `ai` badges do not list it, and
+  `/controls` reports it under a separate `always_on: {code_of_conduct: …}`. Like `ALWAYS_REDACT`, a refusal
+  or mask by it alone leaves `guarded` false and stamps no `witb.guard.decision`; it logs event
+  `conduct_refused` or `conduct_masked`.
+- **First on the prompt**, after the feed has read it (the wall shows it masked, and prompts-agenticburn
+  drops a masked prompt) and before the pantry read, so a refused prompt sets no per-conversation state and
+  takes no rate-limit slot.
+- **`/chat` only.** The A2A pass-through is the attack surface the stage guards own, and the issue names
+  `/chat`.
+- **The stage's prompts pass.** Every prompt in Unleash's `/kubecon` brief (gitops/ai-layer/web/kubecon.html),
+  `verify/kubecon_probe.py`, `challenges/PROMPT-CATALOG.md`, the challenge `agent-prompt*.txt` files and the
+  KubeCon fallback `prompts.yaml` were scanned with the default list on 2026-11-09: none matches.
+  `test_conduct.py` sends the /kubecon asks and common injection openers and pins that each reaches the agent.
+
+Conformance in `test_conduct.py`, against both builds; Go's `TestConduct*`. `test_prompt_feed.py`'s
+"a term reaches the bot unchanged" now pins that it never reaches the bot. Six mutants in `mutation_check.py`.

@@ -47,6 +47,8 @@ type Server struct {
 	turnTimeout  time.Duration
 	// alwaysRedact runs on every reply whatever the guards say (#1092); nil redacts nothing.
 	alwaysRedact *regexp.Regexp
+	// conduct is the code-of-conduct check every /chat prompt and reply gets whatever the guards say (#78).
+	conduct guard.Conduct
 
 	meter      *spend.Meter
 	limiter    *spend.Limiter
@@ -106,6 +108,7 @@ func New(cfg config.Config, log *slog.Logger, store *spend.Store) (*Server, erro
 		topicRefusal: cfg.Topic.Refusal,
 		turnTimeout:  cfg.Chat.TurnTimeout.Duration,
 		alwaysRedact: alwaysRedact,
+		conduct:      guard.NewConduct(cfg.Feed.Profanity),
 
 		meter:      meter,
 		limiter:    spend.NewLimiter(cfg.Spend.RateLimitRPM, cfg.Spend.RateLimitSessionRPM),
@@ -158,7 +161,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			send(w, http.StatusOK, s.guardState())
 		case strings.HasPrefix(uri, "/controls"):
 			s.cors(w, r)
-			send(w, http.StatusOK, map[string]any{"ai": s.guardState(), "infra": s.controls.Read(), "host": s.publicHost})
+			// "always_on" carries what no toggle turns off, apart from "ai", so the strip never draws the
+			// code-of-conduct check (#78) as a stage guard. It is false only when PROFANITY_LIST is set empty.
+			send(w, http.StatusOK, map[string]any{"ai": s.guardState(), "infra": s.controls.Read(),
+				"always_on": map[string]bool{"code_of_conduct": s.conduct.On()}, "host": s.publicHost})
 		case strings.HasPrefix(uri, "/toggle"):
 			s.cors(w, r)
 			s.toggle(w, r)

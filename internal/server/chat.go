@@ -22,6 +22,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/peopleforrester/guard-proxy-agenticburn/internal/feed"
+	"github.com/peopleforrester/guard-proxy-agenticburn/internal/guard"
 	"github.com/peopleforrester/guard-proxy-agenticburn/internal/spend"
 	"github.com/peopleforrester/guard-proxy-agenticburn/internal/telemetry/semconv"
 )
@@ -112,6 +113,14 @@ func (s *Server) chatTurn(ctx context.Context, w http.ResponseWriter, r *http.Re
 	s.feed.Record(prompt, witch)
 	// The feed has read the marker; every guard, the telemetry and the agent see the guest's text.
 	prompt = feed.WithoutProbe(prompt)
+	// The code-of-conduct check, whatever the guards say (#78): the prompt reaches nothing past here, and the
+	// refusal names no term. The feed above already holds it masked, and the wall drops a masked one. Like
+	// the always-on redaction it never sets guarded and stamps no decision.
+	if len(s.conduct.Matches(prompt)) > 0 {
+		s.log.InfoContext(ctx, "chat input refused by the code-of-conduct check", "event", "conduct_refused")
+		send(w, http.StatusOK, chatReply{Reply: guard.ConductRefusal})
+		return nil
+	}
 	// Read before any guard: a message a guard blocks still shows the guest knew the card's folder.
 	pantry := s.pantryShut(session, prompt)
 	g := s.guardState()
@@ -312,6 +321,11 @@ func (s *Server) chatTurn(ctx context.Context, w http.ResponseWriter, r *http.Re
 	if out := s.redact(reply); out != reply {
 		reply = out
 		s.log.InfoContext(ctx, "always-on redaction modified response content", "event", "always_redact")
+	}
+	// Then the code-of-conduct mask, output guard or not (#78); it never sets guarded either.
+	if out := s.conduct.Mask(reply); out != reply {
+		reply = out
+		s.log.InfoContext(ctx, "code-of-conduct check masked response content", "event", "conduct_masked")
 	}
 	isGuarded := false
 	if g.Output && reply != "" {

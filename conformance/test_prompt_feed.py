@@ -142,10 +142,12 @@ def test_feed_masks_inflected_and_compound_terms(start_proxy, agent):
     assert feed(p)["prompts"] == ["this [redacted] [redacted], these [redacted], two [redacted]"]
 
 
-def test_feed_masks_a_term_but_the_bot_gets_it_unchanged(start_proxy, agent):
+def test_feed_masks_a_term_the_bot_never_gets(start_proxy, agent):
+    # The code-of-conduct check (#78) refuses the prompt after the feed has read it, so the wall holds it
+    # masked and the agent nothing.
     p = start_proxy(STREAM_PROMPTS="on")
     p.chat("this shit is good")
-    assert forwarded_text(agent) == "this shit is good"
+    assert agent.calls() == []
     assert feed(p)["prompts"] == ["this [redacted] is good"]
 
 

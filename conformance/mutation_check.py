@@ -149,6 +149,28 @@ MUTANTS: list[tuple[str, str, str]] = [
     ),
     ("always-on redaction marks an empty match", 'REDACTED if m.group(0) else ""', "REDACTED"),
     ("a blank ALWAYS_REDACT compiles", "if _ALWAYS_REDACT_SRC.strip() else None", "if _ALWAYS_REDACT_SRC else None"),
+    ("chat code-of-conduct refusal dropped", "        if conduct_matches(prompt):\n", "        if False:\n"),
+    (
+        "chat code-of-conduct refusal skipped with a guard on",
+        "        if conduct_matches(prompt):\n",
+        "        if conduct_matches(prompt) and not any(GUARDS.values()):\n",
+    ),
+    ("chat code-of-conduct mask dropped", "            masked = conduct_mask(reply)\n", "            masked = reply\n"),
+    (
+        "chat code-of-conduct mask left to the output guard",
+        "            masked = conduct_mask(reply)\n",
+        '            masked = reply if GUARDS["output"] else conduct_mask(reply)\n',
+    ),
+    (
+        "code-of-conduct mask keeps the last term",
+        "    for start, end in reversed(conduct_matches(text)):",
+        "    for start, end in reversed(conduct_matches(text)[:-1]):",
+    ),
+    (
+        "controls report the code-of-conduct check unconditionally",
+        '"always_on": {"code_of_conduct": _PROFANITY_RE is not None},',
+        '"always_on": {"code_of_conduct": True},',
+    ),
     (
         "budget ignores session",
         "session_spend = _session_cost.get(session, 0.0) if session else spend",

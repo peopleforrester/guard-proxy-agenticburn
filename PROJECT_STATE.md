@@ -188,8 +188,14 @@ Follow-up of #73. On the A2A passthrough the always-on redaction now reads every
 data part, whichever tool wrote it; the output guard still reads text parts and the ask_user question only.
 Decision recorded 2026-11-08; conformance in `test_a2a_tool_payloads.py` against the recorded tool-call task.
 
+### Agent-task #78: an always-on code-of-conduct check on /chat input and reply
+Asked by Unleash_an_Agent_Watch_It_Burn#1267. Both builds refuse a /chat prompt carrying a `PROFANITY_LIST`
+term before any guard or the agent, and mask every term in the reply, whatever /toggle says; `/controls`
+reports it under `always_on`. Decision recorded 2026-11-09; conformance in `test_conduct.py`. Unleash needs
+a repin and a comment on #1267 naming the commit once it is on main.
+
 ## Branch & Tests
-- Branch: agent/75-18534 (#75)
+- Branch: agent/78-19586 (#78)
 - Working tree: clean
 - Last CI: green on 3407cef (staging and main)
 
@@ -242,3 +248,4 @@ _(append-only. Each phase transition adds one line, oldest first.)_
 - 2026-11-08 #75 implemented and verified locally (2.3) on agent/75-18534: ruff, gofmt, go vet and go test ./... green, proxy.py suite 559/559 and Go suite 559/559; the new redaction tests fail against both base builds, and the four new mutants and the eight existing A2A-walk mutants are caught against test_a2a_tool_payloads.py, test_a2a_ask_user.py and test_always_redact.py, the full mutation check not run
 - 2026-11-08 #70 implemented and verified locally (2.3) on agent/70-18593: ruff, gofmt, go vet and go test ./... green, proxy.py suite 561/561 and Go suite 561/561; the two new conformance tests fail against the base proxy.py, and the new mutant and the two feed mutants beside it are caught against test_prompt_feed.py, the full mutation check stopped after 8/124 caught (its ETA was about two hours)
 - 2026-11-08 #76 implemented and verified locally (2.3) on agent/76-18682: ruff, gofmt, go vet and go test ./... green, proxy.py suite 576/576 and Go suite 576/576; /controls carries agency_scoped in both builds, the new conformance tests fail against the base proxy.py, and the seven new mutants are caught against test_admin_endpoints.py, the full mutation check not run; both live clusters read false (the shipped Role, least privilege off)
+- 2026-11-09 #78 implemented and verified locally (2.3) on agent/78-19586: ruff check, gofmt, go vet and go test ./... green; test_conduct.py, test_admin_endpoints.py and test_prompt_feed.py 164/164 against proxy.py and against the Go build; the new tests fail against the base proxy.py, and the six new mutants are caught against test_conduct.py and test_admin_endpoints.py, the full mutation check not run

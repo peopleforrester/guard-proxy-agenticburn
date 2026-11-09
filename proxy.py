@@ -839,6 +839,35 @@ def _profanity_pattern(terms):
 
 _PROFANITY_RE = _profanity_pattern(PROFANITY)
 
+# The code-of-conduct check on /chat (guard-proxy-agenticburn#78, asked by Unleash_an_Agent_Watch_It_Burn#1267).
+# Michael, 2026-11-09: "Make sure that a lot of the negative keywords never show up in the system no matter
+# what the state of the guardrails is." So it runs on every /chat turn whatever /toggle says, and no toggle
+# names it: a prompt carrying a term is refused before any guard, cap or the agent sees it, and every term in
+# the agent's reply is masked before the reply leaves, output guard or not. It is the wall's own list above,
+# so the wall, the chat page's saved rail and the chat agree on what a term is. The stage guards stay exactly
+# as they were, so the attacks still land with every guard off: the check is for abuse, and none of the
+# stage's prompts carries a term. Like ALWAYS_REDACT it never sets `guarded` and stamps no
+# witb.guard.decision, because both say a toggleable guard acted. In-process, so no network call.
+CONDUCT_REFUSAL = "Let's keep it kind: BurritoBot only answers within the event's code of conduct."
+
+
+def conduct_matches(text):
+    """The (start, end) spans of text that break the event's code of conduct, in order.
+
+    The check's one matcher: the refusal and the mask both read it, so a classifier (the research spike in
+    Unleash_an_Agent_Watch_It_Burn#1267 weighs LLM Guard's Toxicity scanner and Bedrock Guardrails) replaces
+    the term list here alone. A classifier with no spans answers the whole text as one."""
+    if _PROFANITY_RE is None or not text:
+        return []
+    return [m.span() for m in _PROFANITY_RE.finditer(text)]
+
+
+def conduct_mask(text):
+    """text with every code-of-conduct span replaced by [redacted], the wall's own mark."""
+    for start, end in reversed(conduct_matches(text)):
+        text = text[:start] + "[redacted]" + text[end:]
+    return text
+
 # Personal data on the wall (Unleash_an_Agent_Watch_It_Burn#646). The wall is projected, so a prompt that
 # carries an email, a phone or card number, or a street address goes up redacted. The prompt itself still
 # goes to the bot unchanged; only the feed copy is masked. Deterministic like the wordlist, and a floor in
@@ -1393,7 +1422,10 @@ class Handler(BaseHTTPRequestHandler):
             # "host" tells the page which cluster answered. The community cluster is shared by the
             # whole room, and a student who does not know that reads someone else's prompt as their
             # own bot misbehaving (#292). Carried on the poll the badges already make.
+            # "always_on" carries what no toggle turns off, apart from "ai", so the strip never draws the
+            # code-of-conduct check (#78) as a stage guard. It is false only when PROFANITY_LIST is set empty.
             self._send(200, {"ai": ai, "infra": read_controls(),
+                             "always_on": {"code_of_conduct": _PROFANITY_RE is not None},
                              "host": os.environ.get("WIB_PUBLIC_HOST", "")})
             return
         if self.path.startswith("/toggle"):
@@ -1779,6 +1811,12 @@ class Handler(BaseHTTPRequestHandler):
         record_prompt(prompt, witch)
         # The feed has read the marker; every guard, the telemetry and the agent see the guest's text.
         prompt = without_probe(prompt)
+        # The code-of-conduct check, whatever the toggles say (#78): the prompt reaches nothing past here, and
+        # the refusal names no term. The feed above already holds it masked, and the wall drops a masked one.
+        if conduct_matches(prompt):
+            log.info("chat input refused by the code-of-conduct check", extra={"event": "conduct_refused"})
+            self._send(200, {"reply": CONDUCT_REFUSAL, "guarded": False, "input_tokens": 0, "output_tokens": 0})
+            return
         # Read before any guard: a message a guard blocks still shows the guest knew the card's folder.
         pantry = pantry_shut(session, prompt)
         # Input guards and the topic guard (same toggles as the A2A path), then rate/cost cap. A blocked
@@ -2100,6 +2138,11 @@ class Handler(BaseHTTPRequestHandler):
             if redacted != reply:
                 reply = redacted
                 log.info("always-on redaction modified response content", extra={"event": "always_redact"})
+            # Then the code-of-conduct mask, output guard or not (#78); it never sets guarded either.
+            masked = conduct_mask(reply)
+            if masked != reply:
+                reply = masked
+                log.info("code-of-conduct check masked response content", extra={"event": "conduct_masked"})
             guarded = False
             if GUARDS["output"] and reply:
                 scrubbed = output_scrub(reply, deadline)

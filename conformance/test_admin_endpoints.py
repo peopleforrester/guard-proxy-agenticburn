@@ -229,6 +229,7 @@ def test_controls_without_cluster_credentials(start_proxy):
             "rbac_scoped": None,
             "agency_scoped": None,
         },
+        "always_on": {"code_of_conduct": True},
         "host": "michael-student.agenticburn.com",
     }
 
