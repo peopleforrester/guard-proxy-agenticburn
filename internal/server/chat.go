@@ -336,8 +336,9 @@ func (s *Server) chatTurn(ctx context.Context, w http.ResponseWriter, r *http.Re
 			reply = ""
 		}
 	}
-	// The chat span records what the model said; the root, below, what left the proxy.
-	chatSpan.SetAttributes(s.outputMessages(reply)...)
+	// The chat span records what the model said, with the code-of-conduct terms masked, since they never
+	// show up anywhere; the root, below, what left the proxy (guard-proxy-agenticburn#82).
+	chatSpan.SetAttributes(s.outputMessages(s.conduct.Mask(reply))...)
 	// The always-on redaction first, whatever the guards say (#1092). It never sets guarded and stamps no
 	// decision: both say a toggleable guard acted, and the leaderboard reads output_redacted as the output
 	// guard being on.

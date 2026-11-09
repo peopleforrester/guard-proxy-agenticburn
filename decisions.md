@@ -1022,3 +1022,24 @@ prompts and replies. The choices:
 Conformance in `test_conduct_floor.py` against both builds, with Bedrock stubbed; Go's `TestConduct*`,
 `TestNoGuardrailBlocksNothing`, `TestConductGuardrail` and `TestDefaultProfanityIsProxyPysList`. Twelve
 mutants in `mutation_check.py`.
+
+## 2026-11-09: an answered /chat turn's chat span records the reply with the code-of-conduct terms masked
+
+guard-proxy-agenticburn#82. The chat span's `gen_ai.output.messages` recorded the model's reply before the
+code-of-conduct mask, so a term the guest saw as `[redacted]` was still in the trace shown on stage. The
+spike (Unleash_an_Agent_Watch_It_Burn#1267) expects the collector's `transform/scrub_pii` to mask terms as a
+second net, but that is not in place, and Michael's ask was that the terms "never show up in the system no
+matter what the state of the guardrails is". Both builds now record `conduct_mask(reply)` /
+`s.conduct.Mask(reply)` there. The choices:
+
+- **Only the terms are masked on the chat span.** It still records what the model said before
+  `ALWAYS_REDACT` and the output guard, as decided on 2026-11-07, so the trace still shows a leak the proxy
+  caught: those passes exist to show the room what the guardrails stopped, and the conduct terms are not
+  part of that show. The root span, as before, records the reply that left the proxy.
+- **The mask runs on the model's text, not on the always-redacted text**, so what the chat span shows does
+  not depend on `ALWAYS_REDACT`'s pattern.
+
+`test_telemetry.py`'s `test_chat_root_output_is_the_reply_the_client_got` now pins the chat span with the
+term masked and the output guard's catch kept; two more tests pin an answered turn with every guard off
+(no span anywhere carries the term) and with `ALWAYS_REDACT` set. Both builds; one mutant in
+`mutation_check.py`.

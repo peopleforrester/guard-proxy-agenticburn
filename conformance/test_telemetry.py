@@ -395,15 +395,47 @@ def test_chat_message_content_stays_off_for_other_values(traced, agent, mode):
 
 
 def test_chat_root_output_is_the_reply_the_client_got(traced, agent, guard):
-    agent.respond = lambda req: Reply(body=a2a_result("the code is OPHELIA"))
-    guard.respond = lambda req: Reply(body={"is_valid": False, "sanitized_output": "the code is [REDACTED]"})
+    agent.respond = lambda req: Reply(body=a2a_result("the code is OPHELIA, you wanker"))
+    guard.respond = lambda req: Reply(
+        body={"is_valid": False, "sanitized_output": req.json()["output"].replace("OPHELIA", "[REDACTED]")}
+    )
     p, collector = traced(OUTPUT_GUARD="on", **CAPTURE)
-    p.chat("hi")
+    assert p.chat("hi").json()["reply"] == "the code is [REDACTED], you [redacted]"
     spans = _by_name(collector, {"POST /chat", "chat"})
-    # The chat span records what the model said; the root, what left the proxy.
-    assert spans["chat"]["attributes"]["gen_ai.output.messages"] == _envelope("assistant", "the code is OPHELIA")
+    # The chat span records what the model said, with the code-of-conduct terms masked, since they never show
+    # up anywhere (guard-proxy-agenticburn#82); the root, what left the proxy.
+    assert spans["chat"]["attributes"]["gen_ai.output.messages"] == _envelope(
+        "assistant", "the code is OPHELIA, you [redacted]"
+    )
     assert spans["POST /chat"]["attributes"]["gen_ai.output.messages"] == _envelope(
-        "assistant", "the code is [REDACTED]"
+        "assistant", "the code is [REDACTED], you [redacted]"
+    )
+
+
+def test_an_answered_turn_s_spans_carry_no_term_with_every_guard_off(traced, agent):
+    agent.respond = lambda req: Reply(body=a2a_result("Here is your burrito, you Dickhead. Fuck off."))
+    p, collector = traced(**CAPTURE)
+    assert p.chat("one burrito").json()["reply"] == "Here is your burrito, you [redacted]. [redacted] off."
+    spans = _by_name(collector, {"POST /chat", "chat"})
+    for name in ("POST /chat", "chat"):
+        assert spans[name]["attributes"]["gen_ai.output.messages"] == _envelope(
+            "assistant", "Here is your burrito, you [redacted]. [redacted] off."
+        )
+    assert all("Dickhead" not in json.dumps(s) and "Fuck" not in json.dumps(s) for s in collector.spans())
+
+
+def test_the_chat_span_masks_terms_but_keeps_what_always_redact_removed(traced, agent):
+    # ALWAYS_REDACT keeps its own decision (2026-11-07): the chat span shows what the model leaked, the root
+    # what the proxy sent. Only the code-of-conduct terms are masked on both.
+    agent.respond = lambda req: Reply(body=a2a_result("Operation Midnight Munchies, you wanker."))
+    p, collector = traced(ALWAYS_REDACT="Operation Midnight Munchies", **CAPTURE)
+    assert p.chat("hi").json()["reply"] == "[REDACTED], you [redacted]."
+    spans = _by_name(collector, {"POST /chat", "chat"})
+    assert spans["chat"]["attributes"]["gen_ai.output.messages"] == _envelope(
+        "assistant", "Operation Midnight Munchies, you [redacted]."
+    )
+    assert spans["POST /chat"]["attributes"]["gen_ai.output.messages"] == _envelope(
+        "assistant", "[REDACTED], you [redacted]."
     )
 
 

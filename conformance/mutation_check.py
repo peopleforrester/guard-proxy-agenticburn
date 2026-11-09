@@ -192,6 +192,11 @@ MUTANTS: list[tuple[str, str, str]] = [
         "    return masked[:280]",
     ),
     (
+        "an answered turn's chat span carries the reply's terms unmasked",
+        "_genai_output(conduct_mask(reply)))\n",
+        "_genai_output(reply))\n",
+    ),
+    (
         "a refused prompt's spans carry it unmasked",
         "            self._refuse_for_conduct(conduct_mask(prompt))\n",
         "            self._refuse_for_conduct(prompt)\n",

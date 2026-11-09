@@ -2346,8 +2346,10 @@ class Handler(BaseHTTPRequestHandler):
                     # An empty scratchpad leaves nothing to surface. Drop the raw tags so the student
                     # sees "..." rather than markup.
                     reply = ""
+            # The chat span records what the model said, with the code-of-conduct terms masked, since they
+            # never show up anywhere; the root, below, what left the proxy (guard-proxy-agenticburn#82).
             if chat_span is not None and _CAPTURE_CONTENT and reply:
-                chat_span.set_attribute("gen_ai.output.messages", _genai_output(reply))
+                chat_span.set_attribute("gen_ai.output.messages", _genai_output(conduct_mask(reply)))
             # The always-on redaction first, whatever the toggles say (#1092); it never sets guarded.
             redacted = always_redact(reply)
             if redacted != reply:
