@@ -3,6 +3,30 @@
 What each guard-proxy build a consumer can pin changes, newest first, naming its commit. The workshop
 repo repins its `gitops/ai-layer/guard-proxy` submodule from these entries.
 
+## 2026-11-09: the spike's folded term list, masked spans on a refused turn, an optional Bedrock guardrail
+
+Both builds (guard-proxy-agenticburn#81, from Unleash_an_Agent_Watch_It_Burn#1267's spike), commit 48cc2ca.
+Repin the workshop's `gitops/ai-layer/guard-proxy` submodule and its `checksum/proxy-py` to this entry's
+commit (or a later one) to pick it up. It includes a7a5a36's check below.
+
+- The default `PROFANITY_LIST` is the spike's 144 entries, and every text is folded before matching
+  (zero-width characters dropped, fullwidth and accented letters reduced, Cyrillic and Greek look-alikes
+  mapped, lower case), with leetspeak stand-ins, repeatable letters, `*` for a vowel and fully spaced-out
+  spellings. The `/chat` refusal, the reply mask and the prompt wall (`moderate()`) all use it, so all
+  three match the spike's reference on its 155 abuse texts (111 caught), and none of the stage's own texts.
+- A refused `/chat` turn now records `gen_ai` attributes on its `POST /chat` span and a `chat` span, with
+  the prompt masked in `gen_ai.input.messages` and the refusal in `gen_ai.output.messages` when content
+  capture is on. The trace shown on stage carries the turn, never the term.
+- Optional Bedrock guardrail: set `CONDUCT_GUARDRAIL_ID`, `CONDUCT_GUARDRAIL_VERSION` and `AWS_REGION`
+  (Unleash_an_Agent_Watch_It_Burn#1279 makes the guardrail and guard-proxy's Pod Identity). A prompt the
+  terms pass goes to `ApplyGuardrail` (source `INPUT`) and is refused with the same reply when the guardrail
+  intervenes. An error or 1.5 s with no answer lets it through and logs `conduct_guardrail_error`. Unset,
+  nothing changes and no AWS call is made. An id without a version, or without a region, stops startup.
+  The pod needs `bedrock:ApplyGuardrail` on that guardrail; `proxy.py` reads EKS Pod Identity's container
+  credentials or static keys, not web identity (IRSA).
+- Check after the repin: with every guard toggled off, `/chat` refuses "f u c k" and "ｆｕｃｋ"; with
+  content capture on, the refused turn's `chat` span in Datadog shows `[redacted]` where the term was.
+
 ## 2026-11-09: /chat refuses and masks code-of-conduct terms whatever the toggles say
 
 Both builds (guard-proxy-agenticburn#78, asked by Unleash_an_Agent_Watch_It_Burn#1267), commit a7a5a36.
