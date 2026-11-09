@@ -3,6 +3,30 @@
 What each guard-proxy build a consumer can pin changes, newest first, naming its commit. The workshop
 repo repins its `gitops/ai-layer/guard-proxy` submodule from these entries.
 
+## 2026-11-09: /chat refuses and masks code-of-conduct terms whatever the toggles say
+
+Both builds (guard-proxy-agenticburn#78, asked by Unleash_an_Agent_Watch_It_Burn#1267), commit a7a5a36.
+Repin the workshop's `gitops/ai-layer/guard-proxy` submodule and its `checksum/proxy-py` to this entry's
+commit (or a later one) to pick it up.
+
+- A `/chat` prompt carrying a `PROFANITY_LIST` term (whole words, plural included; default
+  `_DEFAULT_PROFANITY`) reaches no LLM Guard call, no guard, limit or cap, and no agent, whatever `/toggle`
+  says. It is answered `"Let's keep it kind: BurritoBot only answers within the event's code of conduct."`,
+  which names no term, and logs event `conduct_refused`.
+- The prompt wall still reads a refused prompt, and holds it only masked. The stage's own prompts (the
+  `/kubecon` asks and the challenge prompts) carry no term and reach the agent unchanged.
+- Every term in the agent's reply is replaced with `[redacted]` after `ALWAYS_REDACT` and before the
+  output guard, with the output guard on or off; when it is on, it reads the masked reply. A mask logs
+  event `conduct_masked`.
+- Both halves read one in-process matcher, `conduct_matches()` in `proxy.py` and `guard.Conduct.Matches`
+  in Go, over the wall's own term list, with no network call. The A2A pass-through is unchanged.
+- `/controls` answers `always_on: {"code_of_conduct": true}` beside `ai`, never inside it; it is false
+  only when `PROFANITY_LIST` is set empty. No `/guards` field and no `/toggle` key names the check.
+- Like `ALWAYS_REDACT`, a refusal or a mask by this check alone leaves `guarded` false and stamps no
+  `witb.guard.decision`.
+- Check after the repin: with every guard toggled off, a `/chat` prompt carrying a term gets the refusal
+  above, and the agent's logs show no turn for it.
+
 ## 2026-11-08: /chat's tasks/get polls go out unsampled and leave no spans
 
 Both builds (guard-proxy-agenticburn#77, found by Unleash_an_Agent_Watch_It_Burn#877). Repin the workshop's
