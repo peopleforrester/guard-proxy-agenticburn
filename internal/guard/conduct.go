@@ -25,8 +25,8 @@ const ConductRefusal = "Let's keep it kind: BurritoBot only answers within the e
 // character of a text is folded on its own before matching, so a match maps back onto the original text
 // one to one: zero-width characters and soft hyphens are dropped, compatibility and accented forms reduced
 // to their base letter, Cyrillic and Greek look-alikes mapped to Latin, and the result lower-cased. A term
-// then matches as a whole word with each letter repeatable, each letter's leetspeak stand-ins, "*" for any
-// vowel, or the whole term spelt out with one separator between every letter; a phrase's words match with
+// then matches as a whole word with each letter repeatable as itself or a digit stand-in, each letter's
+// leetspeak stand-ins, "*" for any vowel, or the whole term spelt out with one separator between every letter; a phrase's words match with
 // any run of separators between them. RE2 has no lookaround, so the left word edge is checked by hand and
 // the right one is consumed after the capture group, which leftmost-first matching resolves as Python's
 // lookahead does.
@@ -184,23 +184,65 @@ func conductLetter(r rune) string {
 	return b.String()
 }
 
+// conductRun is one letter of a word, after being the letter that follows it (0 at the word's end): one
+// character of its class, then any run of the letter and its digit stand-ins that the next letter's class
+// does not hold. With each letter its whole class repeated, a run of `$`, `5$`, `(` or `4@` cost time in the
+// square of its length in a backtracking engine (Unleash_an_Agent_Watch_It_Burn#1300). RE2 is linear in any
+// pattern, but this builds the pattern proxy.py's _conduct_run and the spike's floor.py _run build.
+func conductRun(r, after rune) string {
+	own := string(r) + conductLeet[r]
+	held := conductLeet[after]
+	if after != 0 {
+		held = string(after) + held
+	}
+	var again []rune
+	for _, c := range own {
+		if (c == r || '0' <= c && c <= '9') && !strings.ContainsRune(held, c) {
+			again = append(again, c)
+		}
+	}
+	switch {
+	case len(again) == 0:
+		return conductLetter(r)
+	case string(again) == own && !strings.ContainsRune("aeiou", r):
+		return conductLetter(r) + "+"
+	}
+	var b strings.Builder
+	b.WriteByte('[')
+	for _, c := range again {
+		classRune(&b, c)
+	}
+	b.WriteString("]*")
+	return conductLetter(r) + b.String()
+}
+
+// conductWord is one word of a term, each letter a conductRun.
+func conductWord(word string) string {
+	rs := []rune(word)
+	var b strings.Builder
+	for i, r := range rs {
+		var after rune
+		if i+1 < len(rs) {
+			after = rs[i+1]
+		}
+		b.WriteString(conductRun(r, after))
+	}
+	return b.String()
+}
+
 // conductWords is a term folded and split into words, as Python's str.split() splits it.
 func conductWords(term string) []string {
 	folded, _, _ := conductFold(term)
 	return strings.FieldsFunc(folded, isPySpace)
 }
 
-// conductTerm is one term's pattern: every letter repeatable, the words joined by any run of separators,
+// conductTerm is one term's pattern: every letter a conductRun, the words joined by any run of separators,
 // and a one-word term of three or more letters also spelt out with one separator between every letter.
 func conductTerm(term string) string {
 	words := conductWords(term)
 	joined := make([]string, len(words))
 	for i, w := range words {
-		var b strings.Builder
-		for _, r := range w {
-			b.WriteString(conductLetter(r) + "+")
-		}
-		joined[i] = b.String()
+		joined[i] = conductWord(w)
 	}
 	pattern := strings.Join(joined, conductSep+"+")
 	if len(words) == 1 && utf8.RuneCountInString(words[0]) >= 3 {

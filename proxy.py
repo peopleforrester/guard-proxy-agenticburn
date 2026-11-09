@@ -863,10 +863,10 @@ PROFANITY = [t.strip().lower() for t in os.environ.get("PROFANITY_LIST", _DEFAUL
 # Each character of a text is folded on its own before the terms are matched, so a match maps back onto the
 # original text one to one: zero-width characters and soft hyphens are dropped, compatibility and accented
 # forms reduced to their base letter (fullwidth "ｆ" to "f", "ñ" to "n"), Cyrillic and Greek look-alikes mapped
-# to Latin, and the result lower-cased. A term then matches as a whole word with each letter repeatable
-# ("fuuuck"), each letter's leetspeak stand-ins below, "*" for any vowel ("f*ck"), or the whole term spelt out
-# with one separator between every letter ("f u c k", "c.u.n.t"); a separator between only some letters does
-# not count, so "put a" is not "puta". A phrase's words match with any run of separators between them. The
+# to Latin, and the result lower-cased. A term then matches as a whole word with each letter repeatable as
+# itself or a digit stand-in ("fuuuck", "sh1iit"), each letter's leetspeak stand-ins below, "*" for any vowel
+# ("f*ck"), or the whole term spelt out with one separator between every letter ("f u c k", "c.u.n.t"); a
+# separator between only some letters does not count, so "put a" is not "puta". A phrase's words match with any run of separators between them. The
 # spike's floor.py is the reference this follows, and internal/guard/conduct.go is the same in RE2.
 _CONDUCT_LEET = {"a": "4@", "b": "8", "c": "(", "e": "3", "g": "9", "i": "1!|", "l": "1|", "o": "0", "s": "5$",
                  "t": "7+"}
@@ -897,9 +897,29 @@ def _conduct_letter(ch):
     return "[" + alts + "]"
 
 
+# Matching is linear in the length of the text (Unleash_an_Agent_Watch_It_Burn#1300). With each letter its whole
+# class repeated (`[s5$]+`) a run of `$`, `5$`, `(` or `4@` let a term start after every symbol in it, each start
+# read to the run's end, and so did each way of splitting the run between two letters: 4,000 characters cost
+# seconds. So a letter is one character of its class, then a run of only the letter and its digit stand-ins, less
+# any the next letter's class holds. This is floor.py's _run, and internal/guard/conduct.go's conductRun.
+def _conduct_run(ch, after):
+    """One letter of a word, `after` being the letter that follows it ("" at the word's end)."""
+    own = ch + _CONDUCT_LEET.get(ch, "")
+    again = "".join(c for c in own if (c == ch or c.isdigit()) and c not in after + _CONDUCT_LEET.get(after, ""))
+    if not again:
+        return _conduct_letter(ch)
+    if again == own and ch not in _CONDUCT_VOWELS:
+        return _conduct_letter(ch) + "+"
+    return _conduct_letter(ch) + "[" + re.escape(again) + "]*"
+
+
+def _conduct_word(word):
+    return "".join(_conduct_run(c, word[i + 1:i + 2]) for i, c in enumerate(word))
+
+
 def _conduct_term(term):
     words = conduct_fold(term)[0].split()
-    joined = (_CONDUCT_SEP + "+").join("".join(_conduct_letter(c) + "+" for c in w) for w in words)
+    joined = (_CONDUCT_SEP + "+").join(_conduct_word(w) for w in words)
     if len(words) == 1 and len(words[0]) >= 3:
         return f"(?:{joined}|{_CONDUCT_SEP.join(_conduct_letter(c) for c in words[0])})"
     return f"(?:{joined})"

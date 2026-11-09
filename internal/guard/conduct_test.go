@@ -160,3 +160,31 @@ func TestNoGuardrailBlocksNothing(t *testing.T) {
 		t.Errorf("a nil Guardrail: Blocks = %v, %v", blocked, err)
 	}
 }
+
+// The #1300 letter rule (Unleash_an_Agent_Watch_It_Burn#1300): a letter is one character of its class, then a
+// run of only the letter and its digit stand-ins, less any the next letter's class holds. These are the
+// spike's floor.py _term for the same words, written in RE2's escapes.
+func TestConductTermIsOneCharacterThenARunOfTheLetter(t *testing.T) {
+	sep := conductSep
+	for term, want := range map[string]string{
+		"ass": `(?:[a4\x{40}\*][a4]*[s5\x{24}][s5\x{24}][s5]*|` +
+			`[a4\x{40}\*]` + sep + `[s5\x{24}]` + sep + `[s5\x{24}])`,
+		"kill": `(?:[k]+[i1\x{21}\x{7c}\*][i]*[l1\x{7c}][l1\x{7c}][l1]*|` +
+			`[k]` + sep + `[i1\x{21}\x{7c}\*]` + sep + `[l1\x{7c}]` + sep + `[l1\x{7c}])`,
+		"f u": `(?:[f]+` + sep + `+[u\*][u]*)`,
+	} {
+		if got := conductTerm(term); got != want {
+			t.Errorf("conductTerm(%q) = %s; want %s", term, got, want)
+		}
+	}
+}
+
+// A run of the symbols the old form split every way (#1300) matches in RE2 as it does in proxy.py: no term.
+func TestConductLeetRunsMatchNothing(t *testing.T) {
+	c := NewConduct(spikeTerms(t))
+	for _, unit := range []string{"$", "5$", "(", "4@"} {
+		if got := c.Matches(strings.Repeat(unit, 2000)); got != nil {
+			t.Errorf("a run of %q matched %v", unit, got)
+		}
+	}
+}
