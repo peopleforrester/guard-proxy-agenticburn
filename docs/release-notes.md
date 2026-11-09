@@ -3,6 +3,18 @@
 What each guard-proxy build a consumer can pin changes, newest first, naming its commit. The workshop
 repo repins its `gitops/ai-layer/guard-proxy` submodule from these entries.
 
+## 2026-11-09: the code-of-conduct pattern matches in linear time
+
+Both builds (guard-proxy-agenticburn#83, from Unleash_an_Agent_Watch_It_Burn#1300), commit d666698.
+Repin the workshop's `gitops/ai-layer/guard-proxy` submodule and its `checksum/proxy-py` to this entry's
+commit (or a later one) to pick it up.
+
+- Each letter of a term is one character of its class, then a run of only the letter and its digit
+  stand-ins, less any the next letter's class holds. Before, a `/chat` prompt of a few thousand `$`, `5$`,
+  `(` or `4@` cost `proxy.py` seconds of CPU; 4,000 characters of any repeated leetspeak run now take
+  well under 50 ms. The pattern equals the spike's `floor.proposed_pattern()` on the default list, and
+  every abuse text, stage text and term matches as it did. The Go build builds the same pattern.
+
 ## 2026-11-09: the spike's folded term list, masked spans on a refused turn, an optional Bedrock guardrail
 
 Both builds (guard-proxy-agenticburn#81, from Unleash_an_Agent_Watch_It_Burn#1267's spike), commit 48cc2ca.
