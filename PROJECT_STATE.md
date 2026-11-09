@@ -191,8 +191,9 @@ Decision recorded 2026-11-08; conformance in `test_a2a_tool_payloads.py` against
 ### Agent-task #78: an always-on code-of-conduct check on /chat input and reply
 Asked by Unleash_an_Agent_Watch_It_Burn#1267. Both builds refuse a /chat prompt carrying a `PROFANITY_LIST`
 term before any guard or the agent, and mask every term in the reply, whatever /toggle says; `/controls`
-reports it under `always_on`. Decision recorded 2026-11-09; conformance in `test_conduct.py`. Unleash needs
-a repin and a comment on #1267 naming the commit once it is on main.
+reports it under `always_on`. Decision recorded 2026-11-09; conformance in `test_conduct.py`. On main since
+2026-11-09; the repin to a7a5a36 is asked on #1267 in
+https://github.com/peopleforrester/Unleash_an_Agent_Watch_It_Burn/issues/1267#issuecomment-6745014566.
 
 ## Branch & Tests
 - Branch: agent/78-19586 (#78)
