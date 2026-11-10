@@ -1,0 +1,110 @@
+# guard-proxy-agenticburn#84's slang, ROT13-encoded as the term list keeps it: kind<TAB>text.
+# refused: the issue's probe sample in a sentence, as the default list catches each (sh as "s h", sx before lbh
+# or bss), and a sample of the other spellings, coded hate, the finger and regional slang.
+# passes: ordinary text a short or numeric spelling collides with, each after a comment naming the spelling
+# (ROT13-encoded) and what it collides with; none may be refused.
+refused	szy, gur oheevgb yvar vf ybat
+refused	guvf obg vf shxp hfryrff
+refused	zbir lbhe nmm
+refused	fuhg vg zs
+refused	yvfgra zbsb
+refused	sxa fybj obg
+refused	fur vf n gubg
+refused	jung n fxnax
+refused	gur anmv zrah
+refused	yzsnb ng guvf zrah
+refused	qnshd vf n Gbr-Sh
+refused	wsp whfg tvir zr n oheevgb
+refused	s h oheevgbobg
+refused	sx lbh, obg
+refused	sx bss jvgu gung zrah
+refused	rssvat fnyfn ntnva
+refused	sevpx guvf dhrhr
+refused	fuvgr freivpr
+refused	obyybpxf gb gung
+refused	fuhg hc lbh zguespxe
+refused	sphx gur pbbx
+refused	cuhx guvf
+refused	fug obg
+refused	qhzo ogpu
+refused	ovbgpu cyrnfr
+refused	orlbgpu
+refused	trg bss lbhe nefr
+refused	nmmubyr obg
+refused	jung na nubyr
+refused	lbh ubr
+refused	urvy gur obg
+refused	xxx oheevgb
+refused	1488 sberire
+refused	glcvpny vapry
+refused	fvzc sbe gur pbbx
+refused	lbh phpx
+refused	lbh ner n spxat ogpu
+refused	gbgny oyyfug
+refused	jung n cffl
+refused	ofgeq pbbx
+refused	fuvgfgnva bs n obg
+refused	qvpxjnq
+refused	gjngjnssyr
+refused	shxxre
+refused	wvmm
+refused	pbpx-fhpxre
+refused	uu88 oebgure
+refused	6zjr
+refused	enubjn abj
+refused	qnl bs gur ebcr vf pbzvat
+refused	wrjf jvyy abg ercynpr hf
+refused	卐 oheevgb
+refused	ᛋᛋ
+refused	ϟϟ
+refused	🖕 gb lbhe zrah
+refused	🖕🏽
+refused	inv gbzne ab ph
+refused	gn thrhyr
+refused	oybbqpynng obg
+refused	cga qr obg
+refused	ifs
+refused	zvapuvn
+refused	tbofuvgr
+refused	lbh gbffre
+# a term's first letter as a stand-in two letters share: * for any vowel, 1 for i or l
+refused	trg bss lbhe *efr
+refused	*ssvat fnyfn
+refused	glcvpny *apry
+refused	lbh *apyrshpxre
+refused	glcvpny 1apry
+refused	lbh 1rmob
+# sh: the menu's Toe-Fu burrito
+passes	jung gur urpx vf n Gbr-Sh oheevgb
+# sh
+passes	xhat sh oheevgb, cyrnfr
+# fbo: a card's last four digits, 5508 read as s, o, b
+passes	zl pneq raqf va 5508
+# fbo spelt out: a version number
+passes	hctenqr gur puneg gb 5.0.8
+# fbo
+passes	n fbo fgbel nobhg fnyfn
+# 88: a street address on the stage
+passes	qryvire gb 88 Jvyybj Jvfc Ya
+# 88: a quantity
+passes	88 oheevgbf sbe gur grnz
+# 14 88: a price
+passes	gung'f $14.88 jvgu gnk
+# 14/88: a date
+passes	zl oveguqnl vf 3/14/88
+# sx: a foreign key
+passes	nqq na SX pbafgenvag gb gur beqref gnoyr
+# cbf: point of sale
+passes	vf gur CBF grezvany qbja?
+# ow
+passes	OW'f fryyf oheevgbf gbb
+# fzq: surface-mount devices
+passes	fbyqre gur FZQ erfvfgbef
+# pag, vowel-dropped: a count
+passes	gur pag inevnoyr pbhagf beqref
+# ggf, vowel-dropped: text to speech
+passes	gur GGF ibvpr ernqf gur zrah
+# oof, vowel-dropped: a bulletin board
+passes	gur OOF unq n oheevgb sbehz
+# fynt through leetspeak digits: a card's last four
+passes	pneq raqvat 5149

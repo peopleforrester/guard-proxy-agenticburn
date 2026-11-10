@@ -201,12 +201,15 @@ replaced with `[redacted]` after `ALWAYS_REDACT` and before the output guard, lo
 false and stamps no `witb.guard.decision`. It runs in-process, and the A2A path does not run it.
 
 The default list and the matching are the code-of-conduct spike's (#81, from
-Unleash_an_Agent_Watch_It_Burn#1267): 144 entries, kept ROT13-encoded in the source, and each character
-of a text folded before matching (zero-width characters dropped, fullwidth and accented letters reduced,
-Cyrillic and Greek look-alikes mapped, lower case), with leetspeak stand-ins, repeatable letters, `*` for a
-vowel and fully spaced-out spellings ("f u c k"). The wall's `moderate()` masks with the same matcher.
-`conformance/coc_floor/` holds the spike's abuse set with the mask its reference gives each text, and the
-stage's own texts, which none of it matches. A refused turn records the `POST /chat` and `chat` spans a
+Unleash_an_Agent_Watch_It_Burn#1267): its 144 entries and 1,109 of Urban Dictionary-style slang (#84:
+abbreviations, vowel-dropped, phonetic and alphanumeric spellings, compounds, slurs, sexual slang, coded hate
+numbers and symbols, regional slang), kept ROT13-encoded in the source, and each character of a text folded
+before matching (zero-width characters dropped, fullwidth and accented letters reduced, Cyrillic and Greek
+look-alikes mapped, lower case), with leetspeak stand-ins, repeatable letters, `*` for a vowel and fully
+spaced-out spellings ("f u c k"). The wall's `moderate()` masks with the same matcher. `conformance/coc_floor/`
+holds the spike's abuse set with the mask the list gives each text, the stage's own texts from every page,
+which none of it matches, and #84's slang sample with the ordinary text its short spellings collide with.
+decisions.md (2026-11-10) names the slang's source, what was left out and why. A refused turn records the `POST /chat` and `chat` spans a
 turn the agent answers does, with the prompt masked in `gen_ai.input.messages` and the refusal in
 `gen_ai.output.messages` (content capture on), so the trace shown on stage never carries the term.
 

@@ -6,6 +6,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -339,14 +340,26 @@ func TestDefaultProfanityIsProxyPysList(t *testing.T) {
 	var b strings.Builder
 	for _, line := range strings.Split(src[start:start+end], "\n") {
 		if line = strings.TrimSpace(line); strings.HasPrefix(line, `"`) {
-			b.WriteString(strings.Trim(strings.TrimSuffix(line, ","), `"`))
+			// Each line is one Python string literal; its \u and \U escapes (the symbols) read as Go's do.
+			part, err := strconv.Unquote(strings.TrimSuffix(line, ","))
+			if err != nil {
+				t.Fatalf("proxy.py's list line %q: %v", line, err)
+			}
+			b.WriteString(part)
 		}
 	}
-	// Reported ROT13-encoded, so a failure prints no term.
+	// Reported ROT13-encoded and by the first term that differs, so a failure prints no term.
 	if got := b.String(); got != defaultProfanityROT13 {
-		t.Errorf("DefaultProfanity differs from proxy.py's:\n%q\n%q", defaultProfanityROT13, got)
+		want, have := SplitList(defaultProfanityROT13), SplitList(got)
+		for i := 0; i < len(want) || i < len(have); i++ {
+			if i >= len(want) || i >= len(have) || want[i] != have[i] {
+				t.Errorf("DefaultProfanity differs from proxy.py's at term %d of %d and %d", i, len(want), len(have))
+				break
+			}
+		}
 	}
-	if n := len(SplitList(DefaultProfanity)); n != 144 {
-		t.Errorf("DefaultProfanity has %d terms; the spike's list has 144", n)
+	// The spike's 144 entries and the 1,109 of guard-proxy-agenticburn#84.
+	if n := len(SplitList(DefaultProfanity)); n != 1253 {
+		t.Errorf("DefaultProfanity has %d terms; want 1253", n)
 	}
 }

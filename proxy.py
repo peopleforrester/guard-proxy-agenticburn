@@ -832,6 +832,15 @@ def _origin_allowed(handler):
 # terms before it caught 37, and none of 5,198 stage texts or a week of /chat prompts and replies. It is kept
 # ROT13-encoded, as the spike keeps it, so the public tree does not display the terms; PROFANITY_LIST is read
 # as plain text. Go's config.DefaultProfanity is the same list.
+#
+# After the spike's 144 come 1,109 entries of Urban Dictionary-style slang (guard-proxy-agenticburn#84):
+# abbreviations, vowel-dropped and phonetic spellings, alphanumeric spellings the leetspeak folding below does not
+# reach, compounds that hide a term mid-word, slurs, sexual slang, coded hate numbers and symbols, and regional
+# slang. 1,007 are from the maintained profane-words list (github.com/zautumnz/profane-words at 4b08ea9), less
+# every entry with an ordinary meaning, every name or place, and every entry the 144 already catch; the rest are
+# the issue's probe sample and its classes. None matches any of 5,254 stage texts and /chat turns, and none but
+# 1488 matches a bare number. A short spelling that matched ordinary text is listed only in a form that does
+# not, or not at all: decisions.md (2026-11-10) lists each with what it collided with.
 _DEFAULT_PROFANITY = codecs.decode(
     # expletives
     "shpx,shpxf,shpxrq,shpxre,shpxref,shpxvat,shpxva,shpxnoyr,shpxsnpr,shpxurnq,shpxjvg,spx,shx,shd,"
@@ -855,7 +864,109 @@ _DEFAULT_PROFANITY = codecs.decode(
     # Portuguese
     "pnenyub,cbeen,ivnqb,ohprgn,"
     # Italian
-    "inssnaphyb,fgebamb,pnmmb,chggnan",
+    "inssnaphyb,fgebamb,pnmmb,chggnan,"
+    # abbreviations, acronyms and vowel-dropped spellings, and the finger (#84)
+    "oyyfug,oyjwo,ofgeq,ogpu,ogpuf,ogpul,ppx,pxfpxe,pzfug,qnshd,qpx,qpxuq,qpxurnq,qvyvtns,s h,spxq,spxre,spxva,"
+    "spxvat,spxa,spxat,spxe,sttg,stg,sx bss,sx h,sx lbh,sxq,sxre,sxva,sxvat,sxa,sxat,sxe,szy,sbnq,tsl,uaqwo,wsp,"
+    "yzsnb,zs,zsxe,zgunspxn,zguespxat,zguespxe,zguesxe,attn,atte,attef,cepx,cffl,egeq,egeqq,fug,fug uq,fuguq,"
+    "fugg,fuggl,jaxre,jaxe,\U0001f595,"
+    # phonetic and alphanumeric respellings of the expletives, and their compounds (#84)
+    "2 tveyf 1 phc,2t1p,5ug,nubyr,ncrfuvg,nfu0yr,nfu0yrf,nfubyrf,nff-ung,nff-cvengr,nffonttre,nffpybja,nffpbjobl,"
+    "nffsnpr,nfftboyva,nffu0yrm,nffung,nffzhapu,nffzhapure,nffcvengr,nffjnq,nffjvcr,nffjvcrf,nmm,nmmubyr,o!gpuva,"
+    "o7pu,onfgneqb,onfgneqm,onfgreqf,onfgreqm,orneqrqpynz,orngpu,orngbss,orrs phegnvaf,orrlbgpu,orbgpu,orlbgpu,"
+    "ovtonfgneq,ovbgpu,ovgpunff,ovgpurq,ovgpure,ovgpuref,ovgpurm,ovgpuva,ovgpufync,ovgpugvg,ovgpul,ohyyfuvggrq,"
+    "ohzoyrshpx,ohzshpx,ohggsnpr,olngpu,pnzry gbr,pnzrygbr,pnecrg zhapure,pnecrgzhapure,"
+    "purrfr rngvat fheeraqre zbaxrl,pahg,pbpxovgr,pbpxpbjobl,pbpxxabo,pbpxzbaxrl,pbpxabo,phpx,phzfgnva,phaa,"
+    "phaavr,phaal,phagsnpr,phagent,ploreshp,q0hpu3,qnltb,qrttb,qrtb,qvpxsnpr,qvpxsbeoenvaf,qvpxjnq,qvpxjrnfry,"
+    "qvpxjrrq,qvys,qvegl fnapurm,qypx,qbbpuont,qbhpur ont,qbhpuront,qbhpurontf,qbhpurjnssyr,qhzo nff,qhzoovgpu,"
+    "qhzoshpx,qhzofuvg,qhzfuvg,rssvat,snprshpxre,snpx,snaalshpxre,srt,svatreonat,sbx,sbbx,sbbxre,sevpx,shpxovgpu,"
+    "shpxobl,shpxvatovgpu,shpxvatfuvgzbgureshpxre,shpxxabo,shpxahg,shpxahgf,shpxahgg,shpxahgm,shpxbss,shpxcvt,"
+    "shpxfgvpx,shpxgneq,shpxgneqf,shpxjnq,shpxlbh,shqtr cnpxre,shqtrcnpxre,shtyl,shxp,shxgneq,shxgneqf,six,skpx,"
+    "tnlobo,tvamb,tvambf,tbngpk,tbqqnzazhgunshpxre,tjnvyb,tjnvybf,tjrvyb,tjrvybf,u00e,u0ne,u0z0,u0zb,u0e,u0er,"
+    "unvelonpx,unvelonpxf,urnqshpx,ubont,ubz0,ubzbqhzofuvg,ubbe,ubber,uber,vapry,w3ex0ss,wnpxfuvg,wrex0ss,"
+    "wrexbss,wvtnebbav,wvtnebbavf,wvttreobb,wvwwvobb,wvwwvobbf,wvff,whatyr ohaavrf,xnsser,xvttre,xaboovat,"
+    "xabornq,xaborq,xaboraq,xabournq,xabowbpxl,xabowbxrl,xabom,xhxfhtre,xhz,xhzohooyr,xhzre,xhzzre,xhzf,xjnv yb,"
+    "xjnv ybf,yrzba cnegl,yrzbacnegl,yvzcqvpx,z0s0,z0sb,znpnpn,znshtyl,zttre,zttbe,zvys,zb-sb,zbs0,zbsb,zbbyvr,"
+    "zbguresipxre,zhag,zhgunsrpxre,anfglovgpu,anfglub,avvtre,avvte,ayttre,ayttbe,cnpxv,cnyrfvzvna,cnapnxr snpr,"
+    "cnapnxr snprf,cnabbpu,crpxrejbbq,cuhx,cuhxrq,cuhxre,cuhxvat,cuhxxrq,cuhxxre,cuhxxvat,cuhxf,cuhd,"
+    "cvpxnavaavrf,cvrprbsfuvg,cvtshpxre,cbynp,cbba,cbbanav,cbbanal,cbbagnat,cbepu zbaxvrf,ce0a,ce1p,ce1x,cevp,"
+    "cevpxurnq,chanav,chanaal,chanal,chaxnff,chagnat,chfvrf,chfl,dhrns,dhrrs,ergneqm,egneq,egneqf,fpnax,fpuybat,"
+    "fu1gre,fu1ggre,fu1gm,fung,fuvgont,fuvgonttre,fuvgoyvzc,fuvgoenva,fuvgoerngu,fuvgpna,fuvgrngre,fuvgrngvat,"
+    "fuvgrq,fuvgsnprq,fuvgsvg,fuvgsbeoenvaf,fuvgshyy,fuvguncraf,fuvgunccraf,fuvgurry,fuvgubyr,fuvgubhfr,fuvgvat,"
+    "fuvgvatf,fuvgyvfg,fuvgbyn,fuvgbhgbsyhpx,fuvgcbg,fuvgfcvggre,fuvgfgnva,fuvggre,fuvggref,fuvggvrfg,fuvgl,"
+    "fuvgm,fuvm,fuvmavg,fulg,fulggl,fulgl,fvzc,fxnapx,fxhz,fxhzont,fbabsnovgpu,fbabsovgpu,fcnturggvoraqre,fcvt,"
+    "fcvtbggl,fcybbtr,fcyhqtr,fcbbtr,fghcvqshpx,fghcvqshpxre,fhzbsnovngpu,fjnzc thvarnf,gnpburnq,gnpburnqf,"
+    "gne onovrf,guvpxyvc,guvpxyvcf,guhaqrephag,gjngurnq,gjngyvcf,gjnggl,gjngjnssyr,gjhag,gjhagre,jnax,jnaxvat,"
+    "jnaxl,ju00e,jubne,jubenyvpvbhf,jubevat,jvyyvrjnaxre,mvtnob,mvtnobf,"
+    # slurs, their respellings and compounds (#84)
+    "norrq,nsevpbba,nyyvtngbe onvg,nyyvtngbeonvg,nenohfu,nenohfuf,nffpenpxre,nffavttre,nffjuber,oyhrthz,oyhrthzf,"
+    "obpur,obpurf,obbat,obbatn,obbatf,obbgyvc,obbgyvcf,ohqqunurnq,ohqqunurnqf,ohyyqvxr,ohyyqlxr,ohee urnq,"
+    "ohee urnqf,oheeurnq,oheeurnqf,ohgpuqvxr,ohgpuqlxr,pnzry wbpxrl,pnzry wbpxrlf,pnzrywbpxrl,pnzfyhg,pnzjuber,"
+    "puvanzna,puvanzra,puvap,puvapf,puvat pubat,puvat pubatf,puvatpubat,puvatpubatf,puvaxl,pybtjbt,pbpxfhxn,"
+    "pbbyvr,pbbyvrf,pbbanff,pbbanffrf,penpxjuber,phzfyhg,phagfyhg,pheel zhapure,pheel zhapuref,pheelzhapure,"
+    "pheelzhapuref,qnexrl,qnexrlf,qnexvr,qnexvrf,qnexl,qngavttn,qrtbf,qvncre urnq,qvncre urnqf,qvncreurnq,"
+    "qvncreurnqf,qvkvrqvxr,qvkvrqlxr,qbg urnq,qbg urnqf,qbgurnq,qbgurnqf,rnflfyhg,snt1g,sntont,sntrg,sntshpxre,"
+    "sntt1g,snttvg,snttvgg,snttbgpbpx,sntvg,sntbg,sntbgf,sntg,sntgneq,sntm,shpxjuber,tngbe onvg,tngbeonvg,"
+    "tnlzhgunshpxvajuber,tnlgneq,tvccb,tvccbf,tbyyvjbt,tbyyvjbtf,tbbxrlr,tbbxrlrf,tbbxvrf,tbbxl,ternfronyy,"
+    "ternfronyyf,tebvq,tebvqf,tlcb,tlcbf,tlccb,tlccbf,unys oerrq,unys pnfgr,unysoerrq,unyspnfgr,urro,urrof,ubr,"
+    "ubaxrl,ubaxrlf,ubaxvr,ubaxvrf,ulzvr,ulzvrf,vxrl,vxrlzb,vxrlzbf,vawha,vawhaf,wnc,wncf,wrjobl,wvtnobb,"
+    "wvtnobbf,wvttnob,wvttnobb,wvttnobf,wvttnf,whatyr ohaal,whatyrohaal,xnssre,xnssve,xenhg,xenhgf,xlxr,xlxrf,"
+    "yrmob,yrmobf,yrmmvr,yrmmvrf,yrmml,yvyavtyrg,zpsnttrg,zbba pevpxrg,zbba pevpxrgf,zbbapevpxrg,zbbapevpxrgf,"
+    "zbffurnq,zbhyvrjbc,a1te,anfglfyhg,anfgljuber,avt abt,avtn,avtnef,avtnf,avtref,avtrggr,avtrggrf,avtt,avtt4u,"
+    "avttnu,avttnuf,avttne,avttnenppv,avttnef,avttnm,avttreurnq,avttreubyr,avttbe,avtterff,avtterffrf,avtthu,"
+    "avtthuf,avtthe,avtthef,avtyrg,avtabt,avtbe,avtbef,avte,avten,avtenf,avter,avterf,avterff,avtf,avthe,"
+    "bar phc gjb tveyf,cnxvr,cvpnavaal,cvppnavaal,cvpxnavaal,cvyybjovgre,cbynpx,cbynpxf,cbynx,cbepu zbaxrl,"
+    "cbepuzbaxrl,ebhaqrlr,fnaqavttre,fpuinegfr,fpuinegfra,fpujnegmr,fpujnegmra,frkjuber,fxnax,fxnaxovgpu,fxnaxrr,"
+    "fxnaxrl,fxnaxshpx,fxnaxf,fxnaxjuber,fxnaxl,fxnaxlovgpu,fxnaxljuber,fynagrlr,fybcrurnq,fybcrurnqf,fyhgont,"
+    "fyhgohpxrg,fyhgqhzcre,fyhgxvff,fyhggvat,fyhggl,fyhgjrne,fyhgjuber,fyhgm,fabjonpx,fabjavttre,fcnturggvavttre,"
+    "fcrnepuhpxre,fcrnepuhpxref,fcvx,fcvxf,fdhnj,gne onol,gneonol,gubg,gvzoreavttre,gbjry urnq,gbjry urnqf,ge00a,"
+    "ge00af,gebba,gebbaf,gjb tveyf bar phc,gjbovgjuber,ju0ersnpr,juvttre,juvttref,juvgravttre,jubernyvpvbhf,"
+    "juberont,juberq,jubersnpr,jubershpxre,juberubccre,juberubhfr,jvttn,jvttnf,jvttre,jvttref,jbt,jbtf,lvq,lvqf,"
+    # sexual slang (#84)
+    "nff zbaxrl,nffonaqvg,nffonat,nffonatrq,nffonatre,nffonatf,nffoynfgre,nffpbpx,nffshpx,nffshpxre,nffshxxn,"
+    "nffurnq,nffubym,nffubccre,nffuber,nffwnpxre,nffwbpxrl,nffxvff,nffxvffre,nffxybja,nffyvpx,nffyvpxre,nffybire,"
+    "nffznfgre,nffzbaxrl,nffcnpxre,nffchccvrf,nffenzzre,nffenatre,nfffuvg,nfffhpxre,nffjubyr,o00ovrm,o00om,"
+    "onqshpx,onffgreq,onffgreqf,oybj wbo,oyhzcxva,obare,obaref,ohxnxr,ohxxnxr,ohgg cyht,ohggshpx,ohggshpxre,"
+    "ohggshpxref,ohggubyr,ohggcyht,ohggjvcr,p0x,pyrirynaq fgrnzre,pyvgsnpr,pyvgshpx,pyhfgreshpx,pbpxoybpx,"
+    "pbpxoybpxre,pbpxohetre,pbpxsnpr,pbpxshpxre,pbpxurnq,pbpxubyfgre,pbpxwbpxrl,pbpxxabpxre,pbpxxabxre,"
+    "pbpxyvpxre,pbpxybire,pbpxznfgre,pbpxzbatyre,pbpxzbatehry,pbpxzhapu,pbpxzhapure,pbpxabfr,pbpxahttrg,"
+    "pbpxdhrra,pbpxevqre,pbpxfuvg,pbpxfzvgu,pbpxfzbxre,pbpxfhpre,pbpxfhpx,pbpxfhpxrq,pbpxfhpxvat,pbpxfhpxf,"
+    "pbpxfhxxn,pbpxgrnfr,pbxzhapure,pbxfhpxn,pbbpuvr,pbbpul,pernzcvr,phzohooyr,phzqhzcfgre,phzsrfg,phzthmmyre,"
+    "phzwbpxrl,phzyvpxe,phzdhrra,phzfhpxre,phzgneg,phagrlrq,phagshpx,phagshpxre,phagubyr,phaguhagre,phagyvpx,"
+    "phagyvpxre,phagyvpxvat,phagfhpxre,phagm,ploreshpx,ploreshpxrq,ploreshpxre,ploreshpxref,ploreshpxvat,"
+    "qrrcguebng,qrrcguebngvat,qrfgebllbhechffl,qvpxont,qvpxorngre,qvpxorngref,qvpxoenva,qvpxqvccre,qvpxsyvccre,"
+    "qvpxshpx,qvpxubyr,qvpxvfu,qvpxwhvpr,qvpxyrff,qvpxyvpx,qvpxyvpxre,qvpxzvyx,qvpxzbatre,qvpxcvp,qvpxevccre,"
+    "qvpxfvccre,qvpxfync,qvpxfyvpxre,qvpxfhpxre,qvpxjuvccre,qvpxjbq,qvpxmvccre,qbaxrl chapu,qbaxrlchapu,qevcqvpx,"
+    "qhznff,qiqn,rng zl nff,rngnqvpx,rngzlnff,rngchffl,snfgshpx,sngshpx,sngshpxre,spxphz,sphx,sphxre,sphxvat,"
+    "srypu,srypure,srypuvat,srygpu,srygpure,srygpuvat,svatreshpx,svatreshpxrq,svatreshpxre,svatreshpxref,"
+    "svatreshpxvat,svatreshpxf,svfgshpx,svfgshpxrq,svfgshpxre,svfgshpxref,svfgshpxvat,svfgshpxvatf,svfgshpxf,"
+    "svfgvat,sbbgshpx,sbbgshpxre,sernxshpx,sernxlshpxre,serrshpx,shpxn,shpxnff,shpxont,shpxobbx,shpxoenva,"
+    "shpxohqql,shpxohgg,shpxq,shpxrqhc,shpxrefhpxre,shpxsrfg,shpxsernx,shpxsevraq,shpxure,shpxubyr,shpxvan,"
+    "shpxvaahgf,shpxvaevtug,shpxvg,shpxzr,shpxzrng,shpxzruneq,shpxzbaxrl,shpxa,shpxahttrg,shpxchccrg,shpxe,"
+    "shpxgbl,shpxgebcul,shpxhc,shpxjuvg,shpxlbznzn,shxnu,shxra,shxre,shxva,shxvat,shxxnu,shxxra,shxxre,shxxva,"
+    "shxxvat,shxjuvg,shxjvg,shashpx,shk,shk0e,shkbe,tnat onat,tnatonat,tnatonatrq,tnatonatf,tnfflnff,tnlnff,"
+    "tbxxha,tbyqra fubjre,tbyqrafubjre,unaq wbo,uneqpberfrk,uneqba,ubgchffl,vagurnff,wnpxbss,wvfvz,wvfz,wvm,"
+    "wvmvz,wvmva,wvmwhvpr,wvmz,wvma,wvmm,wvmmq,wvmmrq,wvmmvz,wvmmva,wvmma,wvmmhz,xvffnff,xbpx,xbbpu,xbbpurf,xhag,"
+    "xhagf,znxrzrphz,zvaqshpx,zbgun shxre,zbgun shxxnu,zbgun shxxre,zbgunshpx,zbgunshpxn,zbgunshpxnf,zbgunshpxnm,"
+    "zbgunshpxrq,zbgunshpxre,zbgunshpxref,zbgunshpxva,zbgunshpxvat,zbgunshpxvatf,zbgunshpxf,zbgure shxnu,"
+    "zbgure shxre,zbgure shxxnu,zbgure shxxre,zbgureshpx,zbgureshpxn,zbgureshpxrq,zbgureshpxva,zbgureshpxxn,"
+    "zbgureshpxf,zbgueshpxre,zgureshpxre,zgueshpx,zgueshpxre,zgueshpxvat,zgespx,zgeshpx,zgeshpxre,zhss qvire,"
+    "zhssqvir,zhssqvire,zhssqvivat,zhssvaqvire,zhgun shxnu,zhgun shxre,zhgun shxxnu,zhgun shxxre,zhgunshpxnm,"
+    "zhgunshpxre,zhgunshpxxre,zhgureshpxre,zhgureshpxvat,zhgueshpxvat,arrqgurqvpx,abshpxvatjnl,ahgshpxre,"
+    "cravfshpxre,cvaqvpx,cbeasyvpx,cbeaxvat,cbeacevaprff,cgup,ch55v,chffv,chffvr,chffvrf,chfflqrfgeblre,"
+    "chfflrngre,chfflsneg,chfflshpx,chfflshpxre,chfflyvpxre,chfflyvpxvat,chfflyvcf,chfflybire,chfflcnynpr,"
+    "chfflcbhaqre,dhvz,eragnshpx,evzwbo,funirqchffl,fuvgnff,fuvgphag,fuvgqvpx,fuvgshpx,fuvgshpxre,fuvgybnq,"
+    "fubegshpx,fxhyyshpx,fgencba,fhpxqvpx,fhpxzlnff,fhpxzlqvpx,fhpxzlgvg,grnonttvat,gvgshpx,gvgshpxre,gvgshpxva,"
+    "gvgwbo,gvgyvpxre,gvgybire,gvggvrshpxre,gvggl,gvgglshpx,gvgglshpxre,gvgglf,gvggljnax,gvgjnax,gvgl,gho tvey,"
+    "ghotvey,hapyrshpxre,hashpxnoyr,hcgurnff,juvfxrlqvpx,juvfxlqvpx,lbheobbof,lbhegvgf,"
+    # coded hate: numbers, acronyms, phrases and symbols (#84)
+    "1488,6zjr,qnl bs gur ebcr,tgxeja,urvy,uu88,wrjf jvyy abg ercynpr hf,xxx,anmv,anmvf,arbanmv,enubjn,"
+    "juvgrcbjre,jcjj,\u03df\u03df,\u16cb\u16cb,\u5350,"
+    # regional slang and its abbreviations: Jamaican, Irish, British, Spanish, French, German, Portuguese, Italian (#84)
+    "4e5r,ne5r,neefr,nefpuybpu,nefr,oryyraq,oybbqpynng,obyyvpx,obyybpx,obyybpxf,obyybx,obyybk,obzonpyng,"
+    "ohzonpynng,ohzonpybg,puvatnqb,puvatnqbf,peyu,snaphyb,srpx,srpxre,sbqn fr,sbqnfr,tbofuvgr,uqytc,xabowbpxrl,"
+    "xey,zvapuvn,zvatr,zvatre,avdhr gn zrer,agz,cdc,cga,enfpynng,enffpynng,fpurvff,fpurvff qenhs,fuvgr,fuvgront,"
+    "fuvgrl,fulgr,fgebamn,gn thrhyr,gbzne ab ph,gbffre,inssn,ifs,igap",
     "rot13",
 )
 PROFANITY = [t.strip().lower() for t in os.environ.get("PROFANITY_LIST", _DEFAULT_PROFANITY).split(",") if t.strip()]
@@ -890,26 +1001,28 @@ def conduct_fold(text):
     return "".join(out), where
 
 
+def _conduct_chars(ch):
+    """The characters a letter of a term matches: itself, its leetspeak stand-ins, and "*" for a vowel."""
+    return ch + _CONDUCT_LEET.get(ch, "") + ("*" if ch in _CONDUCT_VOWELS else "")
+
+
 def _conduct_letter(ch):
-    alts = re.escape(ch) + "".join(re.escape(c) for c in _CONDUCT_LEET.get(ch, ""))
-    if ch in _CONDUCT_VOWELS:
-        alts += r"\*"
-    return "[" + alts + "]"
+    return "[" + "".join(re.escape(c) for c in _conduct_chars(ch)) + "]"
 
 
 # Matching is linear in the length of the text (Unleash_an_Agent_Watch_It_Burn#1300). With each letter its whole
 # class repeated (`[s5$]+`) a run of `$`, `5$`, `(` or `4@` let a term start after every symbol in it, each start
 # read to the run's end, and so did each way of splitting the run between two letters: 4,000 characters cost
 # seconds. So a letter is one character of its class, then a run of only the letter and its digit stand-ins, less
-# any the next letter's class holds. This is floor.py's _run, and internal/guard/conduct.go's conductRun.
+# any the next letter's class holds. This is floor.py's _run, and internal/guard/conduct.go's conductRun, except that
+# a run of the whole class is written `[k][k]*` where floor.py writes `[k]+`, so every alternative of a term starts
+# with exactly one character of its first letter.
 def _conduct_run(ch, after):
     """One letter of a word, `after` being the letter that follows it ("" at the word's end)."""
     own = ch + _CONDUCT_LEET.get(ch, "")
     again = "".join(c for c in own if (c == ch or c.isdigit()) and c not in after + _CONDUCT_LEET.get(after, ""))
     if not again:
         return _conduct_letter(ch)
-    if again == own and ch not in _CONDUCT_VOWELS:
-        return _conduct_letter(ch) + "+"
     return _conduct_letter(ch) + "[" + re.escape(again) + "]*"
 
 
@@ -918,20 +1031,44 @@ def _conduct_word(word):
 
 
 def _conduct_term(term):
+    """The term's alternatives: its words' letters run together, and a one-word term of three or more letters also
+    spelt out with one separator between every letter. Each starts with one character of its first letter."""
     words = conduct_fold(term)[0].split()
-    joined = (_CONDUCT_SEP + "+").join(_conduct_word(w) for w in words)
+    alternatives = [(_CONDUCT_SEP + "+").join(_conduct_word(w) for w in words)]
     if len(words) == 1 and len(words[0]) >= 3:
-        return f"(?:{joined}|{_CONDUCT_SEP.join(_conduct_letter(c) for c in words[0])})"
-    return f"(?:{joined})"
+        alternatives.append(_CONDUCT_SEP.join(_conduct_letter(c) for c in words[0]))
+    return alternatives
 
 
+# The alternatives are grouped by the character they start with (#84). One alternation of the terms in a row, as the
+# spike's floor.py builds it, has the engine try every term at every word start: with 1,250 terms a 4,000-character
+# run of "$" took 120 ms. Grouped, a word start tries the alternatives its first character can begin and no others.
+# Each character goes to one group, the group of every first letter whose class holds it ("*" is any vowel's, "1"
+# both i's and l's), and a group keeps the alternatives in the order the single alternation tries them, longest term
+# first. So at any position the same alternatives are tried in the same order, and the spans are the same.
 def _profanity_pattern(terms):
     # An empty list matches nothing; joined as-is it would be an empty alternation that matches everywhere. A
     # term that folds to nothing, zero-width characters alone, is no term for the same reason.
     terms = [t for t in terms if conduct_fold(t)[0].split()]
     if not terms:
         return None
-    alternation = "|".join(_conduct_term(t) for t in sorted(terms, key=len, reverse=True))
+    # (first letter, the alternative after that letter's one character)
+    alternatives = []
+    for term in sorted(terms, key=len, reverse=True):
+        first = conduct_fold(term)[0].split()[0][0]
+        alternatives += [(first, alt[len(_conduct_letter(first)):]) for alt in _conduct_term(term)]
+    owners = {}
+    for first, _ in alternatives:
+        for ch in _conduct_chars(first):
+            owners.setdefault(ch, set()).add(first)
+    groups = {}
+    for ch, firsts in owners.items():
+        groups.setdefault(frozenset(firsts), []).append(ch)
+    alternation = "|".join(
+        "[" + "".join(re.escape(ch) for ch in chars) + "](?:"
+        + "|".join(rest for first, rest in alternatives if first in firsts) + ")"
+        for firsts, chars in groups.items()
+    )
     return re.compile(r"(?<![a-z0-9])(?:" + alternation + r")s?(?![a-z0-9])")
 
 

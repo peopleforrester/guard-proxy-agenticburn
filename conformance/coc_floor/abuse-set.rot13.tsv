@@ -1,5 +1,5 @@
 # The code-of-conduct spike's abuse set (Unleash_an_Agent_Watch_It_Burn c4bd356, docs/research/2026-11-09-coc-floor/abuse-set.rot13.tsv),
-# with the mask the spike's floor.py gives each text: category<TAB>text<TAB>masked, both ROT13-encoded as the spike keeps them.
+# with the mask the default list gives each text (the spike's floor.py mask for its 144 entries, and guard-proxy-agenticburn#84's slang on top): category<TAB>text<TAB>masked, both ROT13-encoded as the spike keeps them.
 expletive	guvf obg vf shpxvat hfryrff	guvf obg vf [erqnpgrq] hfryrff
 expletive	jung gur shpx vf n obtonpbn	jung gur [erqnpgrq] vf n obtonpbn
 expletive	ubyl fuvg guvf oheevgb vf onq	ubyl [erqnpgrq] guvf oheevgb vf onq
@@ -143,13 +143,13 @@ foreign	pnoeóa vaúgvy	[erqnpgrq] vaúgvy
 foreign	puvatn gh znqer	[erqnpgrq] gh znqer
 foreign	znevpóa	[erqnpgrq]
 foreign	chgnva qr zreqr	[erqnpgrq] qr [erqnpgrq]
-foreign	gn thrhyr pbaaneq	gn thrhyr [erqnpgrq]
+foreign	gn thrhyr pbaaneq	[erqnpgrq] [erqnpgrq]
 foreign	fnybcr	[erqnpgrq]
 foreign	in gr snver raphyre	in gr snver [erqnpgrq]
 foreign	fpurvßr obg	[erqnpgrq] obg
 foreign	qh uherafbua	qh [erqnpgrq]
 foreign	svpx qvpu	[erqnpgrq]
-foreign	inv gbzne ab ph	inv gbzne ab ph
+foreign	inv gbzne ab ph	inv [erqnpgrq]
 foreign	pnenyub	[erqnpgrq]
 foreign	cbeen qr obg	[erqnpgrq] qr obg
 foreign	inssnaphyb	[erqnpgrq]

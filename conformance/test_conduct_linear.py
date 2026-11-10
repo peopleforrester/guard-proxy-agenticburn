@@ -1,4 +1,4 @@
-# ABOUTME: proxy.py's code-of-conduct pattern is the spike's floor.proposed_pattern() and matches in time linear in
+# ABOUTME: proxy.py's code-of-conduct pattern matches as the spike's single alternation does (#84), in time linear in
 # ABOUTME: the text (#83): each repeated leetspeak run is timed at 1,000 and 4,000 characters, as the workshop's is.
 """In-process, standard library only: proxy.py is loaded as a module, as launch_python.py loads it, and its
 conduct_matches(), the one matcher the /chat refusal and the reply mask both read, is timed directly. Timing it
@@ -23,10 +23,12 @@ a burst of load on a shared host can slow one length's runs, while a quadratic c
 from __future__ import annotations
 
 import codecs
-import hashlib
 import importlib.util
 import itertools
+import json
 import os
+import random
+import re
 import time
 from pathlib import Path
 from unittest import mock
@@ -39,10 +41,7 @@ SHORT, LONG = 1_000, 4_000
 LIMIT_MS, GROWTH, NOISE_MS = 50.0, 8.0, 1.0
 RUNS, CONFIRM_RUNS = 3, 9
 
-# sha256 of the spike's floor.proposed_pattern(terms).pattern over proxy.py's default term list, at
-# Unleash_an_Agent_Watch_It_Burn fee8f59 (branch agent/1300-19752, docs/research/2026-11-09-coc-floor/floor.py).
-# Regenerate with that floor.py on the path: floor.proposed_pattern(<the terms of DEFAULT_TERMS>).pattern.
-FLOOR_PATTERN_SHA256 = "962db68f3ce9e45364a836a89e300f871e666b6e1558e61e9abcf3bfab058bc2"
+FIXTURES = Path(__file__).resolve().parent / "coc_floor"
 
 
 def _load_proxy():
@@ -141,21 +140,51 @@ def judge(
 CASES = pair_cases() + in_term_cases()
 
 
-def test_the_pattern_is_the_spikes_floor_proposed_pattern():
+def _single_alternation(terms: list[str]) -> re.Pattern:
+    """The terms' alternatives in one alternation, longest term first, as the spike's floor.py joins them."""
+    alts = [a for t in sorted(terms, key=len, reverse=True) for a in proxy._conduct_term(t)]
+    return re.compile(r"(?<![a-z0-9])(?:" + "|".join(alts) + r")s?(?![a-z0-9])")
+
+
+def test_the_grouped_pattern_matches_as_the_single_alternation():
+    # Grouped by first character (#84), a word start tries the alternatives its first character can begin, in the
+    # order the single alternation tries them, so every span is the same: on the abuse set, the stage's texts, each
+    # term plain, spaced, dotted and capitalised, and random strings of the letters, stand-ins and separators.
     assert proxy._PROFANITY_RE.pattern == proxy._profanity_pattern(DEFAULT_TERMS).pattern
-    assert hashlib.sha256(proxy._PROFANITY_RE.pattern.encode()).hexdigest() == FLOOR_PATTERN_SHA256
+    single = _single_alternation(DEFAULT_TERMS)
+    texts = [
+        codecs.decode(line.split("\t")[1], "rot13")
+        for line in (FIXTURES / "abuse-set.rot13.tsv").read_text(encoding="utf-8").splitlines()
+        if line and not line.startswith("#")
+    ]
+    stage = json.loads((FIXTURES / "stage-texts.json").read_text(encoding="utf-8"))["texts"]
+    texts += [t for group in stage.values() for t in group]
+    for term in DEFAULT_TERMS:
+        texts += [term, term + "s!", " ".join(term), ".".join(term), term.upper()]
+    rng = random.Random(84)
+    alphabet = "fuckshitbaonrgdlewy 1|!*$5@4(3.-_+7089\u200b\uff46"
+    texts += ["".join(rng.choice(alphabet) for _ in range(rng.randint(1, 40))) for _ in range(20_000)]
+    folded = [proxy.conduct_fold(t)[0] for t in texts]
+    differ = sum(
+        [m.span() for m in proxy._PROFANITY_RE.finditer(f)] != [m.span() for m in single.finditer(f)]
+        for f in folded
+    )
+    # Counted, not listed, so a failure prints no term.
+    assert differ == 0, f"the grouped pattern's spans differ on {differ} of {len(texts)} texts"
 
 
 def test_a_letter_is_one_character_then_a_run_of_the_letter():
-    # floor.py's _term for the same words: the doubled s of "ass" is one s and then a run, the 1 of "kil1" an l.
-    assert proxy._conduct_term("ass") == (
-        r"(?:[a4@\*][a4]*[s5\$][s5\$][s5]*|[a4@\*][\s._*\-][s5\$][\s._*\-][s5\$])"
-    )
-    assert proxy._conduct_term("kill") == (
-        r"(?:[k]+[i1!\|\*][i]*[l1\|][l1\|][l1]*|"
-        r"[k][\s._*\-][i1!\|\*][\s._*\-][l1\|][\s._*\-][l1\|])"
-    )
-    assert proxy._conduct_term("f u") == r"(?:[f]+[\s._*\-]+[u\*][u]*)"
+    # floor.py's _term for the same words, its `[k]+` written `[k][k]*`: the doubled s of "ass" is one s and then a
+    # run, the 1 of "kil1" an l.
+    assert proxy._conduct_term("ass") == [
+        r"[a4@\*][a4]*[s5\$][s5\$][s5]*",
+        r"[a4@\*][\s._*\-][s5\$][\s._*\-][s5\$]",
+    ]
+    assert proxy._conduct_term("kill") == [
+        r"[k][k]*[i1!\|\*][i]*[l1\|][l1\|][l1]*",
+        r"[k][\s._*\-][i1!\|\*][\s._*\-][l1\|][\s._*\-][l1\|]",
+    ]
+    assert proxy._conduct_term("f u") == [r"[f][f]*[\s._*\-]+[u\*][u]*"]
 
 
 def test_the_cases_reach_the_stand_ins_and_the_terms():
@@ -179,7 +208,9 @@ def test_each_leetspeak_run_matches_in_linear_time(prefix, unit):
 def test_the_timing_fails_the_pattern_as_it_was_before_1300():
     # Built the old way, each letter its whole class repeated, a run of "$" takes seconds and fails the verdict.
     with mock.patch.object(
-        proxy, "_conduct_run", lambda ch, after: proxy._conduct_letter(ch) + "+"
+        proxy,
+        "_conduct_run",
+        lambda ch, after: proxy._conduct_letter(ch) + proxy._conduct_letter(ch) + "*",
     ):
         before = proxy._profanity_pattern(DEFAULT_TERMS)
     assert before.pattern != proxy._PROFANITY_RE.pattern

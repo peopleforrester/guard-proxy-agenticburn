@@ -27,9 +27,10 @@ const ConductRefusal = "Let's keep it kind: BurritoBot only answers within the e
 // to their base letter, Cyrillic and Greek look-alikes mapped to Latin, and the result lower-cased. A term
 // then matches as a whole word with each letter repeatable as itself or a digit stand-in, each letter's
 // leetspeak stand-ins, "*" for any vowel, or the whole term spelt out with one separator between every letter; a phrase's words match with
-// any run of separators between them. RE2 has no lookaround, so the left word edge is checked by hand and
-// the right one is consumed after the capture group, which leftmost-first matching resolves as Python's
-// lookahead does.
+// any run of separators between them. RE2 has no lookaround, so both word edges are consumed around the
+// capture group: the left one is the character before the term, which leftmost-first matching resolves as
+// Python's lookbehind does when each search starts at the last character of the match before it, and the
+// right one the character after it, resolved as Python's lookahead.
 type Conduct struct{ re *regexp.Regexp }
 
 // NewConduct checks for terms as the spike's floor matches them.
@@ -46,21 +47,19 @@ func (c Conduct) Matches(text string) [][]int {
 		return nil
 	}
 	folded, starts, ends := conductFold(text)
+	// The pattern reads the character before a term as its left edge, so the folded text is searched behind a
+	// space, and each search after a match starts at the match's last character: the next term's left edge.
+	padded := " " + folded
 	var spans [][]int
-	for pos := 0; pos < len(folded); {
-		loc := c.re.FindStringSubmatchIndex(folded[pos:])
+	for pos := 0; pos < len(padded); {
+		loc := c.re.FindStringSubmatchIndex(padded[pos:])
 		if loc == nil {
 			break
 		}
-		start, end := pos+loc[2], pos+loc[3]
-		if start > 0 && isWordByte(folded[start-1]) {
-			// Not a word's start: Python's lookbehind fails here, and the search goes on one character later.
-			_, size := utf8.DecodeRuneInString(folded[start:])
-			pos = start + size
-			continue
-		}
+		start, end := pos+loc[2]-1, pos+loc[3]-1
 		spans = append(spans, []int{starts[start], ends[end-1]})
-		pos = end
+		_, size := utf8.DecodeLastRuneInString(padded[:pos+loc[3]])
+		pos += loc[3] - size
 	}
 	return spans
 }
@@ -169,16 +168,22 @@ func classRune(b *strings.Builder, r rune) {
 	fmt.Fprintf(b, `\x{%x}`, r)
 }
 
-// conductLetter is one letter of a term: itself, its leetspeak stand-ins, and "*" for a vowel.
+// conductChars is the characters a letter of a term matches: itself, its leetspeak stand-ins, and "*" for a
+// vowel.
+func conductChars(r rune) string {
+	chars := string(r) + conductLeet[r]
+	if strings.ContainsRune("aeiou", r) {
+		chars += "*"
+	}
+	return chars
+}
+
+// conductLetter is one letter of a term, the class of its conductChars.
 func conductLetter(r rune) string {
 	var b strings.Builder
 	b.WriteByte('[')
-	classRune(&b, r)
-	for _, l := range conductLeet[r] {
-		classRune(&b, l)
-	}
-	if strings.ContainsRune("aeiou", r) {
-		b.WriteString(`\*`)
+	for _, c := range conductChars(r) {
+		classRune(&b, c)
 	}
 	b.WriteByte(']')
 	return b.String()
@@ -188,7 +193,9 @@ func conductLetter(r rune) string {
 // character of its class, then any run of the letter and its digit stand-ins that the next letter's class
 // does not hold. With each letter its whole class repeated, a run of `$`, `5$`, `(` or `4@` cost time in the
 // square of its length in a backtracking engine (Unleash_an_Agent_Watch_It_Burn#1300). RE2 is linear in any
-// pattern, but this builds the pattern proxy.py's _conduct_run and the spike's floor.py _run build.
+// pattern, but this builds the pattern proxy.py's _conduct_run builds: the spike's floor.py _run, with a run
+// of the whole class written `[k][k]*` where floor.py writes `[k]+`, so every alternative of a term starts
+// with exactly one character of its first letter.
 func conductRun(r, after rune) string {
 	own := string(r) + conductLeet[r]
 	held := conductLeet[after]
@@ -201,11 +208,8 @@ func conductRun(r, after rune) string {
 			again = append(again, c)
 		}
 	}
-	switch {
-	case len(again) == 0:
+	if len(again) == 0 {
 		return conductLetter(r)
-	case string(again) == own && !strings.ContainsRune("aeiou", r):
-		return conductLetter(r) + "+"
 	}
 	var b strings.Builder
 	b.WriteByte('[')
@@ -236,27 +240,34 @@ func conductWords(term string) []string {
 	return strings.FieldsFunc(folded, isPySpace)
 }
 
-// conductTerm is one term's pattern: every letter a conductRun, the words joined by any run of separators,
-// and a one-word term of three or more letters also spelt out with one separator between every letter.
-func conductTerm(term string) string {
+// conductTerm is one term's alternatives: its words' letters run together as conductRuns, the words joined by
+// any run of separators, and a one-word term of three or more letters also spelt out with one separator
+// between every letter. Each starts with one character of its first letter, its conductLetter.
+func conductTerm(term string) []string {
 	words := conductWords(term)
 	joined := make([]string, len(words))
 	for i, w := range words {
 		joined[i] = conductWord(w)
 	}
-	pattern := strings.Join(joined, conductSep+"+")
+	alternatives := []string{strings.Join(joined, conductSep+"+")}
 	if len(words) == 1 && utf8.RuneCountInString(words[0]) >= 3 {
 		var spaced []string
 		for _, r := range words[0] {
 			spaced = append(spaced, conductLetter(r))
 		}
-		return "(?:" + pattern + "|" + strings.Join(spaced, conductSep) + ")"
+		alternatives = append(alternatives, strings.Join(spaced, conductSep))
 	}
-	return "(?:" + pattern + ")"
+	return alternatives
 }
 
-// conductPattern is the terms, longest first as Python sorts them, with an optional plural "s", then the
-// right word edge. An empty list, or one whose every term folds to nothing, matches nothing.
+// conductPattern is the left word edge, then the terms, longest first as Python sorts them, with an optional
+// plural "s", then the right word edge. An empty list, or one whose every term folds to nothing, matches nothing.
+//
+// The alternatives are grouped by the character they start with, as proxy.py's _profanity_pattern groups
+// them (guard-proxy-agenticburn#84): each character goes to the group of every first letter whose class holds
+// it, and a group is that set of characters, then the alternatives after their first character, in the order
+// one alternation of the terms in a row would try them. So a word start tries only the alternatives its first
+// character can begin, in the same order, and the spans are those of the single alternation.
 func conductPattern(terms []string) *regexp.Regexp {
 	var kept []string
 	for _, t := range terms {
@@ -270,9 +281,70 @@ func conductPattern(terms []string) *regexp.Regexp {
 	sort.SliceStable(kept, func(i, j int) bool {
 		return utf8.RuneCountInString(kept[i]) > utf8.RuneCountInString(kept[j])
 	})
-	alts := make([]string, len(kept))
-	for i, t := range kept {
-		alts[i] = conductTerm(t)
+	type alternative struct {
+		first rune
+		rest  string
 	}
-	return regexp.MustCompile(`((?:` + strings.Join(alts, "|") + `)s?)(?:[^a-z0-9]|$)`)
+	var alternatives []alternative
+	for _, t := range kept {
+		first, _ := utf8.DecodeRuneInString(conductWords(t)[0])
+		head := conductLetter(first)
+		for _, a := range conductTerm(t) {
+			alternatives = append(alternatives, alternative{first, strings.TrimPrefix(a, head)})
+		}
+	}
+	// Each character's first letters, the characters in the order proxy.py meets them.
+	owners := map[rune]map[rune]bool{}
+	var chars []rune
+	for _, a := range alternatives {
+		for _, c := range conductChars(a.first) {
+			if owners[c] == nil {
+				owners[c] = map[rune]bool{}
+				chars = append(chars, c)
+			}
+			owners[c][a.first] = true
+		}
+	}
+	type group struct {
+		firsts map[rune]bool
+		chars  []rune
+	}
+	var groups []*group
+	byFirsts := map[string]*group{}
+	for _, c := range chars {
+		var key []rune
+		for f := range owners[c] {
+			key = append(key, f)
+		}
+		sort.Slice(key, func(i, j int) bool { return key[i] < key[j] })
+		g := byFirsts[string(key)]
+		if g == nil {
+			g = &group{firsts: owners[c]}
+			byFirsts[string(key)] = g
+			groups = append(groups, g)
+		}
+		g.chars = append(g.chars, c)
+	}
+	parts := make([]string, len(groups))
+	for i, g := range groups {
+		var b strings.Builder
+		b.WriteByte('[')
+		for _, c := range g.chars {
+			classRune(&b, c)
+		}
+		b.WriteString("](?:")
+		n := 0
+		for _, a := range alternatives {
+			if g.firsts[a.first] {
+				if n > 0 {
+					b.WriteByte('|')
+				}
+				b.WriteString(a.rest)
+				n++
+			}
+		}
+		b.WriteByte(')')
+		parts[i] = b.String()
+	}
+	return regexp.MustCompile(`[^a-z0-9]((?:` + strings.Join(parts, "|") + `)s?)(?:[^a-z0-9]|$)`)
 }

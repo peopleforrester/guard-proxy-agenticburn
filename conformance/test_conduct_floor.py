@@ -1,4 +1,4 @@
-# ABOUTME: Conformance for the code-of-conduct spike's folded term list (#81) on /chat, the reply mask and the wall,
+# ABOUTME: Conformance for the folded code-of-conduct term list (#81, #84) on /chat, the reply mask and the wall,
 # ABOUTME: the masked prompt on a refused turn's spans, and the optional Bedrock guardrail on the prompt, stubbed.
 from __future__ import annotations
 
@@ -26,7 +26,8 @@ STAGE_PROMPT_GROUPS = ("kubecon-prompt", "replay-prompt", "catalog-prompt", "pro
 
 
 def _abuse_set() -> list[tuple[str, str, str]]:
-    """(category, text, the mask the spike's floor.py gives it), decoded."""
+    """(category, text, the mask the default list gives it), decoded: the spike's floor.py mask for its 144
+    entries, and #84's slang on top."""
     out = []
     for line in (FIXTURES / "abuse-set.rot13.tsv").read_text(encoding="utf-8").splitlines():
         if line and not line.startswith("#"):
@@ -44,18 +45,19 @@ def _forwarded_prompts(agent) -> list[str]:
 
 
 def test_the_fixtures_are_the_spikes_measurement():
-    # The spike's floor caught 111 of its 155 abuse texts, every evasion among them.
+    # The spike's floor caught 111 of its 155 abuse texts, every evasion among them; #84's slang adds one
+    # Portuguese text. The stage texts are every page's, as the spike measured them.
     assert len(ABUSE) == 155
     caught = [cat for cat, text, masked in ABUSE if masked != text]
-    assert len(caught) == 111
+    assert len(caught) == 112
     assert caught.count("evasion") == sum(cat == "evasion" for cat, _, _ in ABUSE) == 25
-    assert sum(len(v) for v in STAGE.values()) > 2900
+    assert sum(len(v) for v in STAGE.values()) > 4000
 
 
 # --- The abuse set ------------------------------------------------------------------------------------
 
 
-def test_the_abuse_set_is_refused_exactly_where_the_spikes_floor_matches(start_proxy, agent):
+def test_the_abuse_set_is_refused_exactly_where_the_default_list_matches(start_proxy, agent):
     p = start_proxy()
     wrong = []
     for cat, text, masked in ABUSE:
@@ -63,12 +65,12 @@ def test_the_abuse_set_is_refused_exactly_where_the_spikes_floor_matches(start_p
         if refused != (masked != text):
             wrong.append((cat, refused))
     assert wrong == []
-    # The 44 texts the terms miss reach the agent exactly as typed; no refused one does. Compared as a
+    # The 43 texts the terms miss reach the agent exactly as typed; no refused one does. Compared as a
     # boolean, so a failure prints no abuse text.
     passed = [text for _, text, masked in ABUSE if masked == text]
     same = _forwarded_prompts(agent) == passed
-    assert same, "the agent got other prompts than the 44 the terms pass"
-    assert p.events().count("conduct_refused") == 111
+    assert same, "the agent got other prompts than the 43 the terms pass"
+    assert p.events().count("conduct_refused") == 112
 
 
 def test_every_evasion_is_refused(start_proxy, agent):
@@ -78,7 +80,7 @@ def test_every_evasion_is_refused(start_proxy, agent):
     assert agent.calls() == []
 
 
-def test_a_reply_is_masked_as_the_spikes_floor_masks_it(start_proxy, agent):
+def test_a_reply_is_masked_as_the_fixture_masks_it(start_proxy, agent):
     agent.respond = lambda req: Reply(
         body=a2a_result(
             ABUSE[int(req.json()["params"]["message"]["parts"][0]["text"].split()[1])][1]
@@ -91,10 +93,10 @@ def test_a_reply_is_masked_as_the_spikes_floor_masks_it(start_proxy, agent):
         if p.chat(f"reply {i}").json()["reply"] != masked
     ]
     assert wrong == []
-    assert p.events().count("conduct_masked") == 111
+    assert p.events().count("conduct_masked") == 112
 
 
-def test_the_wall_masks_as_the_spikes_floor_masks_it(start_proxy, agent):
+def test_the_wall_masks_as_the_fixture_masks_it(start_proxy, agent):
     # No block-list, so the wall's mask is the terms' alone; no abuse text carries personal data.
     p = start_proxy(STREAM_PROMPTS="on", BLOCK_LIST="")
     for start in range(0, len(ABUSE), 50):

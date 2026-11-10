@@ -202,6 +202,13 @@ From Unleash_an_Agent_Watch_It_Burn#1267's spike. Both builds match the spike's 
 after 1.5 s or on error. Decision recorded 2026-11-09; conformance in `test_conduct_floor.py`. The guardrail
 and IAM are Unleash_an_Agent_Watch_It_Burn#1279; the repin is in docs/release-notes.md.
 
+### Agent-task #84: Urban Dictionary-style slang on the code-of-conduct list
+Asked by Unleash_an_Agent_Watch_It_Burn for #1267 and #1288. Both builds' default list grows from 144 to 1,253
+entries (abbreviations, vowel-dropped and alphanumeric spellings, slurs, sexual slang, coded hate, regional
+slang), with no stage text or /chat turn matched; the pattern is grouped by first character for speed.
+Decision recorded 2026-11-10; conformance in `test_conduct_slang.py` and `test_conduct_floor.py`. Unleash
+repins and checks its chat page's saved rail (#1280) and support desk (#1268) against the list.
+
 ## Branch & Tests
 - Branch: agent/81-19639 (#81)
 - Working tree: clean

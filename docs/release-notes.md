@@ -3,6 +3,26 @@
 What each guard-proxy build a consumer can pin changes, newest first, naming its commit. The workshop
 repo repins its `gitops/ai-layer/guard-proxy` submodule from these entries.
 
+## 2026-11-10: Urban Dictionary-style slang on the code-of-conduct list
+
+Both builds (guard-proxy-agenticburn#84, asked by Unleash_an_Agent_Watch_It_Burn for #1267 and #1288), on the
+branch for #84 until it is promoted. Repin the workshop's `gitops/ai-layer/guard-proxy` submodule and its
+`checksum/proxy-py` to the commit that promotes it (or a later one) to pick it up.
+
+- The default `PROFANITY_LIST` grows from the spike's 144 entries to 1,253: abbreviations and acronyms,
+  vowel-dropped, phonetic and alphanumeric spellings, compounds, slurs, sexual slang, coded hate numbers and
+  symbols, and regional slang. The `/chat` refusal, the reply mask and the prompt wall all read it. It
+  matches none of the 4,069 stage texts in `conformance/coc_floor/stage-texts.json`, nor any of a week of
+  `/chat` prompts and replies on watch-it-burn-private, and no stage prompt is refused.
+- Short spellings that matched ordinary text are listed in a safe form or not at all: "fu" only spelt out
+  ("f u", for the menu's Toe-Fu), "fk" only before "you", "u" or "off"; "sob", "pos", "bj", "smd" and a bare
+  "88" are not listed. decisions.md (2026-11-10) has each with what it collided with.
+- The matching rules are unchanged: no vowel-dropped rule was added, so the chat page's saved rail and the
+  support desk agree with the proxy once they read the longer list. The pattern is grouped by each term's
+  first character, which keeps it fast at 1,253 terms and gives the same spans.
+- On the spike's 155 abuse texts the list catches 112, one more than 111 (a Portuguese text). The 43 it
+  misses are hate, insults and threats in plain words, which no term list catches.
+
 ## 2026-11-09: the code-of-conduct pattern matches in linear time
 
 Both builds (guard-proxy-agenticburn#83, from Unleash_an_Agent_Watch_It_Burn#1300), commit d666698.

@@ -1043,3 +1043,89 @@ matter what the state of the guardrails is". Both builds now record `conduct_mas
 term masked and the output guard's catch kept; two more tests pin an answered turn with every guard off
 (no span anywhere carries the term) and with `ALWAYS_REDACT` set. Both builds; one mutant in
 `mutation_check.py`.
+
+## 2026-11-10: Urban Dictionary-style slang on the code-of-conduct list
+
+guard-proxy-agenticburn#84, asked by Unleash_an_Agent_Watch_It_Burn for its code-of-conduct work (#1267,
+#1288). Michael, 2026-11-10: "Making sure you include the alphanumeric replacements for slang terms that
+represent Urban Dictionary-style cussing and expletives as well in the blocked list." Both builds' default
+list grows from the spike's 144 entries to 1,253. The choices:
+
+- **The source.** The spike's sources (docs/research/2026-11-09-coc-floor/README.md in the workshop repo) name
+  no word list: they are the CNCF and Linux Foundation codes of conduct, Bedrock's managed profanity list,
+  which is not published, and the spike's own abuse set. So 1,007 of the 1,109 additions come from
+  zautumnz/profane-words (WTFPL, 2,725 entries, last commit 4b08ea9 on 2026-03-08, read 2026-11-10), a
+  maintained list that gathers other lists' variant spellings. Each entry's category (insult, sexual, racial or
+  gender slur, hateful ideology, drug, religious) was read from awdev1/better-profane-words (c8b8e26,
+  2026-05-13), which classifies the same 2,725 entries; it is GPL-3.0, so nothing of it is copied, only its
+  labels read to sort. Checked and not used: LDNOOBW (last commit 2020), surge-ai/profanity (gone),
+  jo3-l/obscenity (70 patterns) and coffee-and-fun/google-profanity-words (a subset of the above). The other
+  102 additions are the issue's 40-term probe sample in the form below, 44 vowel-dropped spellings,
+  coded hate (1488, hh88, 6mwe, rahowa, gtkrwn, wpww, two phrases, and the swastika and SS-rune
+  characters), and regional slang with its abbreviations (Jamaican, Irish, British, Spanish, French,
+  German, Portuguese, Italian); the middle-finger emoji is profane-words'. The list stays ROT13-encoded, its symbols written as escapes.
+- **What was left out of the source.** Every entry the 144 already catch (299 of the 2,725); every entry with an ordinary
+  meaning, or a name, place, brand or film (a levee's "dike", "cocky", "cockfight", "niggardly", "sniggered",
+  "spick and span", "cummin", "cumquat", Cumming, Gonzaga, "guineas", Spanish "negro" and "penas", the
+  Vietnamese name Phúc, a musician's "ritard", Pollock, sambo the sport, "hajji"); drug and medical words;
+  mild insults and oaths the code of conduct leaves alone ("damn", "crap", "idiot", "moron", "wuss"); words
+  people use of themselves ("queer", "homo", "twink"); the talk's own security and violence vocabulary
+  ("hijacking", "penetrate", "torture", "kill"); and political and historical names ("hamas", "jihad",
+  "reich", "hitler", "klan"). A term whose root is not on the list is left out with its spellings ("ass",
+  "boob", "tit"), as are the spellings of an entry left out.
+- **No vowel-dropped matching rule; the spellings are listed.** Measured on the 1,253 terms: dropping the
+  vowels after each one-word term's first letter gives 892 spellings not on the list. 38 of them are two
+  letters, a dictionary word or match stage texts ("cl", from a slur, matches 14 stage texts, "cls" 12,
+  "tts" 2, "bbs" 1), and more are abbreviations no dictionary holds ("chng" is change, "cnt" count, "prn",
+  "spc"). A rule cannot leave those out without an exception per term, and the list is also read by the
+  workshop's chat page and support desk, each of which would need the rule; a longer list reaches them as it
+  is. So 44 vowel-dropped spellings are listed one by one, and the matcher's rules are unchanged.
+- **Short and numeric spellings.** Each addition was run against 5,254 texts: the 4,069 stage texts the
+  spike's corpus.py and measure.py read from Unleash_an_Agent_Watch_It_Burn 71c9b65 (every page, the probe's
+  own prompts), and the 71 distinct prompts and 1,114 distinct replies of the 1,156 /chat turns on
+  watch-it-burn-private over the seven days to 2026-11-10, read from Tempo with the spike's pull_turns.py and
+  not committed. (The spike's 5,198 were the same on 2026-11-09.) None matches any of them, and no stage
+  prompt is refused. A spelling that matched ordinary text is listed only in a form that does not, or not at
+  all:
+
+  | Spelling | What it collided with | On the list as |
+  |---|---|---|
+  | fu | the menu's Toe-Fu burrito, in 10 stage texts and a hard negative | "f u", spelt out with separators |
+  | fk | "FK", a foreign key, in a database prompt | "fk you", "fk u", "fk off" |
+  | sob | a card's last four digits, 5508, in the tool data: 5, 0 and 8 stand in for s, o and b. Spelt out it matches a version such as 5.0.8 | not listed; "son of a bitch" is caught by its last word, and "sonofabitch" is listed |
+  | 88 | the address "88 Willow Wisp Ln" in the tool data, and any quantity | not bare: "1488" and "hh88" are listed, and 88 next to a listed hate term is caught by that term |
+  | 14/88 | a date written 3/14/88 | not listed |
+  | pos | point of sale, at a burrito counter | not listed; "piece of shit" is caught |
+  | bj | BJ's, the restaurant | not listed; its long forms are |
+  | smd | surface-mount devices | not listed |
+  | slag, abbo, lesbo, goatse, b00bies, bigass, bigtits, assbag, assbite, tittie, tittis | a bare number through the leetspeak digits ("slag" is 5149, "abbo" 4880) | not listed |
+
+  "1488" is the one bare number listed, as the hate number itself; a street or order number 1488 would be
+  refused. "frick" is listed, as the probe asks, and would refuse the Frick Collection.
+- **The pattern grouped by first character.** One alternation of 1,253 terms has the engine try every term at
+  every word start: a 4,000-character run of `$` took proxy.py 120 ms, over the 50 ms the linear-time test
+  allows. So each character goes to one group, the group of every first letter whose class holds it (`*` is
+  every vowel's, `1` both i's and l's), and a group keeps its alternatives in the order the single
+  alternation tries them. At any position the same alternatives are tried in the same order, so the spans are
+  the same; both builds test that on the abuse set, the stage texts, every term in four spellings and random
+  strings. The worst run now takes proxy.py 32 ms. To make every alternative start with one character, a
+  run of a letter's whole class is written `[k][k]*` where the spike's floor.py writes `[k]+`.
+- **Go reads the left word edge in the pattern.** RE2 has no lookbehind, so Go found a match at any position
+  and rejected one inside a word, trying the whole list at every character: 18 ms on 4,000 characters of
+  prose with the longer list. The pattern now starts with the character before the term, the text is
+  searched behind a space, and each search after a match starts at the match's last character, so a term
+  right after another starts a word exactly where Python's lookbehind says. Prose takes 4.8 ms; a
+  4,000-character run of `$` 64 ms, still linear.
+- **Catch rate.** On the spike's 155 abuse texts: 111 before, 112 after; the new catch is "vai tomar no cu".
+  The 43 misses are hate without a slur (16), insults in plain words (15), threats (11) and one slur that is
+  also an ordinary verb ("cripple"), which only the Bedrock classifier sees. On the issue's 40-term probe
+  sample: none before; after, 33 bare and two in their listed form ("f u", "fk you"); sob, pos, bj, smd
+  and a bare 88 stay off, for the collisions above.
+
+Conformance: `test_conduct_slang.py` refuses the probe sample and a sample of each class, including a term
+whose first character is a stand-in two letters share, and passes the ordinary text in the table above;
+`test_conduct_floor.py` reads the abuse set's regenerated masks (112 caught) and the stage texts from every
+page (4,069, was 2,906 from /kubecon alone); `test_conduct_linear.py` holds the grouped pattern equal to the
+single alternation. Go: `TestConductGroupedPatternMatchesAsTheSingleAlternation`,
+`TestConductLeftEdgeIsTheCharacterBefore`, `TestDefaultProfanityIsProxyPysList`. Two mutants in
+`mutation_check.py`: leetspeak dropped (retargeted) and a shared stand-in given to one letter.

@@ -183,8 +183,13 @@ MUTANTS: list[tuple[str, str, str]] = [
     ),
     (
         "code-of-conduct terms without leetspeak",
-        '    alts = re.escape(ch) + "".join(re.escape(c) for c in _CONDUCT_LEET.get(ch, ""))\n',
-        "    alts = re.escape(ch)\n",
+        '    return ch + _CONDUCT_LEET.get(ch, "") + ("*" if ch in _CONDUCT_VOWELS else "")\n',
+        '    return ch + ("*" if ch in _CONDUCT_VOWELS else "")\n',
+    ),
+    (
+        "code-of-conduct groups give a shared stand-in to one letter",
+        "            owners.setdefault(ch, set()).add(first)\n",
+        "            owners.setdefault(ch, {first})\n",
     ),
     (
         "the wall skips the code-of-conduct mask",
