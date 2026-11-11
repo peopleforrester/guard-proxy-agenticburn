@@ -1,10 +1,9 @@
 # ABOUTME: Runs the reference proxy.py on a chosen loopback port, for the conformance suite.
-# ABOUTME: proxy.py hardcodes 0.0.0.0:8080 in __main__; this serves the same Handler elsewhere.
+# ABOUTME: proxy.py hardcodes 0.0.0.0:8080 in __main__; this serves the same Server and Handler elsewhere.
 from __future__ import annotations
 
 import os
 import sys
-from http.server import ThreadingHTTPServer
 from pathlib import Path
 
 # An optional second argument points at another directory holding a proxy.py, which is how the
@@ -42,7 +41,7 @@ import proxy  # noqa: E402  (environment is read at import, so the path must be 
 
 
 def main() -> None:
-    server = ThreadingHTTPServer(("127.0.0.1", int(sys.argv[1])), proxy.Handler)
+    server = proxy.Server(("127.0.0.1", int(sys.argv[1])), proxy.Handler)
     # The suite passes port 0 and reads the bound port back from this line, as the Go build logs it.
     host, port = server.server_address[:2]
     proxy.log.info("listening on %s:%d, agent %s", host, port, proxy.AGENT_URL)

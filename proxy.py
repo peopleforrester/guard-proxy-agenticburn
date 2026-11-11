@@ -2546,5 +2546,13 @@ class Handler(BaseHTTPRequestHandler):
         log.debug(fmt % args, extra={"event": "http_access"})
 
 
+class Server(ThreadingHTTPServer):
+    # The stdlib listens with a backlog of 5: a 500-phone burst overflowed it 3,227 times, and the console's
+    # nginx saw those turns reset or time out before any reached Handler (guard-proxy-agenticburn#85). The
+    # kernel caps this at net.core.somaxconn. Daemon threads let a stopped server exit mid-request.
+    request_queue_size = 1024
+    daemon_threads = True
+
+
 if __name__ == "__main__":
-    ThreadingHTTPServer(("0.0.0.0", 8080), Handler).serve_forever()
+    Server(("0.0.0.0", 8080), Handler).serve_forever()

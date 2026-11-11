@@ -1129,3 +1129,18 @@ page (4,069, was 2,906 from /kubecon alone); `test_conduct_linear.py` holds the 
 single alternation. Go: `TestConductGroupedPatternMatchesAsTheSingleAlternation`,
 `TestConductLeftEdgeIsTheCharacterBefore`, `TestDefaultProfanityIsProxyPysList`. Two mutants in
 `mutation_check.py`: leetspeak dropped (retargeted) and a shared stand-in given to one letter.
+
+## 2026-11-11: proxy.py listens with a backlog of 1,024
+
+The stdlib's `ThreadingHTTPServer` listens with `request_queue_size` 5. Under the talk repo's 500-phone
+load replay (Unleash_an_Agent_Watch_It_Burn#1337) the guard-proxy pod counted 3,227 ListenOverflows and
+eight /chat turns failed at the console's nginx before reaching the handler (#85). proxy.py now serves
+through `Server`, a `ThreadingHTTPServer` subclass with `request_queue_size = 1024` and
+`daemon_threads = True`, as the talk repo's ticket_site.py does; `launch_python.py` serves the same class,
+so the suite runs what `__main__` runs. The kernel caps any backlog at `net.core.somaxconn` (4096 on the
+hosts checked). The Go build's `net.Listen` already asks for `somaxconn`.
+
+Conformance: `test_listen_backlog.py` reads the listening socket's backlog from the kernel with
+`ss -ltn` (its Send-Q column on a LISTEN row) and requires at least 1,024, for either build; it also holds
+proxy.py's `__main__` to constructing `Server`. One mutant in `mutation_check.py` drops the backlog line.
+Once a pin carries this, the talk repo's runpy command wrapper and its backlog command checks can go.

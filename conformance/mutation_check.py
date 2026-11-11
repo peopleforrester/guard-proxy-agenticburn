@@ -428,6 +428,7 @@ MUTANTS: list[tuple[str, str, str]] = [
         '            if False:\n                log.info("model returned reasoning with no answer',
     ),
     ("turn deadline ignored", "    return min(TIMEOUT, left)", "    return TIMEOUT"),
+    ("listen backlog left at the stdlib's 5", "    request_queue_size = 1024\n", ""),
     (
         "classifier cut off by the turn fails open",
         "        _raise_if_expired(deadline)\n        return not FAIL_CLOSED, []",
