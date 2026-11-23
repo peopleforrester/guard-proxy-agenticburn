@@ -114,12 +114,15 @@ def test_injection_and_topic_classifiers_share_the_turn(start_proxy, agent, guar
 
 
 def test_turn_spent_before_the_output_scrub_never_leaks_the_reply(start_proxy, agent, guard):
-    """With fail-open, a scrub that could not run would hand back the raw reply; out of time, it is 502."""
-    guard.respond = _slow_guard
-    agent.respond = lambda req: Reply(body=a2a_result("The sauce is SECRET-No7."), delay=SLOW)
+    """With fail-open, a scrub that could not run would hand back the raw reply; out of time, it is 502.
+    The reply comes at once, so a stalled host still has the whole turn to reach the scrub, and the scrub
+    answers at HANG, far past what is left of the turn: only a turn deadline cuts it off
+    (guard-proxy-agenticburn#69)."""
+    guard.respond = lambda req: Reply(body=verdict(True, output=True), delay=HANG)
+    agent.respond = lambda req: Reply(body=a2a_result("The sauce is SECRET-No7."))
     p = start_proxy(OUTPUT_GUARD="on", PROXY_FAIL_CLOSED="false", **TURN)
     r, took = _timed_chat(p)
-    assert r.status == 502
+    assert r.status == 502, "the scrub got PROXY_TIMEOUT instead of what was left of the turn, or failed open"
     assert r.json() == KITCHEN_DOWN
     assert b"SECRET" not in r.raw
     assert took < CUT_BY
