@@ -545,6 +545,11 @@ MUTANTS: list[tuple[str, str, str]] = [
         "            fwd_deadline = time.monotonic() + 3600\n",
     ),
     (
+        "the chat poll ignores the turn deadline",
+        "                fwd_deadline = min(fwd_deadline, deadline)\n",
+        "                pass\n",
+    ),
+    (
         "the chat witch name dropped",
         '                m["parts"].append({"kind": "text", "text": witch_context(witch)})',
         "                pass",
